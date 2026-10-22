@@ -130,6 +130,9 @@ pub enum AgentEvent {
         /// Any reported tokens and cost are a lower bound, not a final bill.
         #[serde(default)]
         incomplete: bool,
+        /// A scout's call: the hat's spend, not the hat's context size.
+        #[serde(default)]
+        scout: bool,
     },
     /// The product run_project started is up, or was stopped. While it is up the
     /// user can stop it (`/stop`), and is asked about it on quit.

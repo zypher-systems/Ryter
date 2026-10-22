@@ -191,6 +191,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             cache_write_tokens,
             total_usd,
             incomplete,
+            scout,
         } => {
             if let Some(p) = &mut view.project_spend {
                 p.add(*role, model, *total_usd);
@@ -207,6 +208,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                 (*cached_tokens, *cache_write_tokens),
                 *total_usd,
                 *incomplete,
+                *scout,
             );
         }
         // `/audit` adds this after the turn's `Audited`, with the tree the
@@ -692,6 +694,7 @@ fn on_spend(
     (cached_tokens, cache_write_tokens): (u64, u64),
     total_usd: Option<f64>,
     incomplete: bool,
+    scout: bool,
 ) {
     let role_name = crate::view::role_label(&role.to_string()).to_string();
     {
@@ -767,7 +770,11 @@ fn on_spend(
             }
         }
         // Context fill is the prompt the provider counted, not input+output
-        // and not the bytes/4 estimate.
+        // and not the bytes/4 estimate. A scout's prompt is its own, not
+        // the conversation's: the ring keeps the hat's last size.
+        if scout {
+            return;
+        }
         let used = input_tokens;
         view.ctx_tokens = Some(used);
         let window = view.ctx_window_or_default();
@@ -1091,6 +1098,7 @@ mod tests {
                 cache_write_tokens: 0,
                 total_usd: Some(0.01),
                 incomplete: false,
+                scout: false,
             },
         );
         assert!(v.busy, "spend alone does not end the turn");
@@ -1111,6 +1119,36 @@ mod tests {
         assert_eq!(v.spend_rows_role["build"].calls, 1);
     }
 
+    /// A scout's spend is the hat's, on the rows and the total; its prompt
+    /// is not the conversation's size, so the ring stays where the hat's
+    /// last call put it.
+    #[test]
+    fn a_scouts_spend_leaves_the_ring_alone() {
+        let mut v = view();
+        let spend = |input_tokens: u64, scout: bool| AgentEvent::Spend {
+            connection: "spacexsi".into(),
+            model: "grok-4.6".into(),
+            role: Role::Plan,
+            input_tokens,
+            output_tokens: 10,
+            cached_tokens: 0,
+            cache_write_tokens: 0,
+            total_usd: Some(0.01),
+            incomplete: false,
+            scout,
+        };
+        apply(&mut v, spend(5_000, false));
+        assert_eq!(v.ctx_tokens, Some(5_000));
+        apply(&mut v, spend(400, true));
+        assert_eq!(
+            v.ctx_tokens,
+            Some(5_000),
+            "the scout's prompt moved the ring"
+        );
+        assert_eq!(v.spend, Some(0.02), "the scout's cost is the hat's");
+        assert_eq!(v.spend_rows_role["plan"].calls, 2);
+    }
+
     #[test]
     fn unknown_price_never_prints_zero() {
         let mut v = view();
@@ -1126,6 +1164,7 @@ mod tests {
                 cache_write_tokens: 0,
                 total_usd: None,
                 incomplete: false,
+                scout: false,
             },
         );
         assert!(v.spend_unknown);
@@ -1148,6 +1187,7 @@ mod tests {
                 cache_write_tokens: 0,
                 total_usd: Some(0.002),
                 incomplete: true,
+                scout: false,
             },
         );
         assert_eq!(v.spend, Some(0.002));

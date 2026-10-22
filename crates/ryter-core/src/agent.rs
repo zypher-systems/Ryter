@@ -127,6 +127,76 @@ const CONVERSATION_MAX_OUTPUT: u32 = 32_768;
 const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 /// The most a scout's reply may run to: it reports, it does not draft.
 const SCOUT_MAX_OUTPUT: u32 = 4_096;
+
+/// What a scout question is sent with: the model it runs on and its brief.
+struct ScoutCall {
+    provider: Arc<dyn Provider>,
+    model: String,
+    connection: String,
+    window: u64,
+    system: String,
+    tools: Vec<crate::llm::ToolSpec>,
+    cfg: crate::config::ScoutConfig,
+}
+
+/// What one question has come to so far: counted as the scout reads, and
+/// written on its row however it ends, answered, stopped or failed.
+#[derive(Default)]
+struct ScoutRun {
+    messages: Vec<Message>,
+    reads: usize,
+    searches: usize,
+    listings: usize,
+    rounds: u32,
+    spent: f64,
+    unpriced: bool,
+    tail: Vec<String>,
+    answer: String,
+    stopped: Option<String>,
+}
+
+impl ScoutRun {
+    /// The line under the answer: what was read, the rounds, the model and
+    /// what it cost. The chat reads it onto the scout's row.
+    fn footer(&self, model: &str) -> String {
+        let mut looked = Vec::new();
+        if self.reads > 0 {
+            looked.push(format!(
+                "{} read{}",
+                self.reads,
+                if self.reads == 1 { "" } else { "s" }
+            ));
+        }
+        if self.searches > 0 {
+            looked.push(format!(
+                "{} search{}",
+                self.searches,
+                if self.searches == 1 { "" } else { "es" }
+            ));
+        }
+        if self.listings > 0 {
+            looked.push(format!(
+                "{} listing{}",
+                self.listings,
+                if self.listings == 1 { "" } else { "s" }
+            ));
+        }
+        if looked.is_empty() {
+            looked.push("nothing read".into());
+        }
+        format!(
+            "[scout: {} · {} round{} · {model} · {}]",
+            looked.join(" · "),
+            self.rounds,
+            if self.rounds == 1 { "" } else { "s" },
+            if self.unpriced {
+                "$?.??".to_string()
+            } else {
+                crate::format_usd_fine(self.spent)
+            }
+        )
+    }
+}
 /// A reply cut off at the ceiling this many times in a row ends the turn.
 const MAX_CUTOFFS: usize = 3;
 /// The same call with the same result this many times in a turn: tell the
@@ -615,6 +685,7 @@ impl Agent {
                 reported_cost,
                 saw_usage,
                 received.is_ok() && saw_done,
+                false,
             )?;
             if let Err(error) = received {
                 if matches!(error, Error::Cancelled) {
@@ -1519,8 +1590,11 @@ impl Agent {
     /// check, run by Ryter, its row in the chat, and what it found told
     /// to the model before its next round. The model used to spend a
     /// round running the check itself, or skip it. Only a run file the
-    /// user has approved as it stands: nothing is asked mid-round.
+    /// user has approved as it stands: nothing is asked mid-round. It
+    /// goes through the same hooks as the model's own `run_project` call,
+    /// and its row is answered however it ends, Esc included.
     async fn check_after_edits(&mut self, edited: &[String]) -> Result<()> {
+        use crate::tools::ToolOutput;
         let root = self.root();
         let crate::run::Found::Approved(run) = crate::run::find(&root, &self.home) else {
             return Ok(());
@@ -1532,10 +1606,11 @@ impl Agent {
             return Ok(());
         }
         let id = format!("check-{}-{}", self.turn, crate::event::now_ms());
+        let args = serde_json::json!({ "action": "check" });
         self.emit(AgentEvent::ToolCall {
             id: id.clone(),
             name: "run_project".into(),
-            args: serde_json::json!({ "action": "check" }),
+            args: args.clone(),
             role: self.role,
             summary: Some(cmd.clone()),
             turn: self.turn,
@@ -1543,14 +1618,45 @@ impl Agent {
         })?;
         let t0 = std::time::Instant::now();
         self.listen_for_live(&id, "run_project");
-        let result = self.run_check(&cmd);
+        // The hooks a `run_project` call from the model runs: one that
+        // denies or watches that call sees this one too.
+        let ctx = self.ctx.clone();
+        let mut found: Option<(bool, usize)> = None;
+        let result = crate::tools::with_hooks("run_project", &args, &ctx, || {
+            let (ok, n, text) = self.run_check(&cmd)?;
+            found = Some((ok, n));
+            Ok(if ok {
+                ToolOutput::ok(text)
+            } else {
+                ToolOutput::err(text)
+            })
+        });
         self.ctx.live = None;
-        let (ok, n, text) = result?;
+        let duration_ms = Some(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX));
+        // The row is answered whichever way the check ended: after Esc
+        // the command is dead, and the row said it was running until told.
+        let out = match result {
+            Ok(out) => out,
+            Err(e) => {
+                let output = match &e {
+                    Error::Cancelled => "cancelled by the user".to_string(),
+                    e => format!("not run: {e}"),
+                };
+                self.emit(AgentEvent::ToolResult {
+                    id,
+                    output,
+                    is_error: true,
+                    duration_ms,
+                    diff: None,
+                })?;
+                return Err(e);
+            }
+        };
         self.emit(AgentEvent::ToolResult {
             id,
-            output: text.clone(),
-            is_error: !ok,
-            duration_ms: Some(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            output: out.text.clone(),
+            is_error: out.is_error,
+            duration_ms,
             diff: None,
         })?;
         let files = if edited.len() == 1 {
@@ -1558,18 +1664,19 @@ impl Agent {
         } else {
             format!("{} files", edited.len())
         };
-        let content = if ok {
-            format!("[Ryter] `{cmd}` passed after your edits to {files}.")
-        } else if n == 0 {
-            format!(
+        let text = out.text;
+        let content = match found {
+            Some((true, _)) => format!("[Ryter] `{cmd}` passed after your edits to {files}."),
+            Some((false, 0)) => format!(
                 "[Ryter] `{cmd}` {text}\n\nIt ran after your edits to {files}. See to it \
                  before going on; Ryter runs it again after your next edits."
-            )
-        } else {
-            format!(
+            ),
+            Some((false, _)) => format!(
                 "[Ryter] `{cmd}` after your edits to {files}: {text}\n\nFix them before going \
                  on; Ryter runs the check again after your next edits."
-            )
+            ),
+            // A hook denied it, or it could not start.
+            None => format!("[Ryter] `{cmd}` did not run after your edits to {files}: {text}"),
         };
         self.session.push_message(Message {
             role: "user".into(),
@@ -2992,6 +3099,7 @@ impl Agent {
             reported_cost,
             saw_usage,
             received.is_ok() && saw_done,
+            false,
         )?;
         received?;
         if let Some(error) = self.over_budget() {
@@ -3182,14 +3290,15 @@ impl Agent {
     }
 
     /// The model that last read this conversation, from the spend log: a
-    /// different one now reads all of it again, at the full price.
+    /// different one now reads all of it again, at the full price. A
+    /// scout read its own question, not the conversation.
     fn last_reader(&self) -> Option<String> {
         self.session
             .spend_log()
             .ok()?
             .into_iter()
             .rev()
-            .find(|r| r.role.is_hat())
+            .find(|r| r.role.is_hat() && !r.scout)
             .map(|r| r.model)
     }
 
@@ -3304,7 +3413,10 @@ impl Agent {
     /// One question sent to the scout: a fresh model with the read tools
     /// alone, reading under this hat's gate, whose rounds stay out of this
     /// conversation. The tool's result is its answer and a line saying what
-    /// the question cost, which the chat shows on the row.
+    /// the question cost, which the chat shows on the row. A failure of the
+    /// scout's own request (the provider, a window too small for what it
+    /// read) comes back the same way, with what it had, and the hat's turn
+    /// goes on; Esc and the session budget end the turn as ever.
     async fn scout(&mut self, id: &str, args: &Value) -> Result<crate::tools::ToolOutput> {
         use crate::tools::ToolOutput;
         if !matches!(self.role, Role::Plan | Role::Audit) {
@@ -3329,16 +3441,24 @@ impl Agent {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|h| !h.is_empty());
-        let scout_cfg = self
+        let cfg = self
             .cfg
             .as_ref()
             .map(|c| c.scout.clone())
             .unwrap_or_default();
-        let (provider, model, connection) = self.scout_stack(&scout_cfg);
+        let (provider, model, connection) = self.scout_stack(&cfg);
         let window = self.model_window(&model, &connection);
-        let system = crate::prompt::scout(self.project_root.as_deref());
-        let tools = crate::tools::scout_specs();
-        let mut messages = vec![Message {
+        let call = ScoutCall {
+            provider,
+            model,
+            connection,
+            window,
+            system: crate::prompt::scout(self.project_root.as_deref()),
+            tools: crate::tools::scout_specs(),
+            cfg,
+        };
+        let mut run = ScoutRun::default();
+        run.messages.push(Message {
             role: "user".into(),
             content: match hint {
                 Some(h) => format!("{question}\n\nStart from: {h}"),
@@ -3347,52 +3467,77 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
-        }];
+        });
+        let failed = match self.scout_rounds(id, &call, &mut run).await {
+            Ok(()) => None,
+            Err(e @ (Error::Cancelled | Error::Budget { .. })) => return Err(e),
+            Err(e) => Some(e.to_string()),
+        };
+        let footer = run.footer(&call.model);
+        let answer = run.answer.trim();
+        let had = if answer.is_empty() {
+            "It had nothing yet.".to_string()
+        } else {
+            format!("What it had:\n\n{answer}")
+        };
+        Ok(match (failed, run.stopped.take()) {
+            (Some(why), _) => ToolOutput::err(format!(
+                "The scout's request failed before it answered: {why}\n\n{had}\n\n{footer}"
+            )),
+            (None, Some(why)) => ToolOutput::ok(format!(
+                "The scout {why} before it answered. {had}\n\n{footer}"
+            )),
+            (None, None) => ToolOutput::ok(format!("{answer}\n\n{footer}")),
+        })
+    }
+
+    /// The scout's rounds, until it answers without a call, one of its
+    /// caps stops it, or its request fails. What it read and spent is in
+    /// `run` whichever way it ends.
+    async fn scout_rounds(&mut self, id: &str, call: &ScoutCall, run: &mut ScoutRun) -> Result<()> {
+        use crate::tools::ToolOutput;
         // The scout reads as this hat: the same secrets refused, the same
         // files in reach. Nothing it does streams to the screen but its
         // lookups, under the scout's own row.
         let mut ctx = self.ctx.clone();
         ctx.live = None;
-        let (mut reads, mut searches, mut listings) = (0usize, 0usize, 0usize);
-        let mut rounds = 0u32;
-        let mut spent = 0.0f64;
-        let mut unpriced = false;
-        let mut tail: Vec<String> = Vec::new();
-        let mut answer = String::new();
-        let mut stopped: Option<String> = None;
-        let cap = scout_cfg.rounds.max(1);
+        let cap = call.cfg.rounds.max(1);
         loop {
             if self.ctx.cancel.is_cancelled() {
                 return Err(Error::Cancelled);
             }
-            if rounds >= cap {
-                stopped = Some(format!(
+            if run.rounds >= cap {
+                run.stopped = Some(format!(
                     "stopped after {cap} rounds ([scout] rounds in config.toml)"
                 ));
-                break;
+                return Ok(());
             }
-            if scout_cfg.max_usd > 0.0 && spent >= scout_cfg.max_usd {
-                stopped = Some(format!(
+            if call.cfg.max_usd > 0.0 && run.spent >= call.cfg.max_usd {
+                run.stopped = Some(format!(
                     "stopped at its {} cap ([scout] max_usd in config.toml)",
-                    crate::format_usd_fine(scout_cfg.max_usd)
+                    crate::format_usd_fine(call.cfg.max_usd)
                 ));
-                break;
+                return Ok(());
             }
-            self.admit_request(&model)?;
-            rounds += 1;
+            self.admit_request(&call.model)?;
+            run.rounds += 1;
             let req = CompletionRequest {
-                model: model.clone(),
-                system: Some(system.clone()),
-                messages: messages.clone(),
-                tools: tools.clone(),
-                max_tokens: Some(Self::output_allowance(window).min(SCOUT_MAX_OUTPUT)),
-                reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role, &model),
+                model: call.model.clone(),
+                system: Some(call.system.clone()),
+                messages: run.messages.clone(),
+                tools: call.tools.clone(),
+                max_tokens: Some(Self::output_allowance(call.window).min(SCOUT_MAX_OUTPUT)),
+                reasoning: crate::config::reasoning_effort(
+                    self.cfg.as_ref(),
+                    self.role,
+                    &call.model,
+                ),
             };
-            crate::compact::ensure_fits(&req, window)?;
+            crate::compact::ensure_fits(&req, call.window)?;
             let mut stream = tokio::select! {
                 biased;
                 () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
-                s = provider.stream(req) => s?,
+                s = call.provider.stream(req) => s?,
             };
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
@@ -3431,29 +3576,28 @@ impl Agent {
                 Ok(())
             }
             .await;
-            // Charged to this hat, as the question was asked in it. The
-            // scout's prompt is its own, not the conversation's: the
-            // context ring keeps the hat's last size.
-            let conversation_tokens = self.last_input_tokens;
+            // Charged to this hat, as the question was asked in it, and
+            // marked the scout's: its prompt is not the conversation's
+            // size, and its model has not read the conversation.
             let charged = self.record_call(
-                &connection,
-                &model,
+                &call.connection,
+                &call.model,
                 usage,
                 reported_cost,
                 saw_usage,
                 received.is_ok() && saw_done,
+                true,
             );
-            self.last_input_tokens = conversation_tokens;
             match charged? {
-                Some(c) => spent += c,
-                None => unpriced = true,
+                Some(c) => run.spent += c,
+                None => run.unpriced = true,
             }
             received?;
             if let Some(e) = self.over_budget() {
                 return Err(e);
             }
             let call_list = calls.finish();
-            messages.push(Message {
+            run.messages.push(Message {
                 role: "assistant".into(),
                 content: text.clone(),
                 tool_call_id: None,
@@ -3464,91 +3608,54 @@ impl Agent {
                 },
                 messages_blocks: echo.finish(),
             });
-            answer = text;
+            run.answer = text;
             if call_list.is_empty() {
-                break;
+                return Ok(());
             }
-            for call in &call_list {
+            for tc in &call_list {
                 if self.ctx.cancel.is_cancelled() {
                     return Err(Error::Cancelled);
                 }
-                let out = match serde_json::from_str::<Value>(&call.arguments) {
+                let out = match serde_json::from_str::<Value>(&tc.arguments) {
                     Err(e) => ToolOutput::err(format!(
                         "not run: the arguments were not valid JSON ({e}). Send the call \
                          again with the arguments as one JSON object."
                     )),
-                    Ok(_) if !crate::tools::SCOUT_TOOLS.contains(&call.name.as_str()) => {
+                    Ok(_) if !crate::tools::SCOUT_TOOLS.contains(&tc.name.as_str()) => {
                         ToolOutput::err(format!(
                             "{} is not the scout's: it has read_file, list_dir, grep and glob \
                              only. Answer from what you can read.",
-                            call.name
+                            tc.name
                         ))
                     }
                     Ok(a) => {
-                        match call.name.as_str() {
-                            "read_file" => reads += 1,
-                            "list_dir" => listings += 1,
-                            _ => searches += 1,
+                        match tc.name.as_str() {
+                            "read_file" => run.reads += 1,
+                            "list_dir" => run.listings += 1,
+                            _ => run.searches += 1,
                         }
-                        tail.push(tool_summary(&call.name, &a));
-                        if tail.len() > 3 {
-                            tail.remove(0);
+                        run.tail.push(tool_summary(&tc.name, &a));
+                        if run.tail.len() > 3 {
+                            run.tail.remove(0);
                         }
                         if let Some(sink) = &self.sink {
                             let _ = sink.send(AgentEvent::ToolLive {
                                 id: id.to_string(),
-                                tail: tail.clone(),
+                                tail: run.tail.clone(),
                             });
                         }
-                        gated_execute(&call.name, &a, &ctx)?
+                        gated_execute(&tc.name, &a, &ctx)?
                     }
                 };
-                messages.push(Message {
+                run.messages.push(Message {
                     role: "tool".into(),
                     content: out.text,
-                    tool_call_id: Some(call.id.clone()),
+                    tool_call_id: Some(tc.id.clone()),
                     tool_calls: None,
                     messages_blocks: None,
                 });
             }
         }
-        let mut looked = Vec::new();
-        if reads > 0 {
-            looked.push(format!("{reads} read{}", if reads == 1 { "" } else { "s" }));
-        }
-        if searches > 0 {
-            looked.push(format!(
-                "{searches} search{}",
-                if searches == 1 { "" } else { "es" }
-            ));
-        }
-        if listings > 0 {
-            looked.push(format!(
-                "{listings} listing{}",
-                if listings == 1 { "" } else { "s" }
-            ));
-        }
-        if looked.is_empty() {
-            looked.push("nothing read".into());
-        }
-        let footer = format!(
-            "[scout: {} · {rounds} round{} · {model} · {}]",
-            looked.join(" · "),
-            if rounds == 1 { "" } else { "s" },
-            if unpriced {
-                "$?.??".to_string()
-            } else {
-                crate::format_usd_fine(spent)
-            }
-        );
-        let text = match stopped {
-            Some(why) => format!(
-                "The scout {why} before it answered. What it had:\n\n{}\n\n{footer}",
-                answer.trim()
-            ),
-            None => format!("{}\n\n{footer}", answer.trim()),
-        };
-        Ok(ToolOutput::ok(text))
     }
 
     pub(crate) fn system_prompt(&self) -> Result<String> {
@@ -3590,6 +3697,7 @@ impl Agent {
     }
 
     /// Finalize accounting before propagating stream errors or cancellation.
+    #[allow(clippy::too_many_arguments)]
     fn record_call(
         &mut self,
         connection: &str,
@@ -3598,6 +3706,7 @@ impl Agent {
         reported_cost: Option<f64>,
         saw_usage: bool,
         complete: bool,
+        scout: bool,
     ) -> Result<Option<f64>> {
         let local = self
             .cfg
@@ -3612,9 +3721,11 @@ impl Agent {
         };
         let mut record = spend_record(connection.into(), model.into(), self.role, usage, total_usd);
         record.incomplete = !local && reported_cost.is_none() && (!complete || !saw_usage);
+        record.scout = scout;
         let incomplete = record.incomplete;
         self.session.record_spend(record)?;
-        if saw_usage && usage.input_tokens > 0 {
+        // The conversation's size: a scout's prompt is its own.
+        if saw_usage && usage.input_tokens > 0 && !scout {
             self.last_input_tokens = Some(usage.input_tokens);
         }
         self.emit(AgentEvent::Spend {
@@ -3627,6 +3738,7 @@ impl Agent {
             cache_write_tokens: usage.cache_write_tokens,
             total_usd,
             incomplete,
+            scout,
         })?;
         if incomplete && (self.budget_usd > 0.0 || !complete) {
             self.emit(AgentEvent::Notice { message: "This request's accounting is incomplete. Reported tokens and known cost have been saved as a lower bound; a configured budget will stop further requests in this session.".into() })?;
@@ -3806,6 +3918,7 @@ mod tests {
                 },
                 Some(0.25),
                 true,
+                false,
                 false,
             )
             .unwrap();
@@ -4015,8 +4128,11 @@ mod tests {
         assert!(spend.iter().all(|s| s.role == Role::Plan));
     }
 
-    /// The scout's own prompt size is not the conversation's: the context
-    /// ring keeps the hat's last size while the scout reads.
+    /// The scout's rows are charged to the hat and marked the scout's: the
+    /// context ring keeps the hat's last size while the scout reads, a
+    /// resumed session seeds it from the hat's last call rather than the
+    /// scout's, and the scout's model is not the one that read the
+    /// conversation.
     #[tokio::test]
     async fn a_scouts_prompt_is_not_the_conversations_size() {
         let usage = |n: u64| {
@@ -4042,33 +4158,119 @@ mod tests {
                 usage(400),
                 StreamDelta::Done,
             ],
-            vec![
-                StreamDelta::ToolCall {
-                    stream_key: None,
-                    id: "s2".into(),
-                    name: "scout".into(),
-                    arguments: serde_json::json!({"question": "and again?"}).to_string(),
-                },
-                usage(5_200),
-                StreamDelta::Done,
-            ],
+            // The hat's answer reports no usage: the newest row with
+            // tokens is the scout's.
+            say("The scout says hi there."),
         ]));
+        let mut cfg = crate::config::Config::default();
+        cfg.scout.model = Some("cheap-reader".into());
+        agent.cfg = Some(cfg);
         agent.role = Role::Plan;
         agent.ctx.role = Role::Plan;
-        agent.max_turns = 2;
         agent.turn("what does hello.txt say?").await.unwrap();
-        // The last conversation call was 5,200 tokens; the scout's 400
-        // never replaced it.
-        assert_eq!(agent.last_input_tokens, Some(5_200));
+        // The last conversation call was 5,000 tokens; the scout's 400
+        // never replaced it, in the agent or in the session it resumes from.
+        assert_eq!(agent.last_input_tokens, Some(5_000));
+        assert_eq!(agent.session.last_input_tokens(), Some(5_000));
         let spend = agent.session.spend_log().unwrap();
         assert_eq!(
             spend
                 .iter()
-                .take(3)
-                .map(|s| s.input_tokens)
+                .map(|s| (s.input_tokens, s.scout, s.model.as_str()))
                 .collect::<Vec<_>>(),
-            vec![5_000, 400, 5_200]
+            vec![
+                (5_000, false, "grok-4.6"),
+                (400, true, "cheap-reader"),
+                (0, false, "grok-4.6")
+            ]
         );
+        assert!(spend.iter().all(|s| s.role == Role::Plan));
+        // The hat's model read the conversation; the scout's did not.
+        assert_eq!(agent.last_reader().as_deref(), Some("grok-4.6"));
+        let events = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        assert_eq!(
+            events
+                .lines()
+                .filter(|l| l.contains("\"scout\":true"))
+                .count(),
+            1,
+            "the screen is told which spend is the scout's"
+        );
+    }
+
+    /// A provider that fails one request, by its number, and replays the
+    /// rest.
+    struct FailsRequest {
+        inner: ReplayProvider,
+        at: usize,
+        seen: Mutex<usize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for FailsRequest {
+        async fn stream(&self, req: CompletionRequest) -> Result<crate::llm::DeltaStream> {
+            let n = {
+                let mut seen = self.seen.lock().unwrap();
+                *seen += 1;
+                *seen
+            };
+            if n == self.at {
+                return Err(Error::Provider("404 model not found".into()));
+            }
+            self.inner.stream(req).await
+        }
+        async fn list_models(&self) -> Result<Vec<crate::llm::ModelInfo>> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// The scout's own request fails (a 404, a dropped connection): the
+    /// hat gets that as the scout's result, with what it had, and goes on.
+    /// Its turn does not end.
+    #[tokio::test]
+    async fn a_failed_scout_request_is_its_result_and_the_turn_goes_on() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        agent.provider = Arc::new(FailsRequest {
+            inner: ReplayProvider::scripted(vec![
+                call(
+                    "scout",
+                    serde_json::json!({"question": "what does hello.txt say?"}),
+                ),
+                say("The scout could not answer; I read it myself."),
+            ]),
+            at: 2,
+            seen: Mutex::new(0),
+        });
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        let r = agent.turn("what does hello.txt say?").await.unwrap();
+        assert_eq!(r.text, "The scout could not answer; I read it myself.");
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(
+            result
+                .content
+                .starts_with("The scout's request failed before it answered: "),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains("404 model not found"),
+            "{}",
+            result.content
+        );
+        assert!(
+            result
+                .content
+                .contains("It had nothing yet.\n\n[scout: nothing read · 1 round ·"),
+            "{}",
+            result.content
+        );
+        assert_eq!(agent.session.spend_log().unwrap().len(), 2);
     }
 
     /// The build hat is refused the scout and told who has it; the scout
@@ -4287,6 +4489,95 @@ mod tests {
                 .iter()
                 .all(|m| !m.content.starts_with("[Ryter] `")),
             "a run file without a check ran one"
+        );
+    }
+
+    /// Esc while the check runs: the command is killed and its row is
+    /// answered, so the chat does not show it running still.
+    #[tokio::test]
+    async fn a_cancelled_check_answers_its_row() {
+        let (home, cwd, mut agent) = build_agent(vec![write("notes.txt", "one\n"), say("done")]);
+        let run = crate::run::RunFile {
+            check: Some("sleep 20".into()),
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        let cancel = agent.ctx.cancel.clone();
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            cancel.cancel();
+        });
+        let started = std::time::Instant::now();
+        let r = agent.turn("write the notes").await.unwrap();
+        t.join().unwrap();
+        assert_eq!(r.reason, StopReason::Cancelled);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        let events = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        let results: Vec<&str> = events
+            .lines()
+            .filter(|l| l.contains("\"id\":\"check-") && l.contains("tool_result"))
+            .collect();
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert!(
+            results[0].contains("cancelled by the user")
+                && results[0].contains("\"is_error\":true"),
+            "{}",
+            results[0]
+        );
+    }
+
+    /// The check Ryter runs after edits goes through the hooks the
+    /// model's own `run_project` call does: a hook that denies it is
+    /// obeyed, the row says so, and the model is told.
+    #[tokio::test]
+    async fn the_check_after_edits_runs_the_hooks() {
+        let (home, cwd, mut agent) = build_agent(vec![write("notes.txt", "one\n"), say("done")]);
+        let run = crate::run::RunFile {
+            check: Some("false".into()),
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        let deny = home.path().join("deny.sh");
+        std::fs::write(&deny, "#!/bin/sh\necho no-checks-here\nexit 2\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&deny, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        agent.ctx.hooks = Some(Arc::new(crate::hooks::HookSet::from_config(&[
+            crate::config::HookConfig {
+                event: "PreToolUse".into(),
+                command: Some(deny.to_string_lossy().into_owned()),
+                url: None,
+                matcher: Some("run_project".into()),
+            },
+        ])));
+        agent.turn("write the notes").await.unwrap();
+        let note = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "user" && m.content.starts_with("[Ryter] `"))
+            .map(|m| m.content.clone())
+            .unwrap();
+        assert!(
+            note.starts_with(
+                "[Ryter] `false` did not run after your edits to notes.txt: hook denied: \
+                 no-checks-here"
+            ),
+            "{note}"
+        );
+        let events = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        let results: Vec<&str> = events
+            .lines()
+            .filter(|l| l.contains("\"id\":\"check-") && l.contains("tool_result"))
+            .collect();
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert!(
+            results[0].contains("hook denied: no-checks-here")
+                && results[0].contains("\"is_error\":true"),
+            "{}",
+            results[0]
         );
     }
 

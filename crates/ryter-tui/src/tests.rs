@@ -839,6 +839,7 @@ fn spent(role: Role, usd: Option<f64>) -> AgentEvent {
         cache_write_tokens: 0,
         total_usd: usd,
         incomplete: false,
+        scout: false,
     }
 }
 

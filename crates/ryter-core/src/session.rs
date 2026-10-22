@@ -156,6 +156,11 @@ pub struct SpendRecord {
     /// Counts and any estimated cost are a lower bound after interruption.
     #[serde(default)]
     pub incomplete: bool,
+    /// A scout's call: charged to the hat that asked, but its prompt is
+    /// not the conversation's size and its model has not read the
+    /// conversation, so the context ring and the last reader skip it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub scout: bool,
 }
 
 /// Open session on disk.
@@ -505,10 +510,11 @@ impl Session {
         read_jsonl(&self.dir.join("spend.jsonl"))
     }
 
-    /// The newest provider `input_tokens` from the spend log, if any.
+    /// The newest provider `input_tokens` from the spend log, if any: the
+    /// conversation's size, so a scout's rows are passed over.
     pub fn last_input_tokens(&self) -> Option<u64> {
         self.spend_log().ok()?.into_iter().rev().find_map(|r| {
-            if r.input_tokens > 0 {
+            if r.input_tokens > 0 && !r.scout {
                 Some(r.input_tokens)
             } else {
                 None
@@ -708,11 +714,16 @@ pub fn spend_record(
         cache_write_tokens: usage.cache_write_tokens,
         total_usd,
         incomplete: false,
+        scout: false,
     }
 }
 
 fn is_zero(n: &u64) -> bool {
     *n == 0
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// What stands in for a result that never came.
