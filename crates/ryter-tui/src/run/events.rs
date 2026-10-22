@@ -751,8 +751,11 @@ fn on_spend(
     }
     if role.is_hat() {
         // Tokens this turn become exact once accounting lands (`R-ACT-07`).
-        view.activity.tokens = output_tokens;
-        view.activity.tokens_estimated = incomplete;
+        // A scout's output is its own: the strip keeps the hat's count.
+        if !scout {
+            view.activity.tokens = output_tokens;
+            view.activity.tokens_estimated = incomplete;
+        }
         match total_usd {
             Some(v) => view.activity.cost = Some(view.activity.cost.unwrap_or(0.0) + v),
             None => view.activity.cost_unknown = true,
@@ -1125,26 +1128,28 @@ mod tests {
     #[test]
     fn a_scouts_spend_leaves_the_ring_alone() {
         let mut v = view();
-        let spend = |input_tokens: u64, scout: bool| AgentEvent::Spend {
+        let spend = |input_tokens: u64, output_tokens: u64, scout: bool| AgentEvent::Spend {
             connection: "spacexsi".into(),
             model: "grok-4.6".into(),
             role: Role::Plan,
             input_tokens,
-            output_tokens: 10,
+            output_tokens,
             cached_tokens: 0,
             cache_write_tokens: 0,
             total_usd: Some(0.01),
             incomplete: false,
             scout,
         };
-        apply(&mut v, spend(5_000, false));
+        apply(&mut v, spend(5_000, 10, false));
         assert_eq!(v.ctx_tokens, Some(5_000));
-        apply(&mut v, spend(400, true));
+        assert_eq!(v.activity.tokens, 10);
+        apply(&mut v, spend(400, 900, true));
         assert_eq!(
             v.ctx_tokens,
             Some(5_000),
             "the scout's prompt moved the ring"
         );
+        assert_eq!(v.activity.tokens, 10, "the strip took the scout's output");
         assert_eq!(v.spend, Some(0.02), "the scout's cost is the hat's");
         assert_eq!(v.spend_rows_role["plan"].calls, 2);
     }

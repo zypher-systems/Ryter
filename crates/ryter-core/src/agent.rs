@@ -3471,6 +3471,16 @@ impl Agent {
         let failed = match self.scout_rounds(id, &call, &mut run).await {
             Ok(()) => None,
             Err(e @ (Error::Cancelled | Error::Budget { .. })) => return Err(e),
+            // A stream that broke before its usage arrived left the bill
+            // a lower bound. Under a budget the session admits no further
+            // request on one (`admit_request`), so the turn ends here, on
+            // the failed call, as it does for the hat's own: not on the
+            // next admission, after a tool result was written. The flag
+            // is this call's: an older one would have refused the scout's
+            // first request.
+            Err(e) if self.budget_usd > 0.0 && self.session.meta.spend_incomplete => {
+                return Err(e);
+            }
             Err(e) => Some(e.to_string()),
         };
         let footer = run.footer(&call.model);
@@ -4199,10 +4209,12 @@ mod tests {
     }
 
     /// A provider that fails one request, by its number, and replays the
-    /// rest.
+    /// rest. `mid_stream` fails it after some text and before any usage:
+    /// a connection dropped while the model was answering.
     struct FailsRequest {
         inner: ReplayProvider,
         at: usize,
+        mid_stream: bool,
         seen: Mutex<usize>,
     }
 
@@ -4215,7 +4227,14 @@ mod tests {
                 *seen
             };
             if n == self.at {
-                return Err(Error::Provider("404 model not found".into()));
+                if !self.mid_stream {
+                    return Err(Error::Provider("404 model not found".into()));
+                }
+                let deltas = vec![
+                    Ok(StreamDelta::Text("The name comes".into())),
+                    Err(Error::Provider("stream dropped".into())),
+                ];
+                return Ok(Box::pin(futures_util::stream::iter(deltas)));
             }
             self.inner.stream(req).await
         }
@@ -4239,6 +4258,7 @@ mod tests {
                 say("The scout could not answer; I read it myself."),
             ]),
             at: 2,
+            mid_stream: false,
             seen: Mutex::new(0),
         });
         agent.role = Role::Plan;
@@ -4271,6 +4291,110 @@ mod tests {
             result.content
         );
         assert_eq!(agent.session.spend_log().unwrap().len(), 2);
+    }
+
+    /// A scout that fails mid-stream, with a budget set. The provider's
+    /// text fetched this request was never billed to us. The scout's bill
+    /// is incomplete, so the session can't admit another request.
+    fn scout_dropped_mid_stream(budget_usd: f64) -> (TempDir, TempDir, Agent) {
+        let (home, cwd, mut agent) = setup(ReplayProvider::scripted(vec![]));
+        // The hat's own calls are billed in full: the only incomplete row
+        // is the scout's.
+        let billed = |mut deltas: Vec<StreamDelta>| {
+            let at = deltas.len() - 1;
+            deltas.insert(
+                at,
+                StreamDelta::Usage(Usage {
+                    input_tokens: 100,
+                    output_tokens: 10,
+                    ..Usage::default()
+                }),
+            );
+            deltas
+        };
+        agent.provider = Arc::new(FailsRequest {
+            inner: ReplayProvider::scripted(vec![
+                billed(call(
+                    "scout",
+                    serde_json::json!({"question": "what does hello.txt say?"}),
+                )),
+                billed(say("The scout could not answer; I read it myself.")),
+            ]),
+            at: 2,
+            mid_stream: true,
+            seen: Mutex::new(0),
+        });
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        agent.budget_usd = budget_usd;
+        (home, cwd, agent)
+    }
+
+    /// The scout's stream breaks before its usage arrives. Without a
+    /// budget the failure is the scout's result and the turn goes on; the
+    /// session's accounting is marked incomplete, as the hat's own would
+    /// be, since the bill is a lower bound.
+    #[tokio::test]
+    async fn a_scout_stream_dropped_without_a_budget_is_its_result() {
+        let (_home, _cwd, mut agent) = scout_dropped_mid_stream(0.0);
+        let r = agent.turn("what does hello.txt say?").await.unwrap();
+        assert_eq!(r.text, "The scout could not answer; I read it myself.");
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(
+            result
+                .content
+                .starts_with("The scout's request failed before it answered: ")
+                && result.content.contains("stream dropped"),
+            "{}",
+            result.content
+        );
+        let rows = agent.session.spend_log().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(!rows[0].incomplete && rows[1].scout && rows[1].incomplete);
+        assert!(agent.session.meta.spend_incomplete);
+    }
+
+    /// With a budget, an incomplete bill admits no further request. The
+    /// turn ends on the scout's failed call, as it would on the hat's own,
+    /// not on the next admission after a tool result was written; the
+    /// next turn is refused by the budget, as the contract says.
+    #[tokio::test]
+    async fn a_scout_stream_dropped_under_a_budget_ends_the_turn() {
+        let (_home, _cwd, mut agent) = scout_dropped_mid_stream(5.0);
+        let err = agent.turn("what does hello.txt say?").await.unwrap_err();
+        assert!(
+            matches!(&err, Error::Provider(m) if m == "stream dropped"),
+            "{err}"
+        );
+        // The call is answered as every unrun call is when a turn ends,
+        // not with the scout's result.
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert_eq!(result.content, "not run: provider: stream dropped");
+        let rows = agent.session.spend_log().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows[1].scout && rows[1].incomplete);
+        assert!(agent.session.meta.spend_incomplete);
+        let err = agent.turn("and now?").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::Budget {
+                    incomplete: true,
+                    ..
+                }
+            ),
+            "{err}"
+        );
     }
 
     /// The build hat is refused the scout and told who has it; the scout
