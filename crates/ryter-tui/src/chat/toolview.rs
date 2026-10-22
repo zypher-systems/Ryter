@@ -140,6 +140,16 @@ pub fn test_summary(output: &str) -> Option<String> {
             None => format!("{pass} passed"),
         });
     }
+    // A check's report leads with its count: `2 errors`, or `passed`.
+    if let Some(first) = output.lines().next().map(str::trim) {
+        let (n, word) = first.split_once(' ').unwrap_or(("", ""));
+        if n.chars().all(|c| c.is_ascii_digit())
+            && !n.is_empty()
+            && matches!(word, "error" | "errors")
+        {
+            return Some(first.to_string());
+        }
+    }
     let found = output.lines().rev().map(str::trim).find(|l| {
         let low = l.to_ascii_lowercase();
         (low.contains(" passed")
@@ -572,6 +582,16 @@ mod tests {
         let out = "The scout stopped at its $0.01 cap before it answered. What it had:\n\nReading.\n\n[scout: 1 read · 1 round · grok-4.6 · $0.02]";
         assert_eq!(result("scout", out, false).0, "stopped 1 read · $0.02");
         assert_eq!(result("scout", "no line", false).0, "✓");
+    }
+
+    /// A check's row says its count: `✗ 2 errors`, and `✓` when it passed.
+    #[test]
+    fn a_check_row_says_how_many_errors() {
+        let out = "2 errors\n\nerror[E0308]: mismatched types\n --> src/main.rs:4:9\n\nerror: x\n --> src/a.rs:1:1";
+        let (d, body) = result("run_project", out, true);
+        assert_eq!(d, "✗ 2 errors");
+        assert!(body.contains("error[E0308]"), "{body}");
+        assert_eq!(result("run_project", "passed", false).0, "✓");
     }
 
     /// From a real run: the cause was above npm's closing boilerplate.

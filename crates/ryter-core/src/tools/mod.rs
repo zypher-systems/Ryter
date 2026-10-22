@@ -469,24 +469,30 @@ fn spec(name: &str) -> Option<ToolSpec> {
              The start command may return (`docker compose up -d --wait`) or stay in the \
              foreground (`npm run dev`): Ryter runs it and keeps it up. Approved, it is \
              saved as `.ryter/run.toml` and Ryter runs these commands with run_project, \
-             without asking again. Leave out what the project doesn't have.",
+             without asking again. `check` is the project's fast check (`cargo check`, \
+             `tsc --noEmit`, `pyright`, `go vet`): Ryter runs it itself after each build \
+             round that edited files and hands you the errors, so you need not run it. \
+             Leave out what the project doesn't have.",
             json!({"type":"object","properties":{
                 "start":{"type":"string","description":"starts the product"},
                 "ready":{"type":"string","description":"an http address on this machine that answers once it is up, e.g. http://localhost:8000/healthz"},
-                "test":{"type":"array","items":{"type":"string"},"description":"the project's test and check commands, in order"},
+                "test":{"type":"array","items":{"type":"string"},"description":"the project's test commands, in order"},
+                "check":{"type":"string","description":"the project's fast check, run by Ryter after your edits: cargo check, tsc --noEmit, pyright, go vet"},
                 "stop":{"type":"string","description":"stops what start started"}
             }}),
         ),
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
-             `test` runs the project's test commands and returns their output. `stop` \
-             stops what was started (the user usually does this, with /stop: leave the \
-             product running when you finish). `status` says whether it is up. With no \
-             run file yet, propose one with propose_run. The build and audit hats run \
-             these; the plan hat starts nothing.",
+             `test` runs the project's test commands and returns their output. `check` \
+             runs its fast check and returns the errors (Ryter also runs it by itself \
+             after each build round that edited files). `stop` stops what was started \
+             (the user usually does this, with /stop: leave the product running when you \
+             finish). `status` says whether it is up. With no run file yet, propose one \
+             with propose_run. The build and audit hats run these; the plan hat starts \
+             nothing.",
             json!({"type":"object","properties":{
-                "action":{"type":"string","enum":["start","test","stop","status"]}
+                "action":{"type":"string","enum":["start","test","check","stop","status"]}
             },"required":["action"]}),
         ),
         "request_hat" => (

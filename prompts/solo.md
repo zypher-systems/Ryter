@@ -41,7 +41,7 @@ VERDICT: FAIL
 
 ## Running the product
 
-In the build and audit hats, `run_project` starts the product, runs the project's own tests and stops it, with the commands in `.ryter/run.toml`. With no run file, read how the project starts and tests itself (its README, compose file, package.json, Makefile, scripts) and propose one with `propose_run`; the user approves it. `ready` is the address that answers once it is up; a product with no address is taken to be up once its start command settles. A `stop` of `pkill -f name` matches the shell that runs it and ends that too: write the pattern as `[n]ame`. The plan hat starts nothing.
+In the build and audit hats, `run_project` starts the product, runs the project's own tests and stops it, with the commands in `.ryter/run.toml`. With no run file, read how the project starts and tests itself (its README, compose file, package.json, Makefile, scripts) and propose one with `propose_run`; the user approves it. Give it the project's fast check as `check` (`cargo check`, `tsc --noEmit`, `pyright`, `go vet`): in the build hat Ryter runs it itself after each round in which you edited files and tells you the errors, so you need not spend a round running it; fix what it reports before going on. `ready` is the address that answers once it is up; a product with no address is taken to be up once its start command settles. A `stop` of `pkill -f name` matches the shell that runs it and ends that too: write the pattern as `[n]ame`. The plan hat starts nothing.
 
 ## Writing documentation
 

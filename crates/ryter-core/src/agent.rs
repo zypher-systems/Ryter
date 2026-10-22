@@ -122,6 +122,9 @@ pub struct Agent {
 
 /// Output ceiling per round of the conversation.
 const CONVERSATION_MAX_OUTPUT: u32 = 32_768;
+/// How long the project's fast check may take when Ryter runs it after a
+/// round's edits.
+const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 /// The most a scout's reply may run to: it reports, it does not draft.
 const SCOUT_MAX_OUTPUT: u32 = 4_096;
 /// A reply cut off at the ceiling this many times in a row ends the turn.
@@ -469,6 +472,8 @@ impl Agent {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
             }
+            // Files this round's edits landed in: the check runs after it.
+            let mut edited: Vec<String> = Vec::new();
             let (provider, model, connection) = self.hat_stack();
             self.admit_request(&model)?;
             self.maybe_compact(&mut system, &model, &connection)?;
@@ -834,6 +839,13 @@ impl Agent {
                 };
                 if !out.is_error {
                     self.note_created(&call.name, &args, out.diff.as_ref(), effects);
+                    if matches!(call.name.as_str(), "write" | "search_replace") {
+                        if let Some(p) = args.get("path").and_then(Value::as_str) {
+                            if !edited.iter().any(|e| e == p) {
+                                edited.push(p.to_string());
+                            }
+                        }
+                    }
                 }
                 let sig = format!("{}\u{0}{args}\u{0}{}", call.name, out.text);
                 if !out.is_error && matches!(call.name.as_str(), "write" | "search_replace") {
@@ -889,6 +901,13 @@ impl Agent {
                     tool_calls: None,
                     messages_blocks: None,
                 })?;
+            }
+            if self.role == Role::Build && !edited.is_empty() {
+                match self.check_after_edits(&edited).await {
+                    Ok(()) => {}
+                    Err(Error::Cancelled) => return self.finish_cancelled(last_text).await,
+                    Err(e) => return Err(e),
+                }
             }
         }
 
@@ -1463,8 +1482,102 @@ impl Agent {
                 [one] => one.clone(),
                 [first, rest @ ..] => format!("{first} (+{} more)", rest.len()),
             },
+            Some("check") => run.check.unwrap_or_default(),
             _ => String::new(),
         }
+    }
+
+    /// Run the project's fast check and say what it came to: the error
+    /// count and the errors, capped (`check::report`), with `ok` for a
+    /// clean run. `None` when the turn was cancelled meanwhile.
+    fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String)> {
+        use crate::tools::shell::Run;
+        let root = self.root();
+        let out = self.ctx.sandboxed(|| {
+            crate::tools::shell::run_command_live(
+                cmd,
+                &root,
+                CHECK_TIMEOUT,
+                &self.ctx.cancel,
+                self.ctx.live.as_ref(),
+            )
+        })?;
+        let (body, ok) = match out {
+            Run::Ok(o) => (o, true),
+            Run::Failed(o) => (o, false),
+            Run::TimedOut => (
+                format!("[did not finish in {}s]", CHECK_TIMEOUT.as_secs()),
+                false,
+            ),
+            Run::Cancelled => return Err(Error::Cancelled),
+        };
+        let (n, text) = crate::check::report(&body, ok);
+        Ok((ok, n, text))
+    }
+
+    /// After a build round that edited files: the project's approved
+    /// check, run by Ryter, its row in the chat, and what it found told
+    /// to the model before its next round. The model used to spend a
+    /// round running the check itself, or skip it. Only a run file the
+    /// user has approved as it stands: nothing is asked mid-round.
+    async fn check_after_edits(&mut self, edited: &[String]) -> Result<()> {
+        let root = self.root();
+        let crate::run::Found::Approved(run) = crate::run::find(&root, &self.home) else {
+            return Ok(());
+        };
+        let Some(cmd) = run.check.clone() else {
+            return Ok(());
+        };
+        if self.run_refused(&run).is_some() {
+            return Ok(());
+        }
+        let id = format!("check-{}-{}", self.turn, crate::event::now_ms());
+        self.emit(AgentEvent::ToolCall {
+            id: id.clone(),
+            name: "run_project".into(),
+            args: serde_json::json!({ "action": "check" }),
+            role: self.role,
+            summary: Some(cmd.clone()),
+            turn: self.turn,
+            at: crate::event::now_ms(),
+        })?;
+        let t0 = std::time::Instant::now();
+        self.listen_for_live(&id, "run_project");
+        let result = self.run_check(&cmd);
+        self.ctx.live = None;
+        let (ok, n, text) = result?;
+        self.emit(AgentEvent::ToolResult {
+            id,
+            output: text.clone(),
+            is_error: !ok,
+            duration_ms: Some(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            diff: None,
+        })?;
+        let files = if edited.len() == 1 {
+            edited[0].clone()
+        } else {
+            format!("{} files", edited.len())
+        };
+        let content = if ok {
+            format!("[Ryter] `{cmd}` passed after your edits to {files}.")
+        } else if n == 0 {
+            format!(
+                "[Ryter] `{cmd}` {text}\n\nIt ran after your edits to {files}. See to it \
+                 before going on; Ryter runs it again after your next edits."
+            )
+        } else {
+            format!(
+                "[Ryter] `{cmd}` after your edits to {files}: {text}\n\nFix them before going \
+                 on; Ryter runs the check again after your next edits."
+            )
+        };
+        self.session.push_message(Message {
+            role: "user".into(),
+            content,
+            tool_call_id: None,
+            tool_calls: None,
+            messages_blocks: None,
+        })
     }
 
     /// Put how the project runs to the user. `Ok(None)` is their yes.
@@ -1880,12 +1993,14 @@ impl Agent {
             start: text("start"),
             ready: text("ready"),
             test,
+            check: text("check"),
             stop: text("stop"),
         }
         .tidy();
         if run.is_empty() {
             return Ok(ToolOutput::err(
-                "propose_run needs at least one of `start`, `ready`, `test` (a list) and `stop`",
+                "propose_run needs at least one of `start`, `ready`, `test` (a list), `check` \
+                 and `stop`",
             ));
         }
         if let Some(why) = self.run_refused(&run) {
@@ -2290,8 +2405,28 @@ impl Agent {
                     ToolOutput::err(text)
                 })
             }
+            "check" => {
+                let run = match self.approved_run()? {
+                    Ok(run) => run,
+                    Err(reply) => return Ok(reply),
+                };
+                let Some(cmd) = run.check else {
+                    return Ok(ToolOutput::err(format!(
+                        "`{}` has no check command. Run the project's check with bash, or \
+                         propose the file again with one.",
+                        crate::run::FILE
+                    )));
+                };
+                let (ok, _, text) = self.run_check(&cmd)?;
+                let text = format!("$ {cmd}\n{text}");
+                Ok(if ok {
+                    ToolOutput::ok(text)
+                } else {
+                    ToolOutput::err(text)
+                })
+            }
             other => Ok(ToolOutput::err(format!(
-                "run_project: unknown action {other:?}: start, test, stop, or status"
+                "run_project: unknown action {other:?}: start, test, check, stop, or status"
             ))),
         }
     }
@@ -4040,6 +4175,119 @@ mod tests {
             result.content
         );
         assert_eq!(agent.session.spend_log().unwrap().len(), 3);
+    }
+
+    /// After a build round that edited a file, Ryter runs the approved
+    /// run file's check itself: its row is in the events, and what it
+    /// found is told to the model before its next round. A round with no
+    /// edit runs no check; a passing check says so in a line.
+    #[tokio::test]
+    async fn the_projects_check_runs_after_a_round_that_edited_and_its_errors_reach_the_model() {
+        let (home, cwd, mut agent) = build_agent(vec![
+            write("notes.txt", "one\n"),
+            vec![
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "b1".into(),
+                    name: "bash".into(),
+                    arguments: serde_json::json!({"command": "cat notes.txt"}).to_string(),
+                },
+                StreamDelta::Done,
+            ],
+            write("check.sh", "exit 0\n"),
+            say("done"),
+        ]);
+        // The check fails while check.sh says so, and passes once the
+        // third round rewrites it.
+        std::fs::write(
+            cwd.path().join("check.sh"),
+            "printf 'error[E0308]: mismatched types\\n --> src/main.rs:4:9\\n'; exit 1\n",
+        )
+        .unwrap();
+        let run = crate::run::RunFile {
+            check: Some("sh check.sh".into()),
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.text, "done");
+        let notes: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "user" && m.content.starts_with("[Ryter] `sh check.sh`"))
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(
+            notes[0].starts_with(
+                "[Ryter] `sh check.sh` after your edits to notes.txt: 1 error\n\nerror[E0308]"
+            ),
+            "{}",
+            notes[0]
+        );
+        assert!(
+            notes[0].ends_with(
+                "Fix them before going on; Ryter runs the check again after your next edits."
+            ),
+            "{}",
+            notes[0]
+        );
+        assert_eq!(
+            notes[1],
+            "[Ryter] `sh check.sh` passed after your edits to check.sh."
+        );
+        let events = std::fs::read_to_string(agent.session.dir.join("events.jsonl")).unwrap();
+        let checks: Vec<&str> = events
+            .lines()
+            .filter(|l| l.contains("\"action\":\"check\""))
+            .collect();
+        assert_eq!(checks.len(), 2, "{checks:?}");
+        assert!(checks[0].contains("\"summary\":\"sh check.sh\""));
+        let results: Vec<&str> = events
+            .lines()
+            .filter(|l| l.contains("\"id\":\"check-") && l.contains("tool_result"))
+            .collect();
+        assert_eq!(results.len(), 2, "{results:?}");
+        assert!(results[0].contains("\"is_error\":true"));
+        assert!(results[1].contains("\"is_error\":false"));
+    }
+
+    /// Without an approved run file, or with one that has no check, a
+    /// build round's edits are followed by nothing.
+    #[tokio::test]
+    async fn no_check_runs_without_an_approved_one() {
+        let (_home, cwd, mut agent) = build_agent(vec![write("notes.txt", "one\n"), say("done")]);
+        std::fs::create_dir_all(cwd.path().join(".ryter")).unwrap();
+        std::fs::write(
+            cwd.path().join(".ryter/run.toml"),
+            "check = \"sh -c 'exit 1'\"\n",
+        )
+        .unwrap();
+        agent.turn("write the notes").await.unwrap();
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .all(|m| !m.content.starts_with("[Ryter] `")),
+            "an unapproved run file's check ran"
+        );
+        let (home, cwd, mut again) = build_agent(vec![write("notes.txt", "two\n"), say("done")]);
+        let run = crate::run::RunFile {
+            test: vec!["true".into()],
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        again.turn("write the notes").await.unwrap();
+        assert!(
+            again
+                .session
+                .transcript
+                .iter()
+                .all(|m| !m.content.starts_with("[Ryter] `")),
+            "a run file without a check ran one"
+        );
     }
 
     fn repo_setup(provider: ReplayProvider) -> (TempDir, TempDir, Agent) {

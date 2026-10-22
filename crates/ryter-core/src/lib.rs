@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod audit;
 pub mod cancel;
+pub mod check;
 pub mod clock;
 pub mod compact;
 pub mod config;

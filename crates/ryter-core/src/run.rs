@@ -49,6 +49,11 @@ pub struct RunFile {
         deserialize_with = "one_or_many"
     )]
     pub test: Vec<String>,
+    /// The project's fast check (`cargo check`, `tsc --noEmit`, `pyright`,
+    /// `go vet`), which Ryter runs itself after a build round that edited
+    /// files, and gives the model the errors of.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<String>,
     /// Stops what `start` started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<String>,
@@ -86,13 +91,18 @@ impl RunFile {
         self.start = self.start.and_then(one);
         self.ready = self.ready.and_then(one);
         self.stop = self.stop.and_then(one);
+        self.check = self.check.and_then(one);
         self.test = self.test.into_iter().filter_map(one).collect();
         self
     }
 
     /// Whether it says nothing at all.
     pub fn is_empty(&self) -> bool {
-        self.start.is_none() && self.ready.is_none() && self.test.is_empty() && self.stop.is_none()
+        self.start.is_none()
+            && self.ready.is_none()
+            && self.test.is_empty()
+            && self.check.is_none()
+            && self.stop.is_none()
     }
 
     /// Every command in it, in the order they would run.
@@ -100,6 +110,7 @@ impl RunFile {
         self.start
             .iter()
             .chain(self.test.iter())
+            .chain(self.check.iter())
             .chain(self.stop.iter())
             .map(String::as_str)
             .collect()
@@ -118,6 +129,9 @@ impl RunFile {
         for (i, t) in self.test.iter().enumerate() {
             rows.push((if i == 0 { "test" } else { "" }, t.clone()));
         }
+        if let Some(s) = &self.check {
+            rows.push(("check", s.clone()));
+        }
         if let Some(s) = &self.stop {
             rows.push(("stop", s.clone()));
         }
@@ -128,7 +142,8 @@ impl RunFile {
     pub fn text(&self) -> String {
         let mut s = String::from(
             "# How this project runs. Ryter starts it, waits for `ready` to answer,\n\
-             # runs `test`, and stops it with `stop`. Change it here or ask the build\n\
+             # runs `test`, and stops it with `stop`; `check` is the fast check it runs\n\
+             # itself after the build hat's edits. Change it here or ask the build\n\
              # hat to propose a new one; Ryter asks you to approve it again.\n",
         );
         if let Some(v) = &self.start {
@@ -147,6 +162,9 @@ impl RunFile {
                 }
                 s.push_str("]\n");
             }
+        }
+        if let Some(v) = &self.check {
+            s.push_str(&format!("check = {}\n", quoted(v)));
         }
         if let Some(v) = &self.stop {
             s.push_str(&format!("stop  = {}\n", quoted(v)));
@@ -873,6 +891,7 @@ mod tests {
                 "docker compose run --rm web pytest -q".into(),
                 "docker compose run --rm web ruff check .".into(),
             ],
+            check: None,
             stop: Some("docker compose down".into()),
         }
     }
@@ -979,12 +998,45 @@ mod tests {
             test: vec!["".into(), " npm test ".into()],
             stop: Some("   ".into()),
             ready: None,
+            check: None,
         }
         .tidy();
         assert_eq!(messy.start.as_deref(), Some("npm run\n dev"));
         assert_eq!(messy.test, ["npm test"]);
         assert_eq!(messy.stop, None);
         assert!(RunFile::default().is_empty() && !messy.is_empty());
+    }
+
+    /// `check` is the project's fast check, kept in the file after `test`
+    /// and shown on its own row; a file of only a check is not empty.
+    #[test]
+    fn a_check_command_is_kept_in_the_file() {
+        let run = RunFile {
+            check: Some("cargo check".into()),
+            test: vec!["cargo test".into()],
+            ..RunFile::default()
+        };
+        let text = run.text();
+        assert!(
+            text.ends_with("test  = [\"cargo test\"]\ncheck = \"cargo check\"\n"),
+            "{text}"
+        );
+        assert_eq!(toml::from_str::<RunFile>(&text).unwrap(), run);
+        assert_eq!(
+            run.rows(),
+            [
+                ("test", "cargo test".to_string()),
+                ("check", "cargo check".to_string())
+            ]
+        );
+        assert_eq!(run.commands(), ["cargo test", "cargo check"]);
+        let only = RunFile {
+            check: Some(" tsc --noEmit ".into()),
+            ..RunFile::default()
+        }
+        .tidy();
+        assert!(!only.is_empty());
+        assert_eq!(only.check.as_deref(), Some("tsc --noEmit"));
     }
 
     /// A run file counts only as the user approved it. One that came with
