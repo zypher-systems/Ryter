@@ -1,5 +1,7 @@
 # Copy to ~/.ryter/config.toml (chmod 600 if you put api_key here).
 
+# Used when no connection was used before; a connection that has a key is
+# preferred over one without, so one exported key is enough to start.
 default_connection = "spacexsi"
 
 [connections.spacexsi]

@@ -409,6 +409,7 @@ async fn run_prompt(
         last.as_ref(),
         cli.connection.as_deref(),
         cli.model.as_deref(),
+        |c| config::has_secret(&cfg, c),
     );
     // An explicit headless route is for this run, including hat switches.
     // Saved per-hat defaults must not silently select a different paid model.
@@ -645,7 +646,9 @@ fn models_cmd(connection: Option<&str>) -> ryter_core::Result<()> {
     let cfg = config::load(Some(&cwd), trusted)?;
     let home = config::home_dir();
     let last = config::load_last_route(&home);
-    let (conn_name, _) = config::resolve_route(&cfg, last.as_ref(), connection, None);
+    let (conn_name, _) = config::resolve_route(&cfg, last.as_ref(), connection, None, |c| {
+        config::has_secret(&cfg, c)
+    });
     let conn = cfg
         .connections
         .get(&conn_name)
@@ -840,7 +843,9 @@ fn mcp_serve() -> ryter_core::Result<()> {
     }
     let home = config::home_dir();
     let last = config::load_last_route(&home);
-    let (conn_name, model) = config::resolve_route(&cfg, last.as_ref(), None, None);
+    let (conn_name, model) = config::resolve_route(&cfg, last.as_ref(), None, None, |c| {
+        config::has_secret(&cfg, c)
+    });
     let conn = cfg
         .connections
         .get(&conn_name)
@@ -971,7 +976,9 @@ fn serve_host_from_config(
 ) -> ryter_core::Result<ServeHost> {
     let home = config::home_dir();
     let last = config::load_last_route(&home);
-    let (conn_name, model) = config::resolve_route(cfg, last.as_ref(), None, None);
+    let (conn_name, model) = config::resolve_route(cfg, last.as_ref(), None, None, |c| {
+        config::has_secret(cfg, c)
+    });
     let conn = cfg
         .connections
         .get(&conn_name)

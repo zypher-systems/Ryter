@@ -397,6 +397,14 @@ const BLOCKED_NAMES: &[&str] = &[
 ];
 
 fn blocked_host(host: &str) -> bool {
+    blocked_host_by(host, resolve_host)
+}
+
+/// `blocked_host` with the resolver handed in, so the rule on what a name
+/// resolves to is tested without the machine's DNS. A box behind a DNS
+/// proxy once answered `example.com` with a benchmarking address and the
+/// test that looked it up for real failed there.
+fn blocked_host_by(host: &str, resolve: impl Fn(&str) -> std::io::Result<Vec<IpAddr>>) -> bool {
     let h = host.trim_matches(['[', ']']).to_ascii_lowercase();
     let h = h.trim_end_matches('.');
     if BLOCKED_NAMES.contains(&h)
@@ -413,7 +421,7 @@ fn blocked_host(host: &str) -> bool {
     // A name is only safe if every address it resolves to is public. Checking
     // the string alone let `metadata.google.internal` and any attacker-owned
     // name pointing at 169.254.169.254 straight through.
-    match resolve_host(h) {
+    match resolve(h) {
         Ok(ips) => ips.is_empty() || ips.iter().any(|ip| is_nonpublic(*ip)),
         // Refuse what cannot be checked.
         Err(_) => true,
@@ -544,17 +552,32 @@ mod tests {
     }
 
     /// A name that resolves only to public addresses is allowed; one that
-    /// cannot be resolved is refused rather than assumed safe.
+    /// resolves to any non-public address, to nothing, or not at all is
+    /// refused rather than assumed safe. The resolver is handed in: the
+    /// machine's DNS plays no part.
     #[test]
     fn names_are_judged_by_what_they_resolve_to() {
+        let public: IpAddr = "93.184.215.14".parse().unwrap();
+        let metadata: IpAddr = "169.254.169.254".parse().unwrap();
+        let benchmarking: IpAddr = "198.18.0.1".parse().unwrap();
+        let to = |ips: Vec<IpAddr>| move |_: &str| Ok(ips.clone());
+        assert!(!blocked_host_by("example.com", to(vec![public])));
+        assert!(blocked_host_by("example.com", to(vec![public, metadata])));
         assert!(
-            blocked_host("this-name-does-not-exist.ryter-test.invalid"),
+            blocked_host_by("example.com", to(vec![benchmarking])),
+            "a name a proxy answers with a benchmarking address is refused"
+        );
+        assert!(blocked_host_by("example.com", to(vec![])));
+        assert!(
+            blocked_host_by("nowhere.invalid", |_| Err(std::io::Error::other(
+                "no such host"
+            ))),
             "unresolvable names must be refused"
         );
-        // Only meaningful with working DNS; skip offline.
-        if resolve_host("example.com").is_ok() {
-            assert!(!blocked_host("example.com"));
-        }
+        // The rule on the literal address and the name list needs no resolver.
+        let never = |_: &str| -> std::io::Result<Vec<IpAddr>> { panic!("not resolved") };
+        assert!(blocked_host_by("127.0.0.1", never));
+        assert!(blocked_host_by("metadata.google.internal", never));
     }
 
     /// `[search]` picks the provider; the key comes with it or is missing,
