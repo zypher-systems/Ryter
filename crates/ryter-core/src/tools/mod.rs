@@ -302,6 +302,15 @@ pub const TOOL_NAMES: &[&str] = &[
     "bash",
 ];
 
+/// The scout's tools: reading alone. It has no shell, so a read-only
+/// command the plan hat may run is not the scout's to run.
+pub const SCOUT_TOOLS: &[&str] = &["read_file", "list_dir", "grep", "glob"];
+
+/// JSON-schema tool specs for the scout.
+pub fn scout_specs() -> Vec<ToolSpec> {
+    SCOUT_TOOLS.iter().filter_map(|n| spec(n)).collect()
+}
+
 /// JSON-schema tool specs for this role (what the model is offered).
 pub fn specs_for(role: Role) -> Vec<ToolSpec> {
     specs_for_opts(role, false)
@@ -504,6 +513,18 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "version":{"type":"string","description":"the version in use, if any; advisories are then for it alone"}
             },"required":["ecosystem","name"]}),
         ),
+        "scout" => (
+            "Send one question about the project to a scout: a fresh model with only the read \
+             tools (read_file, list_dir, grep, glob), which reads what it needs and answers \
+             with its conclusion and the file paths and lines it rests on. Its reading stays \
+             out of this conversation, so use it for a question that takes reading several \
+             files (where something is defined and used, how a flow works, what a module \
+             does). Say what the answer is for. For the plan and audit hats.",
+            json!({"type":"object","properties":{
+                "question":{"type":"string","description":"one question, with what the answer is for"},
+                "hint":{"type":"string","description":"where to start: paths, names, a symbol"}
+            },"required":["question"]}),
+        ),
         "web_fetch" => (
             "HTTP GET a public URL and return its text. For the plan and audit hats. No localhost \
              or private addresses.",
@@ -553,6 +574,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "check_package",
             "web_fetch",
             "web_search",
+            "scout",
         ],
         // A role from crew mode, which is gone: nothing runs as it.
         Role::Crew => &[],
@@ -578,9 +600,9 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" | "file_audit" => Ok(ToolOutput::err(
-            format!("{name} is handled by the agent loop"),
-        )),
+        | "update_rules" | "propose_run" | "run_project" | "file_audit" | "scout" => Ok(
+            ToolOutput::err(format!("{name} is handled by the agent loop")),
+        ),
         "check_package" => packages::check_package(args, ctx),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
@@ -786,6 +808,13 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
             "denied: check_package (a dependency's latest release and known advisories) is the \
              plan and audit hats' question; the {} hat does not ask it. Tell the user, who can \
              switch to plan or audit.",
+            ctx.role
+        ))),
+        // The looking hats send a scout; the hats that build and document
+        // read for themselves.
+        Decision::Deny if name == "scout" => Ok(ToolOutput::err(format!(
+            "denied: scout is the plan and audit hats' tool; the {} hat reads for itself. \
+             Tell the user, who can switch to plan or audit.",
             ctx.role
         ))),
         // Say which gate refused. "not allowed for <role>" on every denial

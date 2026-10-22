@@ -81,7 +81,9 @@ pub use skill::{
     Skill, SlashCatalog, UserCommand, load_catalog, remove_catalog_entry, write_command,
     write_skill,
 };
-pub use spend::{PriceBook, Rates, Usage, format_rates, format_rates_short, format_usd};
+pub use spend::{
+    PriceBook, Rates, Usage, format_rates, format_rates_short, format_usd, format_usd_fine,
+};
 pub use tools::{
     Decision, ToolContext, ToolOutput, ToolsMode, decide, gated_execute, specs_for, specs_for_opts,
     tools_for,

@@ -122,6 +122,8 @@ pub struct Agent {
 
 /// Output ceiling per round of the conversation.
 const CONVERSATION_MAX_OUTPUT: u32 = 32_768;
+/// The most a scout's reply may run to: it reports, it does not draft.
+const SCOUT_MAX_OUTPUT: u32 = 4_096;
 /// A reply cut off at the ceiling this many times in a row ends the turn.
 const MAX_CUTOFFS: usize = 3;
 /// The same call with the same result this many times in a turn: tell the
@@ -170,7 +172,7 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         "web_search" | "search_tool" => args.get("query").and_then(Value::as_str).unwrap_or(""),
         "web_fetch" => args.get("url").and_then(Value::as_str).unwrap_or(""),
         "use_tool" | "check_package" => args.get("name").and_then(Value::as_str).unwrap_or(""),
-        "ask_user" => args.get("question").and_then(Value::as_str).unwrap_or(""),
+        "ask_user" | "scout" => args.get("question").and_then(Value::as_str).unwrap_or(""),
         _ => "",
     };
     let verb = match name {
@@ -779,6 +781,9 @@ impl Agent {
                         "not run: the arguments were not valid JSON ({e}). Send the call \
                          again with the arguments as one JSON object."
                     ))),
+                    // The scout streams its own rounds: not a closure for
+                    // `with_hooks`. Its reads run through the hooks one by one.
+                    Ok(_) if call.name == "scout" => self.scout(&call.id, &args).await,
                     Ok(_)
                         if matches!(
                             call.name.as_str(),
@@ -3126,6 +3131,291 @@ impl Agent {
         lead()
     }
 
+    /// The provider, model and connection the scout runs on: `[scout]`'s
+    /// when named there and keyed, otherwise the calling hat's.
+    fn scout_stack(
+        &self,
+        scout: &crate::config::ScoutConfig,
+    ) -> (Arc<dyn Provider>, String, String) {
+        let (provider, hat_model, hat_conn) = self.hat_stack();
+        let model = scout.model.clone();
+        let Some(cfg) = &self.cfg else {
+            return (provider, model.unwrap_or(hat_model), hat_conn);
+        };
+        let conn = scout
+            .connection
+            .as_deref()
+            .map(crate::config::canonical_connection)
+            .filter(|c| cfg.connections.contains_key(*c))
+            .map(str::to_string);
+        match conn {
+            Some(conn) if conn != hat_conn => {
+                let key = crate::config::resolve_secret(cfg, &crate::ids::ConnectionId::new(&conn));
+                match (key, cfg.connections.get(&conn)) {
+                    (Ok(key), Some(c)) => {
+                        let model = model
+                            .or_else(|| c.default_model.clone())
+                            .unwrap_or(hat_model);
+                        (Arc::new(crate::llm::http_provider(c, key)), model, conn)
+                    }
+                    // The scout's connection has no key: the hat's own.
+                    _ => (provider, hat_model, hat_conn),
+                }
+            }
+            _ => (provider, model.unwrap_or(hat_model), hat_conn),
+        }
+    }
+
+    /// One question sent to the scout: a fresh model with the read tools
+    /// alone, reading under this hat's gate, whose rounds stay out of this
+    /// conversation. The tool's result is its answer and a line saying what
+    /// the question cost, which the chat shows on the row.
+    async fn scout(&mut self, id: &str, args: &Value) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        if !matches!(self.role, Role::Plan | Role::Audit) {
+            return Ok(ToolOutput::err(format!(
+                "denied: scout is the plan and audit hats' tool; the {} hat reads for itself. \
+                 Tell the user, who can switch to plan or audit.",
+                self.role
+            )));
+        }
+        let Some(question) = args
+            .get("question")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+        else {
+            return Ok(ToolOutput::err(
+                "scout needs a question: one thing to find out, and what the answer is for",
+            ));
+        };
+        let hint = args
+            .get("hint")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|h| !h.is_empty());
+        let scout_cfg = self
+            .cfg
+            .as_ref()
+            .map(|c| c.scout.clone())
+            .unwrap_or_default();
+        let (provider, model, connection) = self.scout_stack(&scout_cfg);
+        let window = self.model_window(&model, &connection);
+        let system = crate::prompt::scout(self.project_root.as_deref());
+        let tools = crate::tools::scout_specs();
+        let mut messages = vec![Message {
+            role: "user".into(),
+            content: match hint {
+                Some(h) => format!("{question}\n\nStart from: {h}"),
+                None => question.to_string(),
+            },
+            tool_call_id: None,
+            tool_calls: None,
+            messages_blocks: None,
+        }];
+        // The scout reads as this hat: the same secrets refused, the same
+        // files in reach. Nothing it does streams to the screen but its
+        // lookups, under the scout's own row.
+        let mut ctx = self.ctx.clone();
+        ctx.live = None;
+        let (mut reads, mut searches, mut listings) = (0usize, 0usize, 0usize);
+        let mut rounds = 0u32;
+        let mut spent = 0.0f64;
+        let mut unpriced = false;
+        let mut tail: Vec<String> = Vec::new();
+        let mut answer = String::new();
+        let mut stopped: Option<String> = None;
+        let cap = scout_cfg.rounds.max(1);
+        loop {
+            if self.ctx.cancel.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
+            if rounds >= cap {
+                stopped = Some(format!(
+                    "stopped after {cap} rounds ([scout] rounds in config.toml)"
+                ));
+                break;
+            }
+            if scout_cfg.max_usd > 0.0 && spent >= scout_cfg.max_usd {
+                stopped = Some(format!(
+                    "stopped at its {} cap ([scout] max_usd in config.toml)",
+                    crate::format_usd_fine(scout_cfg.max_usd)
+                ));
+                break;
+            }
+            self.admit_request(&model)?;
+            rounds += 1;
+            let req = CompletionRequest {
+                model: model.clone(),
+                system: Some(system.clone()),
+                messages: messages.clone(),
+                tools: tools.clone(),
+                max_tokens: Some(Self::output_allowance(window).min(SCOUT_MAX_OUTPUT)),
+                reasoning: crate::config::reasoning_effort(self.cfg.as_ref(), self.role, &model),
+            };
+            crate::compact::ensure_fits(&req, window)?;
+            let mut stream = tokio::select! {
+                biased;
+                () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
+                s = provider.stream(req) => s?,
+            };
+            let mut text = String::new();
+            let mut calls = ToolCallAccumulator::default();
+            let mut echo = MessagesEchoAccumulator::default();
+            let mut usage = Usage::default();
+            let mut reported_cost: Option<f64> = None;
+            let mut saw_usage = false;
+            let mut saw_done = false;
+            let received: Result<()> = async {
+                loop {
+                    let delta = tokio::select! {
+                        biased;
+                        () = self.ctx.cancel.cancelled() => return Err(Error::Cancelled),
+                        d = stream.next() => d,
+                    };
+                    let Some(delta) = delta else { break };
+                    let delta = delta?;
+                    echo.push(&delta);
+                    match delta {
+                        StreamDelta::Text(t) => text.push_str(&t),
+                        StreamDelta::ToolCall {
+                            stream_key,
+                            id,
+                            name,
+                            arguments,
+                        } => calls.push_keyed(stream_key.as_deref(), &id, &name, &arguments),
+                        StreamDelta::Usage(u) => {
+                            usage = usage.merge(u);
+                            saw_usage = true;
+                        }
+                        StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                        StreamDelta::Done => saw_done = true,
+                        _ => {}
+                    }
+                }
+                Ok(())
+            }
+            .await;
+            // Charged to this hat, as the question was asked in it. The
+            // scout's prompt is its own, not the conversation's: the
+            // context ring keeps the hat's last size.
+            let conversation_tokens = self.last_input_tokens;
+            let charged = self.record_call(
+                &connection,
+                &model,
+                usage,
+                reported_cost,
+                saw_usage,
+                received.is_ok() && saw_done,
+            );
+            self.last_input_tokens = conversation_tokens;
+            match charged? {
+                Some(c) => spent += c,
+                None => unpriced = true,
+            }
+            received?;
+            if let Some(e) = self.over_budget() {
+                return Err(e);
+            }
+            let call_list = calls.finish();
+            messages.push(Message {
+                role: "assistant".into(),
+                content: text.clone(),
+                tool_call_id: None,
+                tool_calls: if call_list.is_empty() {
+                    None
+                } else {
+                    Some(call_list.clone())
+                },
+                messages_blocks: echo.finish(),
+            });
+            answer = text;
+            if call_list.is_empty() {
+                break;
+            }
+            for call in &call_list {
+                if self.ctx.cancel.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
+                let out = match serde_json::from_str::<Value>(&call.arguments) {
+                    Err(e) => ToolOutput::err(format!(
+                        "not run: the arguments were not valid JSON ({e}). Send the call \
+                         again with the arguments as one JSON object."
+                    )),
+                    Ok(_) if !crate::tools::SCOUT_TOOLS.contains(&call.name.as_str()) => {
+                        ToolOutput::err(format!(
+                            "{} is not the scout's: it has read_file, list_dir, grep and glob \
+                             only. Answer from what you can read.",
+                            call.name
+                        ))
+                    }
+                    Ok(a) => {
+                        match call.name.as_str() {
+                            "read_file" => reads += 1,
+                            "list_dir" => listings += 1,
+                            _ => searches += 1,
+                        }
+                        tail.push(tool_summary(&call.name, &a));
+                        if tail.len() > 3 {
+                            tail.remove(0);
+                        }
+                        if let Some(sink) = &self.sink {
+                            let _ = sink.send(AgentEvent::ToolLive {
+                                id: id.to_string(),
+                                tail: tail.clone(),
+                            });
+                        }
+                        gated_execute(&call.name, &a, &ctx)?
+                    }
+                };
+                messages.push(Message {
+                    role: "tool".into(),
+                    content: out.text,
+                    tool_call_id: Some(call.id.clone()),
+                    tool_calls: None,
+                    messages_blocks: None,
+                });
+            }
+        }
+        let mut looked = Vec::new();
+        if reads > 0 {
+            looked.push(format!("{reads} read{}", if reads == 1 { "" } else { "s" }));
+        }
+        if searches > 0 {
+            looked.push(format!(
+                "{searches} search{}",
+                if searches == 1 { "" } else { "es" }
+            ));
+        }
+        if listings > 0 {
+            looked.push(format!(
+                "{listings} listing{}",
+                if listings == 1 { "" } else { "s" }
+            ));
+        }
+        if looked.is_empty() {
+            looked.push("nothing read".into());
+        }
+        let footer = format!(
+            "[scout: {} · {rounds} round{} · {model} · {}]",
+            looked.join(" · "),
+            if rounds == 1 { "" } else { "s" },
+            if unpriced {
+                "$?.??".to_string()
+            } else {
+                crate::format_usd_fine(spent)
+            }
+        );
+        let text = match stopped {
+            Some(why) => format!(
+                "The scout {why} before it answered. What it had:\n\n{}\n\n{footer}",
+                answer.trim()
+            ),
+            None => format!("{}\n\n{footer}", answer.trim()),
+        };
+        Ok(ToolOutput::ok(text))
+    }
+
     pub(crate) fn system_prompt(&self) -> Result<String> {
         // Every hat shares one prompt: the hat is a note on each message, so
         // switching doesn't change the prompt's prefix (or its cache).
@@ -3530,6 +3820,228 @@ mod tests {
     }
 
     /// [`setup`] in a git repository, with a configuration.
+    /// The plan hat sends a question to the scout; the scout reads and
+    /// answers on the same provider. Its read is not in the conversation,
+    /// its answer and the cost line are the tool's result, and every call
+    /// is charged to the plan hat.
+    #[tokio::test]
+    async fn a_scout_reads_for_the_plan_hat_and_its_reading_stays_out_of_the_conversation() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            call(
+                "scout",
+                serde_json::json!({"question": "what does hello.txt say?"}),
+            ),
+            vec![
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "r1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
+                },
+                StreamDelta::ReportedCost(0.002),
+                StreamDelta::Done,
+            ],
+            vec![
+                StreamDelta::Text("hello.txt says `hi there` (hello.txt:1).".into()),
+                StreamDelta::ReportedCost(0.001),
+                StreamDelta::Done,
+            ],
+            say("The scout read it: hi there."),
+        ]));
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        let r = agent.turn("what does hello.txt say?").await.unwrap();
+        assert_eq!(r.text, "The scout read it: hi there.");
+        let t = &agent.session.transcript;
+        assert!(
+            t.iter().all(|m| m
+                .tool_calls
+                .as_ref()
+                .is_none_or(|c| c.iter().all(|c| c.name != "read_file"))),
+            "the scout's read is in the conversation"
+        );
+        let result = t.iter().find(|m| m.role == "tool").unwrap();
+        assert!(
+            result
+                .content
+                .starts_with("hello.txt says `hi there` (hello.txt:1)."),
+            "{}",
+            result.content
+        );
+        assert!(
+            result
+                .content
+                .ends_with("[scout: 1 read · 2 rounds · grok-4.6 · $0.003]"),
+            "{}",
+            result.content
+        );
+        let spend = agent.session.spend_log().unwrap();
+        assert_eq!(spend.len(), 4);
+        assert!(spend.iter().all(|s| s.role == Role::Plan));
+    }
+
+    /// The scout's own prompt size is not the conversation's: the context
+    /// ring keeps the hat's last size while the scout reads.
+    #[tokio::test]
+    async fn a_scouts_prompt_is_not_the_conversations_size() {
+        let usage = |n: u64| {
+            StreamDelta::Usage(Usage {
+                input_tokens: n,
+                ..Usage::default()
+            })
+        };
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            vec![
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "s1".into(),
+                    name: "scout".into(),
+                    arguments: serde_json::json!({"question": "what does hello.txt say?"})
+                        .to_string(),
+                },
+                usage(5_000),
+                StreamDelta::Done,
+            ],
+            vec![
+                StreamDelta::Text("hi there".into()),
+                usage(400),
+                StreamDelta::Done,
+            ],
+            vec![
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "s2".into(),
+                    name: "scout".into(),
+                    arguments: serde_json::json!({"question": "and again?"}).to_string(),
+                },
+                usage(5_200),
+                StreamDelta::Done,
+            ],
+        ]));
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        agent.max_turns = 2;
+        agent.turn("what does hello.txt say?").await.unwrap();
+        // The last conversation call was 5,200 tokens; the scout's 400
+        // never replaced it.
+        assert_eq!(agent.last_input_tokens, Some(5_200));
+        let spend = agent.session.spend_log().unwrap();
+        assert_eq!(
+            spend
+                .iter()
+                .take(3)
+                .map(|s| s.input_tokens)
+                .collect::<Vec<_>>(),
+            vec![5_000, 400, 5_200]
+        );
+    }
+
+    /// The build hat is refused the scout and told who has it; the scout
+    /// itself is held to its four tools.
+    #[tokio::test]
+    async fn the_build_hat_is_refused_the_scout_and_the_scout_has_no_shell() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            call("scout", serde_json::json!({"question": "where is main?"})),
+            say("noted"),
+        ]));
+        agent.turn("find main").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(
+            result
+                .content
+                .starts_with("denied: scout is the plan and audit hats' tool"),
+            "{}",
+            result.content
+        );
+
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            call("scout", serde_json::json!({"question": "where is main?"})),
+            call("bash", serde_json::json!({"command": "ls"})),
+            say("main is in src/main.rs (src/main.rs:1)."),
+            say("src/main.rs."),
+        ]));
+        agent.role = Role::Audit;
+        agent.ctx.role = Role::Audit;
+        agent.turn("find main").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(
+            result
+                .content
+                .starts_with("main is in src/main.rs (src/main.rs:1)."),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains("[scout: nothing read · 2 rounds"),
+            "{}",
+            result.content
+        );
+    }
+
+    /// A question's own cap stops the scout before its next round; what it
+    /// had is returned, with the reason.
+    #[tokio::test]
+    async fn a_scout_stops_at_its_cap_with_what_it_had() {
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            call(
+                "scout",
+                serde_json::json!({"question": "what does hello.txt say?"}),
+            ),
+            vec![
+                StreamDelta::Text("Reading it.".into()),
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "r1".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "hello.txt"}).to_string(),
+                },
+                StreamDelta::ReportedCost(0.02),
+                StreamDelta::Done,
+            ],
+            say("ok"),
+        ]));
+        let mut cfg = crate::config::Config::default();
+        cfg.scout.max_usd = 0.01;
+        agent.cfg = Some(cfg);
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        agent.turn("what does hello.txt say?").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .unwrap();
+        assert!(
+            result
+                .content
+                .starts_with("The scout stopped at its $0.010 cap"),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains("What it had:\n\nReading it."),
+            "{}",
+            result.content
+        );
+        assert!(
+            result.content.contains("1 read · 1 round ·"),
+            "{}",
+            result.content
+        );
+        assert_eq!(agent.session.spend_log().unwrap().len(), 3);
+    }
+
     fn repo_setup(provider: ReplayProvider) -> (TempDir, TempDir, Agent) {
         let (home, cwd, mut agent) = setup(provider);
         crate::git::init_repo(cwd.path()).unwrap();

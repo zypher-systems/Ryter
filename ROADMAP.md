@@ -21,6 +21,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.36.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **The scout (dev, unreleased).** The plan and audit hats send one question at a time to a read-only scout, a fresh model with the four read tools and no shell, reading under the asking hat's gate; only its answer comes back, with the paths and lines it rests on, and the chat row says what it read and what it cost. Not a hat: nothing on the rail, nothing to switch to, so the 1.0 gate's "no new specialist hat" holds. `[scout]` names a connection and model (a cheap one) and caps one question. From the outside gap analysis of 0.36.0 and the user's call of 2026-10-21. `DECISIONS.md` 2026-10-22.
 - **A first run starts on the key you exported (dev, unreleased).** From the outside gap analysis of 0.36.0: the quick start with only `OPENROUTER_API_KEY` failed on the keyless built-in default; now a keyed connection wins over one without, the All hats model stays on its own connection, and the web guard's test no longer depends on the machine's DNS. `DECISIONS.md` 2026-10-21. From the same report: the GitHub description no longer sells the crew removed on 2026-10-01, and the README screenshots show the one-rail screen (staged offline, `docs/screenshots/HOW.md`).
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
@@ -61,7 +62,7 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 
 After 1.0, by the user's decision then:
 
-- More specialists, if a need shows: a scout (read-only, cheap, for questions about the code), and whether the builder may hand a task to a specialist (delegation, which sank the crew and is a design of its own).
+- More specialists, if a need shows, and whether the builder may hand a task to a specialist (delegation, which sank the crew and is a design of its own). The scout exists since 2026-10-22 as a tool the looking hats call, not a hat; a scout for the build hat, read-only helpers beside its edits, is the next step if one is wanted.
 - macOS and Windows as first-class.
 - SQLite FTS over notes when DECISIONS.md outgrows a prompt.
 - Session search across transcripts from `/sessions`.

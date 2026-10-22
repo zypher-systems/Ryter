@@ -71,6 +71,17 @@ catalog = true
 # [limits]
 # rounds = 150
 
+# The scout: the plan and audit hats send it one question at a time, and it
+# reads (read_file, list_dir, grep, glob) under the asking hat's gate and
+# answers with paths and lines; its reading stays out of the conversation.
+# It runs on the asking hat's model unless one is named here; a cheap one
+# does. The caps are per question; the session budget still applies.
+# [scout]
+# connection = "openrouter"
+# model = "deepseek/deepseek-v4.1-flash"
+# rounds = 12
+# max_usd = 0.25
+
 # TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at
 # startup instead of failing. `/theme` persists its pick to ~/.ryter/settings.toml [ui].
 [ui]

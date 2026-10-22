@@ -29,6 +29,7 @@ pub fn verb(tool: &str) -> &str {
         "web_fetch" => "fetch",
         "web_search" => "web",
         "check_package" => "package",
+        "scout" => "scout",
         "file_audit" => "audit",
         "run_project" => "run",
         "update_rules" => "rules",
@@ -74,7 +75,7 @@ pub fn target(tool: &str, args: &Value) -> String {
         "bash" => arg(args, &["command"]),
         "grep" | "glob" => arg(args, &["pattern"]),
         "request_hat" => arg(args, &["hat"]),
-        "ask_user" => arg(args, &["question"]),
+        "ask_user" | "scout" => arg(args, &["question"]),
         "record_decision" | "present_plan" => arg(args, &["title"]),
         "web_fetch" => arg(args, &["url"]),
         "web_search" => arg(args, &["query"]),
@@ -273,6 +274,10 @@ pub fn result(tool: &str, output: &str, is_error: bool) -> (String, String) {
                     .join("\n"),
             ),
         },
+        // What the scout's reading came to and what the question cost,
+        // from the line Ryter put under its answer: `✓ 3 reads · 1 search ·
+        // $0.004`. The answer itself went to the model that asked.
+        "scout" => (scout_detail(output), String::new()),
         // The project's own commands: its tests' totals when there are
         // any, otherwise that it went through. What Ryter told the model
         // about it is not the user's to read.
@@ -284,6 +289,43 @@ pub fn result(tool: &str, output: &str, is_error: bool) -> (String, String) {
             String::new(),
         ),
         _ => (String::new(), String::new()),
+    }
+}
+
+/// The scout row's detail from the cost line under its answer
+/// (`[scout: 3 reads · 1 search · 2 rounds · grok-4.6 · $0.004]`): the
+/// reading and the money, not the rounds or the model.
+fn scout_detail(output: &str) -> String {
+    let Some(line) = output.lines().rev().find_map(|l| {
+        l.trim()
+            .strip_prefix("[scout: ")
+            .and_then(|r| r.strip_suffix(']'))
+    }) else {
+        return "✓".into();
+    };
+    let parts: Vec<&str> = line.split(" · ").collect();
+    let looked: Vec<&str> = parts
+        .iter()
+        .copied()
+        .filter(|p| {
+            p.ends_with("read")
+                || p.ends_with("reads")
+                || p.contains("search")
+                || p.contains("listing")
+                || *p == "nothing read"
+        })
+        .collect();
+    let cost = parts.last().copied().unwrap_or("");
+    let stopped = output.starts_with("The scout stopped");
+    let mut parts: Vec<&str> = looked;
+    if !cost.is_empty() {
+        parts.push(cost);
+    }
+    let mark = if stopped { "stopped" } else { "✓" };
+    if parts.is_empty() {
+        mark.to_string()
+    } else {
+        format!("{mark} {}", parts.join(" · "))
     }
 }
 
@@ -515,6 +557,21 @@ mod tests {
             test_summary("  12 passing (40ms)\n"),
             Some("12 passing (40ms)".into())
         );
+    }
+
+    /// The scout's row says what it read and what the question cost, from
+    /// the line Ryter wrote under its answer; the answer stays with the
+    /// model that asked.
+    #[test]
+    fn a_scout_row_says_what_it_read_and_what_it_cost() {
+        let out = "main is in src/main.rs (src/main.rs:1).\n\n[scout: 3 reads · 1 search · 2 rounds · grok-4.6 · $0.004]";
+        assert_eq!(
+            result("scout", out, false),
+            ("✓ 3 reads · 1 search · $0.004".into(), String::new())
+        );
+        let out = "The scout stopped at its $0.01 cap before it answered. What it had:\n\nReading.\n\n[scout: 1 read · 1 round · grok-4.6 · $0.02]";
+        assert_eq!(result("scout", out, false).0, "stopped 1 read · $0.02");
+        assert_eq!(result("scout", "no line", false).0, "✓");
     }
 
     /// From a real run: the cause was above npm's closing boilerplate.

@@ -33,6 +33,9 @@ pub struct Config {
     /// `[limits]`: how far one message may go.
     #[serde(default)]
     pub limits: LimitsConfig,
+    /// `[scout]`: the read-only scout the looking hats send questions to.
+    #[serde(default)]
+    pub scout: ScoutConfig,
     /// Per-model USD rates; always wins over shipped / catalog prices.
     #[serde(default)]
     pub pricing: BTreeMap<String, PriceOverride>,
@@ -147,6 +150,7 @@ impl Default for Config {
             hats: BTreeMap::new(),
             spend: SpendConfig::default(),
             limits: LimitsConfig::default(),
+            scout: ScoutConfig::default(),
             pricing: BTreeMap::new(),
             context_windows: BTreeMap::new(),
             mcp: McpSettings::default(),
@@ -426,6 +430,36 @@ pub struct SpendConfig {
 
 fn usd() -> String {
     "USD".into()
+}
+
+/// `[scout]`: the scout the plan and audit hats send questions to, a fresh
+/// model with the read tools alone. Its model is the calling hat's unless
+/// one is named here; its caps are per question.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScoutConfig {
+    /// The connection the scout runs on; the calling hat's when absent.
+    pub connection: Option<String>,
+    /// The model the scout runs on; the calling hat's when absent. A cheap
+    /// one does: it reads and reports.
+    pub model: Option<String>,
+    /// Model rounds one question may use (a round is one reply, with its
+    /// reads). The scout answers with what it has when they run out.
+    pub rounds: u32,
+    /// The most one question may cost, in USD; `0` lifts the cap. The
+    /// session budget still applies.
+    pub max_usd: f64,
+}
+
+impl Default for ScoutConfig {
+    fn default() -> Self {
+        Self {
+            connection: None,
+            model: None,
+            rounds: 12,
+            max_usd: 0.25,
+        }
+    }
 }
 
 /// `[limits]`: how far one message may go before Ryter stops the turn and
@@ -1380,6 +1414,7 @@ struct ConfigFile {
     permissions: Option<crate::permissions::Permissions>,
     #[serde(default)]
     limits: Option<LimitsConfig>,
+    scout: Option<ScoutConfig>,
     ui: Option<UiFile>,
     update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
@@ -1553,6 +1588,9 @@ impl ConfigFile {
         }
         if let Some(l) = self.limits {
             cfg.limits = l;
+        }
+        if let Some(sc) = self.scout {
+            cfg.scout = sc;
         }
         // Rules add up across files; a later file's answer for the same
         // pattern replaces an earlier one's.

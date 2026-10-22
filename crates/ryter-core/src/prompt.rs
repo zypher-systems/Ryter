@@ -5,6 +5,18 @@ use std::fs;
 use std::path::Path;
 
 const SOLO: &str = include_str!("../../../prompts/solo.md");
+const SCOUT: &str = include_str!("../../../prompts/scout.md");
+
+/// The scout's brief, with the project's own instructions (`RYTER.md`)
+/// after it: where things are is what those files say.
+pub fn scout(project_root: Option<&Path>) -> String {
+    let mut s = SCOUT.to_string();
+    if let Some(instructions) = load_project_instructions(project_root) {
+        s.push_str("\n\n## The project's own notes\n\n");
+        s.push_str(&instructions);
+    }
+    s
+}
 
 /// The shipped prompt.
 pub fn shipped() -> &'static str {
