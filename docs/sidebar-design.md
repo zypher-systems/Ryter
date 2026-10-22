@@ -311,7 +311,7 @@ now
 
 ## 13. Documentation that changes with the work
 
-- `README.md`: `docs/screenshots/build.png` and its alt text show the hat rack and the side panel; owed new ones since 0.25.0, taken on this screen.
+- `README.md`: `docs/screenshots/build.png` and `plan.png` with their alt text; retaken on the one-rail screen on 2026-10-21 (`docs/screenshots/HOW.md`).
 - `docs/guide.md`: "The screen" (the top bar, the hat rack, the watermark, the instruments, `^b`, the status line, the colours, `[ui] watermark`), the keys table, `/settings`. `config.example.toml`: the `watermark` line.
 - `design.md`: the solo-screen requirements that name the rack, the top bar or the watermark.
 - `docs/hat-rack-design.md` and `docs/specialists-design.md`: a status line at the top pointing here.

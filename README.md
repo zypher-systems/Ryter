@@ -4,7 +4,7 @@ Ryter is Zypher Systems’ terminal AI coding harness.
 
 One model works in your project, with you, and `Tab` switches between its two working hats, **plan** and **build**; `Shift+Tab` reaches the specialists, **audit** and **scribe**. Each hat can run on a model of its own: a strong one to plan, a cheaper one to build, a different one to audit, a small one to write the docs. Bring your own keys: **SpaceXSI**, **OpenRouter**, **Anthropic** and **OpenAI** are built in, and local model servers (Ollama, LM Studio, llama.cpp) work without one.
 
-![Ryter in the build hat: the Conversation, Hats and Sessions tabs on the top bar, the hats with their models and costs in the sidebar, the conversation in the middle with the diff of app/server.js and a new test, and the instruments at the right.](docs/screenshots/build.png)
+![Ryter in the build hat: the conversation holds the request, the diff of app/server.js and the new test file, and the reply with its cost; the rail at the right has the four hats with their models and spend, the plan on record, the context ring, the spend per hat and the two uncommitted files.](docs/screenshots/build.png)
 
 Linux first. The current release is 0.36.0. Apache-2.0.
 
@@ -49,7 +49,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back anything it changed |
 | **scribe** | writes the documentation and nothing else: `.md`, `.txt` and their kind; give it a cheap model |
 
-![Ryter in the plan hat. Plan is the filled chip and the marked hat in the sidebar, which carries each hat's model, its turns and their cost; the conversation still holds the diff from the build.](docs/screenshots/plan.png)
+![Ryter in the plan hat. Plan is the filled chip on the prompt and the marked hat on the rail, read only on its own model; the conversation still holds the diff from the build.](docs/screenshots/plan.png)
 
 - **A plan is approved in its own panel.** `y` saves it as `.ryter/plan.md` (and a dated copy under `.ryter/plans/`) and the build starts from that file; that is the one hat change Ryter makes on its own. Where the work later differs from it, the difference and the reason are recorded in `.ryter/decisions.md`, which an audit reads.
 - **Each hat can have its own model** (`/models`). The hats share one conversation, and Ryter says what it costs when a different model takes over.
