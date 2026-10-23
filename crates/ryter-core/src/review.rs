@@ -381,7 +381,12 @@ pub fn file_versions(
             Some(String::from_utf8(bytes).map_err(|_| whole("is not text"))?)
         }
     };
-    let old = git(&top, &["show", &format!("{base}:{path}")]).ok();
+    // The base's blob as bytes: `git` reads text lossily, and a blob that
+    // is not text must be refused, not rewritten with U+FFFD in it.
+    let old = match crate::git::git_bytes(&top, &["show", &format!("{base}:{path}")]) {
+        Ok(bytes) => Some(String::from_utf8(bytes).map_err(|_| whole("was not text"))?),
+        Err(_) => None,
+    };
     Ok((old, new))
 }
 
@@ -843,6 +848,31 @@ mod tests {
         // A file that is gone is still gone, not an error of its own.
         fs::remove_file(p.join("keep.txt")).unwrap();
         assert_eq!(file_versions(p, &base, "keep.txt").unwrap().1, None);
+        // Bytes that are not text in the base, text now: git calls that a
+        // text change (no NUL byte), but the old side has no lines to put
+        // back, and writing it lossily would put U+FFFD in the file.
+        fs::write(p.join("keep.txt"), b"one\n\xff\xfe\n").unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-qm", "bytes"]).unwrap();
+        let base4 = head_base(p);
+        fs::write(p.join("keep.txt"), "one\nchanged\n").unwrap();
+        let e = file_versions(p, &base4, "keep.txt")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("keep.txt was not text; undo the file instead"),
+            "{e}"
+        );
+        let e = revert_hunk(p, &base4, "keep.txt", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("was not text"), "{e}");
+        assert_eq!(
+            fs::read_to_string(p.join("keep.txt")).unwrap(),
+            "one\nchanged\n"
+        );
+        revert_file(p, &base4, "keep.txt").unwrap();
+        assert_eq!(fs::read(p.join("keep.txt")).unwrap(), b"one\n\xff\xfe\n");
     }
 
     #[test]

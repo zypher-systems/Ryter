@@ -17,6 +17,7 @@ the whole run, and no CI job runs this.
 """
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -223,8 +224,11 @@ def run_tool(command, cwd, env, timeout, log):
 
 
 def allowance(budget, spent, reserve=RESERVE_USD):
-    """What one task may cost now, or 0 when the next task must not start."""
-    return max(budget - spent - reserve, 0.0)
+    """What one task may cost now, in whole cents, or 0 when the next task
+    must not start. Whole cents, since a cap is written with two decimals
+    and `0.11 - 0.10` is a hair under a cent in floating point."""
+    cents = round((budget - spent - reserve) * 100, 6)
+    return max(math.floor(cents) / 100, 0.0)
 
 
 def changed_files(status):
@@ -418,6 +422,9 @@ def main(argv=None):
         parser.error('--budget is required')
     if len({r.key for r in runs}) != len(runs):
         parser.error('each --run once')
+    if len({r.directory for r in runs}) != len(runs):
+        parser.error('two runs would share a directory name (their keys differ only in punctuation): '
+                     + ', '.join(r.key for r in runs))
     if not RESERVE_USD + MIN_CAP_USD <= args.budget <= 50:
         parser.error(f'--budget is dollars from {RESERVE_USD + MIN_CAP_USD:.2f} (the reserve and a cent) to 50')
     for r in runs:
@@ -483,10 +490,14 @@ def main(argv=None):
     spent_before = report['total_usd']
     if args.dry_run:
         task, spec = tasks[0]
+        cap = allowance(args.budget, 0)
+        if cap < MIN_CAP_USD:
+            print(f'--budget {args.budget} leaves under a cent past the reserve; no task would start')
+            return 1
         print(f'\nFor {task.name}, in a fresh copy of bench/{task.name}/repo, each would run:')
         for r in runs:
             print('  ' + ' '.join(repr(a) if ' ' in a else a for a in
-                                  command_for(r, args.binary, '<prompt>', allowance(args.budget, 0))))
+                                  command_for(r, args.binary, '<prompt>', cap)))
         print(f'\nThe prompt:\n{prompt_for(spec)}')
         return 0
     for task, spec in tasks:

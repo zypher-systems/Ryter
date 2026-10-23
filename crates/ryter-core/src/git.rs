@@ -9,22 +9,28 @@ use std::process::Command;
 
 use crate::error::{Error, Result};
 
-/// Run `git -C dir …`.
+/// Run `git -C dir …`; its output as text, lossily.
 pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    git_bytes(dir, args).map(|out| String::from_utf8_lossy(&out).into_owned())
+}
+
+/// Run `git -C dir …`; its output as the bytes it wrote, for a blob that
+/// may not be text.
+pub fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let out = Command::new("git")
         .args(["-C", &dir.to_string_lossy()])
         .args(args)
         .output()
         .map_err(|e| Error::Io(format!("git: {e}")))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     if !out.status.success() {
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
         return Err(Error::Io(format!(
             "git {} failed: {stderr}{stdout}",
             args.join(" ")
         )));
     }
-    Ok(stdout)
+    Ok(out.stdout)
 }
 
 /// Run git with a private index, so building a snapshot never touches the

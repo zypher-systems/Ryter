@@ -28,6 +28,12 @@ class Runs(unittest.TestCase):
         self.assertNotEqual(a.directory, b.directory)
         self.assertEqual(Run('opencode=anthropic/claude-sonnet-4-5').directory, 'opencode-anthropic-claude-sonnet-4-5')
 
+    def test_runs_whose_keys_differ_only_in_punctuation_are_refused(self):
+        from compare import main
+        with self.assertRaises(SystemExit):
+            main(['--run', 'opencode=anthropic/claude-sonnet-4-5', '--run', 'opencode=anthropic-claude-sonnet-4-5',
+                  '--budget', '1', '--dry-run'])
+
     def test_every_tool_runs_without_asking_and_ryter_is_sandboxed(self):
         prompt = 'do the thing'
         ryter = command_for(Run('ryter=or:m'), '/bin/ryter', prompt, 0.5)
@@ -84,6 +90,12 @@ class Prices(unittest.TestCase):
         self.assertAlmostEqual(allowance(5.0, 4.85), 0.05)
         self.assertEqual(allowance(5.0, 4.95), 0.0)
         self.assertEqual(allowance(5.0, 6.0), 0.0)
+        # Whole cents: the documented floor starts a task, and a remainder a
+        # hair under a cent in floating point is still a cent.
+        self.assertEqual(allowance(0.11, 0.0), 0.01)
+        self.assertEqual(allowance(10.0, 9.89), 0.01)
+        self.assertEqual(allowance(10.0, 9.894), 0.0)
+        self.assertEqual(allowance(1.0, 0.0), 0.90)
 
     def test_a_cap_is_never_written_as_zero(self):
         # To Ryter `session_budget_usd = 0` is no cap, so under half a cent is refused.
