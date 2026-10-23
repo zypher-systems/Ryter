@@ -270,10 +270,20 @@ fn one(v: Option<f64>) -> String {
 
 /// A model id as a folder name.
 pub fn slug(model: &str) -> String {
-    model
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect()
+    let mut out = String::new();
+    for c in model.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.truncate(out.trim_end_matches('-').len());
+    if out.is_empty() {
+        "model".to_string()
+    } else {
+        out
+    }
 }
 
 /// The run's folder name under the bench directory: the stamp and the
@@ -482,5 +492,16 @@ mod tests {
             folder("2026-10-23-13-21", &[a, b]),
             "2026-10-23-13-21-compare"
         );
+    }
+
+    #[test]
+    fn a_slug_never_starts_with_a_dash() {
+        assert_eq!(slug("~openai/gpt-luna-latest"), "openai-gpt-luna-latest");
+        assert_eq!(
+            slug("deepseek/deepseek-v4.1-flash-1017"),
+            "deepseek-deepseek-v4-1-flash-1017"
+        );
+        assert_eq!(slug("a//b--"), "a-b");
+        assert_eq!(slug("~"), "model");
     }
 }

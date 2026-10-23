@@ -102,7 +102,8 @@ export function debounce<A extends unknown[], R>(
         return result;
       }
     }
-    if (timer === undefined) timer = clock.setTimeout(timerExpired, wait);
+    // A fresh timer counts maxWait from the last run, not from this call.
+    if (timer === undefined) timer = clock.setTimeout(timerExpired, remaining(time));
     return result;
   }) as Debounced<A, R>;
 

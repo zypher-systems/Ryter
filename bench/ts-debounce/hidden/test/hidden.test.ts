@@ -145,7 +145,7 @@ test("throttle: leading, then at most once per wait, then the tail", () => {
   clock.tick(60);
   t(150);
   clock.tick(300);
-  assert.deepEqual(runs, [[0, 0], [100, 90], [250, 150]]);
+  assert.deepEqual(runs, [[0, 0], [100, 90], [200, 150]]);
 });
 
 test("throttle without leading waits for the first wait", () => {
