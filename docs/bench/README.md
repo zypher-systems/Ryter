@@ -4,4 +4,6 @@ Each file here is the `RESULTS.md` of one `bench/compare.py` run, as it was
 written, with the date, the Ryter commit, the tools' versions and the budget.
 How a run is made is in [`bench/README.md`](../../bench/README.md).
 
-No run has been published yet.
+- [2026-10-22 — Opus 5.5 on Ryter, Claude Code and OpenCode](2026-10-22-opus-5-5.md):
+  ten tasks, all solved by all three; Ryter $0.73, OpenCode $1.17, Claude Code
+  $2.42 (its own estimate).

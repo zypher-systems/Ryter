@@ -61,6 +61,18 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 
 Nothing is committed unless you commit it.
 
+## Tasks solved per dollar
+
+The bench's ten tasks, given to Ryter, Claude Code and OpenCode on the same model, `claude-opus-5-5`, each in a fresh copy of the same project with the same brief, scored by hidden tests. All three solved all ten; the difference is the cost.
+
+| Tool | Solved | Cost | Per solved task |
+|---|---|---|---|
+| Ryter | 10/10 | $0.73 | $0.07 |
+| OpenCode | 10/10 | $1.17 | $0.12 |
+| Claude Code | 10/10 | $2.42 † | $0.24 |
+
+† Claude Code's own estimate at list prices; it was signed in with a subscription, so nothing was billed per token. The other two are what Anthropic charged an API key. The run, how it was made and what it does not show are in [`docs/bench/`](docs/bench/2026-10-22-opus-5-5.md); `bench/compare.py` makes another with the tools you have installed.
+
 ## CLI
 
 ```
