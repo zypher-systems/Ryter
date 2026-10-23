@@ -7,6 +7,8 @@ python3 bench/compare.py --run ryter=anthropic:claude-sonnet-4-5 \\
     --run claude=claude-sonnet-4-5 --run opencode=anthropic/claude-sonnet-4-5 \\
     --budget 10 --dry-run
 python3 bench/compare.py --run codex=gpt-5.2 --price gpt-5.2=1.75,0.175,14 --budget 5
+python3 bench/compare.py --run opencode=anthropic/claude-sonnet-4-5 --budget 3 \
+    --into target/compare-20261022-120000   # rerun one tool into an existing report
 
 Every tool runs as the user has it set up: its own login, its own settings.
 Nothing is copied between tools. Live calls are opt-in, under one budget for
@@ -198,6 +200,27 @@ def allowance(budget, spent, reserve=RESERVE_USD):
     return max(budget - spent - reserve, 0.0)
 
 
+def changed_files(status):
+    """The files a tool left changed, from `git status --porcelain`: not the
+    bytecode its test runs made, not Ryter's own folder."""
+    return sorted(line[3:] for line in status.splitlines()
+                  if line and not line[3:].startswith('.ryter/') and '__pycache__' not in line[3:])
+
+
+def merge_into(report, runs):
+    """Prepare an existing report for `runs` to be run again into it: their
+    earlier results go, with their spend; the run keys stay in order."""
+    for key in runs:
+        if key not in report['runs']:
+            report['runs'].append(key)
+        for task in report['tasks'].values():
+            old = task.get('results', {}).pop(key, None)
+            if old and old.get('usd') is not None:
+                report['total_usd'] -= old['usd']
+    report['total_usd'] = max(round(report['total_usd'], 9), 0.0)
+    return report
+
+
 def execute(run, task, spec, directory, binary, env, timeout, cap_usd, price):
     directory.mkdir(parents=True)
     project = directory / 'project'
@@ -222,14 +245,16 @@ def execute(run, task, spec, directory, binary, env, timeout, cap_usd, price):
     prompt = prompt_for(spec)
     (directory / 'prompt.txt').write_text(prompt)
     command = command_for(run, binary, prompt, cap_usd)
+    # Every tool runs in the copy: one of them reads `PWD` before asking the
+    # kernel, so the copy is `PWD` too.
+    env = dict(env, PWD=str(project))
     code, stdout, seconds, timed_out = run_tool(command, project, env, timeout, directory)
     row = {'run': run.key, 'exit': code, 'seconds': round(seconds, 1), 'timed_out': timed_out,
            'charge': charge(run, stdout, price)}
     row['usd'] = row['charge']['usd']
     status = subprocess.run(['git', 'status', '--porcelain'], cwd=project, env=env,
                             capture_output=True, text=True)
-    row['changed'] = sorted(line[3:] for line in status.stdout.splitlines()
-                            if line and not line[3:].startswith('.ryter/'))
+    row['changed'] = changed_files(status.stdout)
     # The hidden tests are copied in only now.
     overlay(task / 'hidden', project)
     row['acceptance'] = commands(project, spec['accept'], env)
@@ -270,10 +295,11 @@ def usd(v):
 
 
 def markdown(report):
+    budget = report['budget_usd'] + sum(r['budget_usd'] for r in report.get('reruns', []))
     lines = [f'# Tasks solved per dollar — {report["date"]}', '',
              f'Ryter `{report["ryter"]}`; tools as installed: '
              + ', '.join(f'{k} ({v or "version unknown"})' for k, v in report['versions'].items()) + '.',
-             f'Budget ${report["budget_usd"]:.2f}, spent {usd(report["total_usd"])}; '
+             f'Budget ${budget:.2f}, spent {usd(report["total_usd"])}; '
              f'{report["timeout_seconds"]} s per task; one attempt per task.', '',
              '| Run | Solved | Cost | Cost per solved | Solved per $ | Median minutes | Timed out |',
              '|---|---|---|---|---|---|---|']
@@ -299,6 +325,9 @@ def markdown(report):
                 cells.append(('✓' if r['solved'] else '✗') + ' ' + usd(r['usd'])
                              + (' (timed out)' if r.get('timed_out') else ''))
         lines.append(f'| {name} | ' + ' | '.join(cells) + ' |')
+    for rerun in report.get('reruns', []):
+        lines += ['', f'Run again on {rerun["date"]}, replacing their earlier results: '
+                  + ', '.join(f'`{k}`' for k in rerun['runs']) + '.']
     if report.get('stopped'):
         lines += ['', f'Stopped: {report["stopped"]}.']
     return '\n'.join(lines) + '\n'
@@ -315,6 +344,9 @@ def main(argv=None):
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ryter')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--dry-run', action='store_true', help='validate, print the commands, call nothing')
+    parser.add_argument('--into', type=Path,
+                        help='an earlier output directory: run the given tools again into its report, '
+                             'replacing their results; --budget is for this invocation')
     args = parser.parse_args(argv)
     try:
         runs = [Run(s) for s in args.run]
@@ -335,21 +367,39 @@ def main(argv=None):
     args.binary = args.binary.resolve()
     if not args.binary.is_file():
         parser.error(f'no ryter binary at {args.binary}')
-    output = (args.output or ROOT / 'target' / f'compare-{time.strftime("%Y%m%d-%H%M%S")}').resolve()
-    output.mkdir(parents=True, exist_ok=False)
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
-    report = {'date': time.strftime('%Y-%m-%d'), 'ryter': subprocess.run(
-                  ['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
-              'runs': [r.key for r in runs], 'versions': {r.tool: tool_version(r, args.binary) for r in runs},
-              'budget_usd': args.budget, 'timeout_seconds': args.timeout, 'prices': prices,
-              'total_usd': 0.0, 'tasks': {}, 'command': sys.argv[1:]}
-    tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted((ROOT / 'bench').glob('*/task.toml'))
-             if not args.task or p.parent.name in args.task]
-    if not tasks:
-        parser.error('no matching task')
+    if args.into:
+        if args.output or args.task or args.dry_run:
+            parser.error('--into takes the earlier report whole: no --output, no --task, no --dry-run')
+        output = args.into.resolve()
+        report = merge_into(json.loads((output / 'report.json').read_text()), [r.key for r in runs])
+        report.pop('stopped', None)
+        report['versions'].update({r.tool: tool_version(r, args.binary) for r in runs})
+        report['prices'].update(prices)
+        report.setdefault('reruns', []).append({'date': time.strftime('%Y-%m-%d'), 'runs': [r.key for r in runs],
+                                                'budget_usd': args.budget, 'command': sys.argv[1:]})
+        tasks = [(ROOT / 'bench' / name, tomllib.loads((ROOT / 'bench' / name / 'task.toml').read_text()))
+                 for name in report['tasks']]
+        for task, _spec in tasks:
+            shutil.rmtree(output / task.name / 'validation', ignore_errors=True)
+            for r in runs:
+                shutil.rmtree(output / task.name / r.tool, ignore_errors=True)
+    else:
+        output = (args.output or ROOT / 'target' / f'compare-{time.strftime("%Y%m%d-%H%M%S")}').resolve()
+        output.mkdir(parents=True, exist_ok=False)
+        report = {'date': time.strftime('%Y-%m-%d'), 'ryter': subprocess.run(
+                      ['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
+                  'runs': [r.key for r in runs], 'versions': {r.tool: tool_version(r, args.binary) for r in runs},
+                  'budget_usd': args.budget, 'timeout_seconds': args.timeout, 'prices': prices,
+                  'total_usd': 0.0, 'tasks': {}, 'command': sys.argv[1:]}
+        tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted((ROOT / 'bench').glob('*/task.toml'))
+                 if not args.task or p.parent.name in args.task]
+        if not tasks:
+            parser.error('no matching task')
+    spent_before = report['total_usd']
     for task, spec in tasks:
         record = validate(task, spec, output / task.name / 'validation')
-        report['tasks'][task.name] = {'validation': record, 'results': {}}
+        report['tasks'].setdefault(task.name, {'results': {}})['validation'] = record
         print(f'reference {task.name}: {record["valid"]}', flush=True)
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     if not all(t['validation']['valid'] for t in report['tasks'].values()):
@@ -365,7 +415,7 @@ def main(argv=None):
         return 0
     for task, spec in tasks:
         for r in runs:
-            cap = allowance(args.budget, report['total_usd'])
+            cap = allowance(args.budget, report['total_usd'] - spent_before)
             if cap <= 0:
                 report['stopped'] = f'budget reserve reached before {task.name} on {r.key}'
                 break

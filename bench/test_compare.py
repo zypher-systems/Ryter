@@ -3,8 +3,8 @@ each tool's output. No tool is run and nothing is paid."""
 import json
 import unittest
 
-from compare import (Run, allowance, charge, command_for, markdown, parse_price, price_tokens,
-                     prompt_for, summarize)
+from compare import (Run, allowance, changed_files, charge, command_for, markdown, merge_into, parse_price,
+                     price_tokens, prompt_for, summarize)
 
 
 def lines(*rows):
@@ -61,6 +61,11 @@ class Prices(unittest.TestCase):
         for bad in ['gpt=1,2', 'gpt=a,b,c', '=1,2,3', 'gpt=1,-2,3']:
             with self.assertRaises(ValueError, msg=bad):
                 parse_price(bad)
+
+    def test_changed_files_are_the_tools_own(self):
+        status = ' M cli.py\n?? __pycache__/\n?? shop/__pycache__/\n?? .ryter/run.toml\n?? shop/errors.py\n'
+        self.assertEqual(changed_files(status), ['cli.py', 'shop/errors.py'])
+        self.assertEqual(changed_files(''), [])
 
     def test_the_allowance_keeps_the_reserve(self):
         self.assertAlmostEqual(allowance(5.0, 0.0), 4.9)
@@ -157,6 +162,18 @@ class Summary(unittest.TestCase):
         self.assertIsNone(codex['usd_per_solved'])
         self.assertEqual(codex['solved_per_usd'], 0.0, 'nothing solved is zero per dollar, not unknown')
         self.assertTrue(codex['table_priced'])
+
+    def test_a_rerun_drops_the_tools_results_and_spend_and_keeps_the_others(self):
+        report = merge_into(self.report(), ['codex=g', 'opencode=o'])
+        self.assertEqual(report['runs'], ['ryter=c:m', 'claude=s', 'codex=g', 'opencode=o'])
+        self.assertNotIn('codex=g', report['tasks']['a']['results'])
+        self.assertIn('ryter=c:m', report['tasks']['a']['results'])
+        # a's codex row cost $0.05; b's had no cost
+        self.assertAlmostEqual(report['total_usd'], 0.85)
+        md = markdown(dict(report, reruns=[{'date': '2026-10-23', 'runs': ['codex=g'], 'budget_usd': 2.0}]))
+        self.assertIn('Budget $7.00', md)
+        self.assertIn('Run again on 2026-10-23, replacing their earlier results: `codex=g`.', md)
+        self.assertIn('| a | ✓ $0.100 | ✓ $0.300 | not run | not run |', md)
 
     def test_an_unpriced_task_leaves_the_run_without_a_cost(self):
         report = self.report()
