@@ -3702,6 +3702,21 @@ fn removing_a_hook_is_a_plain_question() {
     assert!(v.hooks.is_empty(), "Enter removes it");
 }
 
+/// A first run with no key on any connection opens `/provider` by itself
+/// and says what to do there; with a key somewhere, nothing opens.
+#[test]
+fn a_first_run_without_a_key_opens_the_provider_list() {
+    let mut v = idle();
+    assert!(!crate::run::open_first_run(&mut v, true));
+    assert!(v.panels.is_empty());
+    assert!(crate::run::open_first_run(&mut v, false));
+    assert_eq!(v.panels.top().map(|p| p.kind()), Some("providers"));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(shown.contains("no API key on any connection"), "{shown}");
+    assert!(shown.contains("press k to add it"), "{shown}");
+    assert!(shown.contains("k set key"), "{shown}");
+}
+
 /// `X` in `/changes` asks before putting a file back, and the question
 /// takes the one answer: Enter puts it back, `n` keeps it, another key is
 /// nothing. It used to want `y`, with Enter dismissing the question.

@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-23 — A first run with no key opens `/provider` by itself
+
+**Decision.** When the TUI starts and no connection in the config has a key (`config::has_secret` false for every one; a local server counts as keyed), it pushes the `/provider` panel before anything else and says in the chat what to do there: pick a connection, press `k`, paste the key, or export one of the well-known variables and start again. With a key on any connection nothing opens, and the old warning about the chosen connection having none is shown only when another connection does have one (`resolve_route` prefers a keyed connection, so that is the `--connection` case). The trust card, when a folder asks for it, is pushed after and so sits on top: a folder is trusted before anything else is read from it. Esc closes the list; the session is behind it.
+
+**Why.** The user's addition to the "to be noticed" list (2026-10-23): "first time users launch ryter, if there is no api key set, it automatically launches the provider screen." A new user's first screen was a session with a warning line and nothing that could answer; the route fix of 0.37.0 (start on the key you exported) covers the user who exported a key, this covers the one who did not. Rejected: a wizard of its own, since `/provider` already has the add-key step and one screen for the job is better than two; asking for the key in the composer straight away, since the user has to choose which connection first.
+
+**Where.** `crates/ryter-tui/src/run/mod.rs` (`open_first_run`, the start-up order), test `a_first_run_without_a_key_opens_the_provider_list`, `docs/guide.md` (Keys and connections).
+
 ### 2026-10-23 — `/changes` drops one change at a time
 
 **Decision.** The `/changes` panel shows a file's diff taken apart change by change, as the chat shows an edit: `review::file_versions` gives the file as the base had it and as it is now, `FileDiff::whole` cuts the diff into hunks with nothing left out, and each hunk sits under a heading that says which it is and the lines it covers, the selected one marked. `←→` (or `[` `]`) picks a change; `x` drops that change alone, through `Action::RevertHunk` → `Work::RevertHunk` → `Agent::revert_hunk` (`review::revert_hunk`, `diff::revert_hunk`), which were already there, recorded like a file revert so `/undo` brings it back; `X` is the whole file, which `x` used to be. Both ask the one question, Enter yes and `n` no. A binary file, or a file that is gone, has nothing to take apart, so `x` there asks about the file. The hunk numbering is the one `revert_hunk` uses, since both come from the same grouping; the panel's rows come from `chat::diff::hunk_rows`, which renders every hunk whole on the panel's background. The `Reverted` event carries which change was put back, so the chat line says `put back change 2 of config.rs`.

@@ -185,6 +185,22 @@ fn io_err(e: impl std::fmt::Display) -> ryter_core::Error {
     ryter_core::Error::Io(e.to_string())
 }
 
+/// A first run with no key on any connection opens `/provider` by itself,
+/// so the first thing seen is where the key goes, not a session that
+/// cannot answer. Returns whether it did.
+pub(crate) fn open_first_run(view: &mut View, any_key: bool) -> bool {
+    if any_key {
+        return false;
+    }
+    view.warn(
+        "no API key on any connection — pick one below and press k to add it, or export \
+         ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY or XAI_API_KEY and start again",
+    );
+    view.panels
+        .push(Box::new(panel::providers::Providers::new(view)));
+    true
+}
+
 /// Run the fullscreen TUI. Restores the terminal on exit.
 pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     let cwd = std::env::current_dir().map_err(io_err)?;
@@ -291,13 +307,17 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
     for w in cfg.warnings.clone() {
         view.warn(w);
     }
-    if key.is_none() {
+    let any_key = cfg.connections.keys().any(|c| config::has_secret(&cfg, c));
+    if key.is_none() && any_key {
         view.warn(format!(
             "no API key for {conn_name} — /provider set-key, or export XAI_API_KEY / OPENROUTER_API_KEY"
         ));
     }
     actions::load_project_spend(&mut view, &home, &cwd);
     view.refresh_uncommitted();
+    open_first_run(&mut view, any_key);
+    // Asked first, over the provider list: a folder is trusted before
+    // anything else is read from it.
     if config::asks_for_trust(&cwd) && !trusted {
         view.panels.push(Box::new(TrustModal));
     }

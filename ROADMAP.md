@@ -21,6 +21,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.37.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+- **A first run with no key opens `/provider` (dev, unreleased).** No key on any connection: the TUI opens the provider list by itself with a line saying pick one, press `k`, paste the key. The user's addition to the "to be noticed" list. `DECISIONS.md` 2026-10-23.
 - **`/changes` drops one change at a time (dev, unreleased).** A file's diff is shown change by change, `←→` picks one, `x` drops it alone after the one question and `/undo` brings it back; `X` is the whole file. Third on the "to be noticed" list. `DECISIONS.md` 2026-10-23.
 - **Tasks solved per dollar (dev, unreleased).** `bench/compare.py` runs the bench's tasks through Ryter, Claude Code, Codex and OpenCode as installed, same brief, same fresh project, scored by the hidden tests, costed by each tool's own report, and writes the table. First run published 2026-10-22 (`docs/bench/2026-10-22-opus-5-5.md`, Opus 5.5 on all three: Ryter $0.73, OpenCode $1.17, Claude Code $2.42 by its own estimate, all ten solved by all; a second pass on 2026-10-23 within three percent) and the number in the README; a second run the same day on Mistral Large 4 through OpenRouter against OpenCode and Kilo (`docs/bench/2026-10-22-mistral-large-4.md`: nine of ten each, Ryter $0.30, Kilo $0.41, OpenCode $0.52). Owed: harder tasks, since a current model solves these ten; the user does not want a Codex row. `DECISIONS.md` 2026-10-22.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
@@ -34,7 +35,6 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 
 **Item 3, setup and models**
 - macOS by hand: install, a key, a change, the TUI at three widths. The sandbox is Linux-only and is labelled so.
-- A first run with no key anywhere opens `/provider` on its own, so the first thing a new user sees is where the key goes, not a session that cannot answer. The user's ask of 2026-10-23, added to the "to be noticed" list; the welcome's "no key" note stays for the headless path.
 
 **Item 6, the screen**
 - The light theme on a real terminal, with the watermark, looked at by a person.
