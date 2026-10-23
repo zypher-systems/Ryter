@@ -42,6 +42,12 @@ class Runs(unittest.TestCase):
         self.assertIn('--auto', opencode)
         self.assertIn('--standalone', opencode)
         self.assertEqual(opencode[-1], prompt)
+        kilo = command_for(Run('kilo=p/m'), '/bin/ryter', prompt, 0.5)
+        self.assertEqual(kilo[:2], ['kilo', 'run'])
+        self.assertIn('--auto', kilo)
+        self.assertEqual(kilo[kilo.index('--dir') + 1], '.')
+        self.assertEqual(kilo[kilo.index('--format') + 1], 'json')
+        self.assertEqual(kilo[-1], prompt)
 
     def test_the_prompt_is_the_scope_and_the_brief(self):
         p = prompt_for({'brief': '\nFix it.\nDone when tests pass.\n'})
@@ -124,6 +130,7 @@ class Charges(unittest.TestCase):
         c = charge(Run('opencode=p/m'), out)
         self.assertAlmostEqual(c['usd'], 0.010)
         self.assertEqual((c['priced_by'], c['calls']), ('tool', 2))
+        self.assertAlmostEqual(charge(Run('kilo=p/m'), out)['usd'], 0.010, msg='Kilo prints the same events')
         self.assertEqual((c['input'], c['cached'], c['output']), (300, 6_500, 140))
         free = lines(step(0, 100, 0, 50, 0))
         self.assertIsNone(charge(Run('opencode=p/m'), free)['usd'])

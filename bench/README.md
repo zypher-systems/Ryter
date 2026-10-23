@@ -92,7 +92,7 @@ number that says how far a review can be trusted.
 ## Comparing with other tools: tasks solved per dollar
 
 `bench/compare.py` gives the same tasks to Ryter and to the other coding agents
-installed on the machine (Claude Code, Codex, OpenCode), each in a fresh copy
+installed on the machine (Claude Code, Codex, OpenCode, Kilo), each in a fresh copy
 of the task's project with the same brief, and scores every one by the hidden
 tests. The number that comes out is tasks solved per dollar, with the cost per
 solved task, the median minutes and the time-outs beside it.
@@ -114,13 +114,13 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
 - Each tool is run so that it asks nobody anything: Ryter with
   `--always-approve` under the `workspace` sandbox (Linux), Claude Code with
   `--dangerously-skip-permissions`, Codex with `--sandbox workspace-write`,
-  OpenCode with `--auto`. The project is a throwaway copy under `target/`.
+  OpenCode and Kilo with `--auto`. The project is a throwaway copy under `target/`.
 - The prompt is one scope paragraph (work only here, no installing, no
   network, no commit) and the task's brief, which names the check to pass.
   Ryter also gets the project's run file with that check as `test` and
   `check`; the others are told the command in the brief.
 - Cost is what the tool reports: Ryter's spend events, Claude Code's
-  `total_cost_usd`, OpenCode's cost per step. Claude Code's figure is its own
+  `total_cost_usd`, OpenCode's and Kilo's cost per step. Claude Code's figure is its own
   estimate at list prices, whatever the login, and the table marks it so (†):
   on a subscription nothing is billed per token. Codex reports tokens only, so a
   Codex run needs `--price model=input,cached,output` (dollars per million)

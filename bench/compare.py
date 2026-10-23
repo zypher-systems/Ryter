@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Tasks solved per dollar: the bench tasks given to Ryter and to other coding
-agents on this machine, each with the same brief in a fresh copy of the same
-project, scored by the hidden tests, costed by what each tool reports.
+agents on this machine (Claude Code, Codex, OpenCode, Kilo), each with the same
+brief in a fresh copy of the same project, scored by the hidden tests, costed
+by what each tool reports.
 
 python3 bench/compare.py --run ryter=anthropic:claude-sonnet-4-5 \\
     --run claude=claude-sonnet-4-5 --run opencode=anthropic/claude-sonnet-4-5 \\
@@ -30,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'bench'))
 from run import commands, isolated_env, overlay, passed, validate  # noqa: E402
 
-TOOLS = ['ryter', 'claude', 'codex', 'opencode']
+TOOLS = ['ryter', 'claude', 'codex', 'opencode', 'kilo']
 RESERVE_USD = 0.10
 SCOPE = ('Work only in this project, the current directory. Do not install packages, use other '
          'projects, external services or the network, or change system or user configuration. '
@@ -101,6 +102,10 @@ def command_for(run, binary, prompt, cap_usd):
     if run.tool == 'codex':
         return ['codex', 'exec', '--json', '--sandbox', 'workspace-write', '--ephemeral',
                 '--color', 'never', '-m', run.model, prompt]
+    if run.tool == 'kilo':
+        # Kilo's run is OpenCode's older one: `--dir` names the directory,
+        # `--auto` answers what is not denied, the events are the same shape.
+        return ['kilo', 'run', '--format', 'json', '--auto', '--dir', '.', '-m', run.model, prompt]
     return ['opencode', 'run', '--format', 'json', '--standalone', '--auto', '-m', run.model, prompt]
 
 
@@ -160,6 +165,7 @@ def charge(run, stdout, price=None):
         if turns and price:
             out['usd'], out['priced_by'] = price_tokens(out, price), 'table'
         return out
+    # OpenCode and Kilo: a `step_finish` part per model call, with its cost.
     steps = [e.get('part') or {} for e in json_lines(stdout) if e.get('type') == 'step_finish']
     usd = 0.0
     for p in steps:
