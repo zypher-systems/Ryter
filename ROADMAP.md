@@ -19,11 +19,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.37.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.38.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **A first run with no key opens `/provider` (dev, unreleased).** No key on any connection: the TUI opens the provider list by itself with a line saying pick one, press `k`, paste the key. The user's addition to the "to be noticed" list. `DECISIONS.md` 2026-10-23.
-- **`/changes` drops one change at a time (dev, unreleased).** A file's diff is shown change by change, `←→` picks one, `x` drops it alone after the one question and `/undo` brings it back; `X` is the whole file. Third on the "to be noticed" list. `DECISIONS.md` 2026-10-23.
-- **Tasks solved per dollar (dev, unreleased).** `bench/compare.py` runs the bench's tasks through Ryter, Claude Code, Codex and OpenCode as installed, same brief, same fresh project, scored by the hidden tests, costed by each tool's own report, and writes the table. First run published 2026-10-22 (`docs/bench/2026-10-22-opus-5-5.md`, Opus 5.5 on all three: Ryter $0.73, OpenCode $1.17, Claude Code $2.42 by its own estimate, all ten solved by all; a second pass on 2026-10-23 within three percent) and the number in the README; a second run the same day on Mistral Large 4 through OpenRouter against OpenCode and Kilo (`docs/bench/2026-10-22-mistral-large-4.md`: nine of ten each, Ryter $0.30, Kilo $0.41, OpenCode $0.52). Owed: harder tasks, since a current model solves these ten; the user does not want a Codex row. `DECISIONS.md` 2026-10-22.
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
 - **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
@@ -69,6 +66,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.38.0 — Tasks solved per dollar, changes dropped one at a time, a first run that opens `/provider` (2026-10-23)
+
+Released 2026-10-23 (PR #102, three rounds: one review approved every round; the other rejected twice, first on six defects — a hunk drop of a symlink writing through to the file it points at, a non-text file shown as every line removed, a drop with no model connected promising `/undo` it could not keep, and in the runner two models of one tool sharing a directory, an allowance under half a cent written as a cap of zero, `--into` stripping a report before proving the fixtures, and the hidden tests scored with the caller's environment; then on two more — a committed file that is not text read lossily and taken apart, and the documented $0.11 budget floor never starting a task in floating point; all fixed, both approved on `6d7508c`).
+
+- **Tasks solved per dollar.** `bench/compare.py` runs the bench's ten tasks through Ryter and the coding agents installed on the machine (Claude Code, Codex, OpenCode, Kilo), same brief, same fresh project, each run so that it asks nobody anything, scored by the hidden tests under the isolated environment, costed by each tool's own report, one budget for the whole run. Published: Opus 5.5 on Ryter, Claude Code and OpenCode (`docs/bench/2026-10-22-opus-5-5.md`: all ten solved by all; Ryter $0.73, OpenCode $1.17, Claude Code $2.42 by its own estimate; a second pass within three percent) and Mistral Large 4 through OpenRouter against OpenCode and Kilo (`docs/bench/2026-10-22-mistral-large-4.md`: nine of ten each; Ryter $0.30, Kilo $0.41, OpenCode $0.52), with the numbers in the README. First on the "to be noticed" list. `DECISIONS.md` 2026-10-22.
+- **`/changes` drops one change at a time.** A file's diff is shown change by change, `←→` picks one, `x` drops it alone after the one question, `X` is the whole file; with a model connected `/undo` brings it back, and without one the chat says the drop was not recorded. A link, a file that is not text, a binary or a file that is gone is not taken apart: `x` there asks about the file. Third on the list. `DECISIONS.md` 2026-10-23.
+- **A first run with no key opens `/provider`.** No key on any connection: the TUI opens the provider list by itself with a line saying pick one, press `k`, paste the key, or export a well-known variable. The user's addition to the list. `DECISIONS.md` 2026-10-23.
+- Open: harder bench tasks, since a current model solves these ten (the user does not want a Codex row); the `/changes` hunk index is applied to a fresh read, so a file or `HEAD` changing while the question is pending could shift it (the panel reloads on `Reverted`, `TurnFinished` and `Checkpoint`); a drop with no model connected has no checkpoint at all; the rest of the "to be noticed" list — Windows and macOS first-class, a run-until-done mode for an approved plan (needs the gate ruling), an editor surface over the MCP socket.
 
 ### 0.37.0 — The scout and the check after edits (2026-10-22)
 
