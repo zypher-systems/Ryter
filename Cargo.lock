@@ -2213,10 +2213,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
+name = "ryter-bench"
+version = "0.38.0"
+dependencies = [
+ "rustix",
+ "ryter-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "ryter-cli"
 version = "0.38.0"
 dependencies = [
  "clap",
+ "ryter-bench",
  "ryter-core",
  "ryter-tui",
  "serde_json",
@@ -2261,6 +2274,7 @@ dependencies = [
  "base64",
  "crossterm",
  "ratatui",
+ "ryter-bench",
  "ryter-core",
  "serde",
  "serde_json",

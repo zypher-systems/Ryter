@@ -38,11 +38,8 @@ RESERVE_USD = 0.10
 # A tool's cap is written with two decimals, and a cap of 0 means no cap to
 # Ryter; so a task starts only with a cent or more to spend.
 MIN_CAP_USD = 0.01
-SCOPE = ('Work only in this project, the current directory. Do not install packages, use other '
-         'projects, external services or the network, or change system or user configuration. '
-         'Do not commit. Use the existing dependencies. This is a command-line project with no '
-         'server to leave running. Implement the task below, run its checks, and stop when they '
-         'pass or when you cannot make them pass.\n\n')
+# The paragraph every tool gets before the brief; `ryter bench` embeds the same file.
+SCOPE = (ROOT / 'bench' / 'scope.txt').read_text().strip() + '\n\n'
 
 
 class Run:

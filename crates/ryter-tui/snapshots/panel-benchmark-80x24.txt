@@ -1,0 +1,24 @@
+ ●●● RYTER
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      benchmark                                                   10 tasks
+     › connection     ‹ spacexsi ›
+       model          grok-4.6
+       tasks          ‹ standard ›
+       budget usd     ‹ 5.00 ›
+       sandbox        ‹ workspace ›
+       start the run
+
+      each task runs in a fresh copy under the build hat with its own
+      session cap, then its hidden tests score it; the cost is what the
+      model charges. the sandbox is the build hat's (Landlock, Linux only;
+      off where it can't apply). the table goes to ~/.ryter/bench/.
+
+
+
+
+
+      ↑↓ move   ←→ change   enter edit/start   esc close
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ tab hat  ⇧tab mode  / commands  f2 instruments                   Build · $?.??

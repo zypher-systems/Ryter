@@ -7,14 +7,14 @@
                                                                                                                     ┊ HATS
            ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
                      ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                   ┊ ┃ Build                               $0
-                       Commands                                                         4 of 31                     ┊   grok-4.6
+                       Commands                                                         5 of 32                     ┊   grok-4.6
                        mo                                                                                           ┊   asks first
       What are we bui ›/models         Choose models: one for every hat, or one each for pl… ▸                      ┊ ● Audit  grok-4.6                     $0
                        /permissions    Durable allow/ask/deny bash rules from the TUI        ▸                      ┊ ● Scribe follows all hats             $0
-      Describe a chan  /tools          Tool permission mode for this session                 ▸                      ┊
-      left off.        ↑↓ move  enter run  esc close                                                                ┊
-                     ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                   ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-      / commands                                                                                                    ┊ Context
+      Describe a chan  /benchmark      Run the bench's tasks on a model and see tasks solve… ▸                      ┊
+      left off.        /tools          Tool permission mode for this session                 ▸                      ┊
+                       ↑↓ move  enter run  esc close                                                                ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+      / commands     ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                   ┊ Context
                                                                                                                     ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
                                                                                                                     ┊  ⢰⠋      ⠙⡆ 12k
                                                                                                                     ┊  ⢸   5%   ⡧ of 256k

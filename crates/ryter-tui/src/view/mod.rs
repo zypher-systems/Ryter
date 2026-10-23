@@ -194,6 +194,8 @@ pub struct View {
     pub tz_offset: i32,
     /// Model is running.
     pub busy: bool,
+    /// A `/benchmark` run is going in its thread.
+    pub bench_running: bool,
     /// Cancel requested.
     pub cancelling: bool,
     /// `Ctrl+O`: every edit's diff shown whole instead of folded.
@@ -509,6 +511,7 @@ impl View {
             username: "you".into(),
             tz_offset: 0,
             busy: false,
+            bench_running: false,
             cancelling: false,
             diffs_expanded: false,
             cwd,

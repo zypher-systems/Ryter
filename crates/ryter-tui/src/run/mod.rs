@@ -420,6 +420,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         work_tx: work_tx.clone(),
         notice_tx,
         cancel,
+        bench: None,
         home: home.clone(),
         workspace: cwd,
         trusted,
@@ -693,6 +694,17 @@ fn loop_ui(
                 // Fail at choose time: the chat says so before a turn spends
                 // on a model the account can't use.
                 view.error(format!("{seat} · {model} · can't use: {why}"));
+            }
+            if let Notice::BenchDone(report) = &n {
+                // The run's headline reaches the chat whether or not the
+                // panel is still open.
+                view.bench_running = false;
+                cx.bench = None;
+                view.system(format!(
+                    "benchmark done · {} · the table is in {}",
+                    report.headline(),
+                    report.directory.join("RESULTS.md").display()
+                ));
             }
             panel::on_notice(view, &n);
             dirty = true;

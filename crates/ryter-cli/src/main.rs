@@ -113,6 +113,39 @@ enum Command {
     Doctor,
     /// Trust this directory's `.ryter/` overlay (skills, hooks, project config).
     Trust,
+    /// Run the bench's tasks on a model and report tasks solved per dollar.
+    /// Each task runs in a fresh copy under the build hat, is scored by its
+    /// hidden tests, and costs what the model charges; the table goes to
+    /// `~/.ryter/bench/`.
+    Bench {
+        /// standard | hard; every task when absent.
+        #[arg(long)]
+        level: Option<String>,
+        /// One task by name; repeatable.
+        #[arg(long = "task")]
+        tasks: Vec<String>,
+        /// Dollars for the whole run, from 0.11 to 50. Required to run.
+        #[arg(long)]
+        budget: Option<f64>,
+        /// Connection name (default: the last used, or the config's).
+        #[arg(long)]
+        connection: Option<String>,
+        /// Model id (default: the connection's).
+        #[arg(short = 'm', long)]
+        model: Option<String>,
+        /// Seconds per task.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        /// The build hat's sandbox: off, workspace (default on Linux), read-only.
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Where to write the run (default: a dated folder under `~/.ryter/bench/`).
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+        /// List the tasks and exit.
+        #[arg(long)]
+        list: bool,
+    },
     /// List sessions for this directory.
     Sessions,
     /// Open the TUI on a saved session (`latest` if omitted).
@@ -335,6 +368,33 @@ fn main() -> ExitCode {
         }
         Some(Command::Trust) => match trust_cmd() {
             Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Bench {
+            level,
+            tasks,
+            budget,
+            connection,
+            model,
+            timeout,
+            sandbox,
+            output,
+            list,
+        }) => match bench_cmd(BenchArgs {
+            level,
+            tasks,
+            budget,
+            connection,
+            model,
+            timeout,
+            sandbox,
+            output,
+            list,
+        }) {
+            Ok(stopped) => ExitCode::from(u8::from(stopped)),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -673,6 +733,139 @@ fn models_cmd(connection: Option<&str>) -> ryter_core::Result<()> {
         println!("  {}{price}", m.id);
     }
     Ok(())
+}
+
+struct BenchArgs {
+    level: Option<String>,
+    tasks: Vec<String>,
+    budget: Option<f64>,
+    connection: Option<String>,
+    model: Option<String>,
+    timeout: u64,
+    sandbox: Option<String>,
+    output: Option<std::path::PathBuf>,
+    list: bool,
+}
+
+/// `ryter bench`: the tasks on one model, the table on stdout and in a file.
+/// Returns whether the run stopped early.
+fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
+    use std::io::Write as _;
+    let level = args
+        .level
+        .as_deref()
+        .map(|l| l.parse::<ryter_bench::Level>().map_err(Error::Config))
+        .transpose()?;
+    let tasks = ryter_bench::select(&args.tasks, level);
+    if tasks.is_empty() {
+        return Err(Error::Config("no matching task".into()));
+    }
+    if args.list {
+        for t in &tasks {
+            println!("{:<22} {:<9} {}", t.name, t.level, t.title);
+        }
+        return Ok(false);
+    }
+    let budget = args.budget.ok_or_else(|| {
+        Error::Config("--budget is required: dollars for the whole run, from 0.11 to 50".into())
+    })?;
+    if !(ryter_bench::RESERVE_USD + 0.01..=50.0).contains(&budget) {
+        return Err(Error::Config(
+            "--budget is dollars from 0.11 (the reserve and a cent) to 50".into(),
+        ));
+    }
+    let home = config::home_dir();
+    let cfg = config::load(None, false)?;
+    let last = config::load_last_route(&home);
+    let (conn_name, model) = config::resolve_route(
+        &cfg,
+        last.as_ref(),
+        args.connection.as_deref(),
+        args.model.as_deref(),
+        |c| config::has_secret(&cfg, c),
+    );
+    if !cfg.connections.contains_key(&conn_name) {
+        return Err(Error::Config(format!("unknown connection {conn_name}")));
+    }
+    if !config::has_secret(&cfg, &conn_name) {
+        return Err(Error::Config(format!(
+            "connection {conn_name} has no API key"
+        )));
+    }
+    let sandbox = match args.sandbox {
+        Some(s) => s.parse::<SandboxProfile>()?.to_string(),
+        None if cfg!(target_os = "linux") => "workspace".to_string(),
+        None => "off".to_string(),
+    };
+    let binary = std::env::current_exe().map_err(|e| Error::Io(e.to_string()))?;
+    let dir = args.output.unwrap_or_else(|| {
+        let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
+        let slug: String = model
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        home.join("bench").join(format!("{stamp}-{slug}"))
+    });
+    let opts = ryter_bench::Options {
+        binary,
+        connection: conn_name,
+        model,
+        budget_usd: budget,
+        timeout: std::time::Duration::from_secs(args.timeout),
+        sandbox,
+        dir,
+        cancel: ryter_bench::Cancel::default(),
+    };
+    println!(
+        "ryter bench: {} task{} on {} ({}), budget ${budget:.2}, {} s per task; the run is in {}",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" },
+        opts.model,
+        opts.connection,
+        args.timeout,
+        opts.dir.display()
+    );
+    let mut out = io::stdout();
+    let report = ryter_bench::run(&tasks, &opts, |progress| {
+        use ryter_bench::Progress;
+        match progress {
+            Progress::Started {
+                name,
+                index,
+                total,
+                cap_usd,
+            } => {
+                print!(
+                    "[{}/{total}] {name}: running (cap ${cap_usd:.2}) ",
+                    index + 1
+                );
+            }
+            Progress::Spent { .. } | Progress::Activity { .. } => {}
+            Progress::Scoring { .. } => print!("scoring "),
+            Progress::Finished(r) => match (r.solved, &r.error) {
+                (Some(true), _) => {
+                    println!("✓ {} {:.0}s", ryter_bench::report::usd(r.usd), r.seconds)
+                }
+                (Some(false), _) => println!(
+                    "✗ {} {:.0}s{}",
+                    ryter_bench::report::usd(r.usd),
+                    r.seconds,
+                    if r.timed_out { " (timed out)" } else { "" }
+                ),
+                (None, Some(why)) => println!("skipped: {why}"),
+                (None, None) => println!("not run"),
+            },
+            Progress::Stopped { why } => println!("stopped: {why}"),
+        }
+        let _ = out.flush();
+    });
+    let path = report
+        .save(&opts.dir)
+        .map_err(|e| Error::Io(e.to_string()))?;
+    println!();
+    print!("{}", report.markdown());
+    println!("{}", path.display());
+    Ok(report.stopped.is_some())
 }
 
 fn trust_cmd() -> ryter_core::Result<()> {

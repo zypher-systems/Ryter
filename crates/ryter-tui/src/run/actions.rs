@@ -28,6 +28,8 @@ pub struct Ctx {
     pub notice_tx: mpsc::Sender<Notice>,
     /// Shared cancel flag.
     pub cancel: Arc<ryter_core::Cancel>,
+    /// The `/benchmark` run going, to stop it.
+    pub bench: Option<ryter_bench::Cancel>,
     /// `~/.ryter`.
     pub home: PathBuf,
     /// Project root.
@@ -266,6 +268,20 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
+        Action::StartBench {
+            connection,
+            model,
+            level,
+            budget_usd,
+            sandbox,
+        } => start_bench(view, cx, connection, model, level, budget_usd, sandbox),
+        Action::CancelBench => match &cx.bench {
+            Some(cancel) => {
+                cancel.cancel();
+                view.system("benchmark: stopping after the task in progress");
+            }
+            None => view.error("no benchmark run is going"),
+        },
 
         Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
         Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),
@@ -942,6 +958,87 @@ fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: S
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(connection)),
     }
+}
+
+/// `/benchmark`: the bench's tasks on `model`, in a thread, as `ryter bench`
+/// runs them; each step comes back as a notice, the table lands under
+/// `~/.ryter/bench/`, and the headline in the chat.
+fn start_bench(
+    view: &mut View,
+    cx: &mut Ctx,
+    connection: String,
+    model: String,
+    level: Option<ryter_bench::Level>,
+    budget_usd: f64,
+    sandbox: String,
+) {
+    if view.bench_running {
+        view.error("a benchmark run is already going; its result lands in the chat");
+        return;
+    }
+    if view.busy {
+        view.error("wait for the turn to finish before a benchmark run");
+        return;
+    }
+    if !cx.cfg.connections.contains_key(&connection) {
+        view.error(format!("unknown connection {connection}"));
+        return;
+    }
+    if !config::has_secret(&cx.cfg, &connection) {
+        view.error(format!("connection {connection} has no API key"));
+        return;
+    }
+    if !(ryter_bench::RESERVE_USD + 0.01..=50.0).contains(&budget_usd) {
+        view.error("the budget is dollars from 0.11 (the reserve and a cent) to 50");
+        return;
+    }
+    let tasks = ryter_bench::select(&[], level);
+    if tasks.is_empty() {
+        view.error("no task at that level");
+        return;
+    }
+    let binary = match std::env::current_exe() {
+        Ok(b) => b,
+        Err(e) => {
+            view.error(format!("benchmark: can't find the ryter binary: {e}"));
+            return;
+        }
+    };
+    let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
+    let slug: String = model
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let cancel = ryter_bench::Cancel::default();
+    let opts = ryter_bench::Options {
+        binary,
+        connection,
+        model,
+        budget_usd,
+        timeout: std::time::Duration::from_secs(600),
+        sandbox,
+        dir: cx.home.join("bench").join(format!("{stamp}-{slug}")),
+        cancel: cancel.clone(),
+    };
+    view.system(format!(
+        "benchmark: {} task{} on {} ({}), budget ${budget_usd:.2}, 600 s per task, sandbox {} · the run is in {}",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" },
+        opts.model,
+        opts.connection,
+        opts.sandbox,
+        opts.dir.display()
+    ));
+    view.bench_running = true;
+    cx.bench = Some(cancel);
+    let tx = cx.notice_tx.clone();
+    std::thread::spawn(move || {
+        let progress = tx.clone();
+        let report = ryter_bench::run(&tasks, &opts, |p| {
+            let _ = progress.send(Notice::Bench(p));
+        });
+        let _ = tx.send(Notice::BenchDone(Box::new(report)));
+    });
 }
 
 /// One tiny request with a tool: catch a data policy, missing tools, or no

@@ -16,6 +16,7 @@ path = "src/main.rs"
 clap.workspace = true
 ryter-core.workspace = true
 ryter-tui.workspace = true
+ryter-bench.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
 

@@ -104,6 +104,32 @@ Visible checks are deliberately weaker than the hidden tests. Work that passes
 the checks and its review but fails the hidden tests is a **false pass**: the
 number that says how far a review can be trusted.
 
+## Running the bench from the binary
+
+The fixtures (each task's `task.toml`, `repo/` and `hidden/`, never a solution)
+are embedded in `ryter` at build time (`crates/ryter-bench`), so a user runs the
+same tasks on their own model and key without a checkout:
+
+```sh
+ryter bench --list                               # the tasks and their levels
+ryter bench --level hard --budget 5              # the hard tasks on the default route
+ryter bench --task slugify --connection anthropic -m claude-sonnet-4-5 --budget 1
+```
+
+`/benchmark` in the TUI is the same run from a form: connection, model, level,
+budget and sandbox, with the tasks ticking through in a panel and the headline
+in the chat. Either way each task runs in a fresh copy under the build hat as
+its own `ryter` process (`--json --hat build --always-approve`, the user's
+environment for its login, a per-task cap in the copy's `.ryter/config.toml`),
+and is scored by its hidden tests in the bare environment described below. The
+run goes to `~/.ryter/bench/<date-time>-<model>/`: `report.json`, `RESULTS.md`,
+and per task the prompt, the build hat's events and stderr; the project copies
+are removed once scored. The budget, the reserve and the per-task cap work as
+in the comparison runner; `--sandbox` is the build hat's (`workspace` on Linux
+unless the Ryter home is somewhere Landlock refuses to isolate, `off`
+elsewhere). The tool comparison stays here in `bench/compare.py`, since it
+depends on which other tools are installed and how each reports its cost.
+
 ## Comparing with other tools: tasks solved per dollar
 
 `bench/compare.py` gives the same tasks to Ryter and to the other coding agents

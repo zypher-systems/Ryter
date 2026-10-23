@@ -4,6 +4,7 @@
 //! framework draws the shared chrome, dims what is behind, and drops a shadow.
 
 pub mod audit;
+pub mod benchmark;
 pub mod budget;
 pub mod changes;
 pub mod chrome;
@@ -113,6 +114,10 @@ pub enum Notice {
     },
     /// Sessions list refreshed (after rename/delete).
     SessionsChanged,
+    /// A benchmark run moved on (`/benchmark`).
+    Bench(ryter_bench::Progress),
+    /// A benchmark run finished.
+    BenchDone(Box<ryter_bench::Report>),
 }
 
 /// A popout.
@@ -395,6 +400,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),
         PanelId::Changes => Box::new(changes::Changes::new(view, env)),
+        PanelId::Benchmark => Box::new(benchmark::Benchmark::new(view)),
         PanelId::Commit => {
             let (p, act) = commit::Commit::new(view, env);
             view.panels.push(Box::new(p));
