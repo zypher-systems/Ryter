@@ -71,7 +71,7 @@ The bench's ten tasks, given to Ryter, Claude Code and OpenCode on the same mode
 | OpenCode | 10/10 | $1.17 | $0.12 |
 | Claude Code | 10/10 | $2.42 † | $0.24 |
 
-† Claude Code's own estimate at list prices; it was signed in with a subscription, so nothing was billed per token. The other two are what Anthropic charged an API key.
+† Claude Code's own estimate at list prices; it was signed in with a subscription, so nothing was billed per token. The other two are what Anthropic charged an API key. A second pass the next day gave the same ten solved each and totals within three percent.
 
 The same ten on `mistralai/mistral-large-4-0` through OpenRouter, every cost what OpenRouter charged:
 
