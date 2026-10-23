@@ -97,7 +97,7 @@ class Charges(unittest.TestCase):
                           'usage': {'input_tokens': 500, 'cache_read_input_tokens': 40_000,
                                     'cache_creation_input_tokens': 2_000, 'output_tokens': 900}})
         c = charge(Run('claude=sonnet'), out)
-        self.assertEqual((c['usd'], c['priced_by'], c['calls']), (0.1234, 'tool', 7))
+        self.assertEqual((c['usd'], c['priced_by'], c['calls']), (0.1234, 'tool estimate', 7))
         self.assertEqual((c['input'], c['cached'], c['output']), (500, 40_000, 900))
         self.assertIsNone(charge(Run('claude=sonnet'), 'Error: not logged in\n')['usd'])
 
@@ -141,7 +141,7 @@ class Summary(unittest.TestCase):
                 'versions': {'ryter': 'ryter 0.37.0', 'claude': None, 'codex': 'codex-cli 0.1'},
                 'budget_usd': 5.0, 'timeout_seconds': 600, 'total_usd': 0.9,
                 'prices': {'g': {'input': 2.0, 'cached': 0.2, 'output': 10.0}},
-                'tasks': {'a': {'results': {'ryter=c:m': row(True, 0.10), 'claude=s': row(True, 0.30),
+                'tasks': {'a': {'results': {'ryter=c:m': row(True, 0.10), 'claude=s': row(True, 0.30, by='tool estimate'),
                                             'codex=g': row(False, 0.05, 600, 'table', True)}},
                           'b': {'results': {'ryter=c:m': row(True, 0.20, 120), 'claude=s': row(False, 0.25),
                                             'codex=g': {'error': 'fixture trust failed', 'usd': None}}}}}
@@ -187,6 +187,8 @@ class Summary(unittest.TestCase):
         self.assertIn('# Tasks solved per dollar — 2026-10-22', md)
         self.assertIn('| `ryter=c:m` | 2/2 | $0.300 | $0.150 | 6.7 | 1.5 | 0 |', md)
         self.assertIn('| `codex=g` | 0/1 | $0.050 * | — | 0.0 | 10.0 | 1 |', md)
+        self.assertIn('| `claude=s` | 1/2 | $0.550 † | $0.550 | 1.8 | 1.0 | 0 |', md)
+        self.assertIn("† the tool's own estimate of the cost at list prices", md)
         self.assertIn('`g` $2.0/0.2/10.0 per million', md)
         self.assertIn('| a | ✓ $0.100 | ✓ $0.300 | ✗ $0.050 (timed out) |', md)
         self.assertIn('| b | ✓ $0.200 | ✗ $0.250 | error: fixture trust failed |', md)

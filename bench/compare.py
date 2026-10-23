@@ -144,7 +144,9 @@ def charge(run, stdout, price=None):
         out['output'] = usage.get('output_tokens', 0)
         out['calls'] = r.get('num_turns', 0)
         if isinstance(r.get('total_cost_usd'), (int, float)):
-            out['usd'], out['priced_by'] = float(r['total_cost_usd']), 'tool'
+            # Claude Code's figure is its own estimate at list prices, whatever
+            # the login; a subscription is billed nothing per token.
+            out['usd'], out['priced_by'] = float(r['total_cost_usd']), 'tool estimate'
         return out
     if run.tool == 'codex':
         turns = [e for e in json_lines(stdout) if e.get('type') == 'turn.completed']
@@ -286,7 +288,9 @@ def summarize(report):
                      'solved_per_usd': (solved / usd) if priced and usd else None,
                      'timed_out': sum(r.get('timed_out', False) for r in done),
                      'median_minutes': statistics.median(r['seconds'] for r in done) / 60 if done else None,
-                     'table_priced': any(r.get('charge', {}).get('priced_by') == 'table' for r in done)})
+                     'table_priced': any(r.get('charge', {}).get('priced_by') == 'table' for r in done),
+                     'estimated': key.startswith('claude=')
+                     or any(r.get('charge', {}).get('priced_by') == 'tool estimate' for r in done)})
     return rows
 
 
@@ -303,16 +307,20 @@ def markdown(report):
              f'{report["timeout_seconds"]} s per task; one attempt per task.', '',
              '| Run | Solved | Cost | Cost per solved | Solved per $ | Median minutes | Timed out |',
              '|---|---|---|---|---|---|---|']
-    for s in summarize(report):
-        flag = ' *' if s['table_priced'] else ''
+    summary = summarize(report)
+    for s in summary:
+        flag = (' *' if s['table_priced'] else '') + (' †' if s['estimated'] else '')
         lines.append(f'| `{s["run"]}` | {s["solved"]}/{s["tasks"]} | {usd(s["usd"])}{flag} | '
                      f'{usd(s["usd_per_solved"])} | '
                      f'{"—" if s["solved_per_usd"] is None else f"{s["solved_per_usd"]:.1f}"} | '
                      f'{"—" if s["median_minutes"] is None else f"{s["median_minutes"]:.1f}"} | {s["timed_out"]} |')
-    if any(s['table_priced'] for s in summarize(report)):
+    if any(s['table_priced'] for s in summary):
         lines += ['', '\\* priced from the token counts at the rates given: '
                   + ', '.join(f'`{m}` ${p["input"]}/{p["cached"]}/{p["output"]} per million input/cached/output'
                               for m, p in report['prices'].items()) + '.']
+    if any(s['estimated'] for s in summary):
+        lines += ['', "† the tool's own estimate of the cost at list prices, not a provider's charge: "
+                  "Claude Code prices its usage itself, and on a subscription login nothing is billed per token."]
     lines += ['', '| Task | ' + ' | '.join(f'`{k}`' for k in report['runs']) + ' |',
               '|---|' + '---|' * len(report['runs'])]
     for name, task in report['tasks'].items():
@@ -339,15 +347,21 @@ def main(argv=None):
     parser.add_argument('--price', action='append', default=[],
                         help='model=input,cached,output dollars per million, for a tool that reports tokens only')
     parser.add_argument('--task', action='append', default=[])
-    parser.add_argument('--budget', type=float, required=True, help='dollars for the whole run, all tools')
+    parser.add_argument('--budget', type=float, help='dollars for the whole run, all tools; required to run')
     parser.add_argument('--timeout', type=int, default=600, help='seconds per task per tool')
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ryter')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--dry-run', action='store_true', help='validate, print the commands, call nothing')
+    parser.add_argument('--render', type=Path, help='an output directory: rewrite its RESULTS.md from report.json, run nothing')
     parser.add_argument('--into', type=Path,
                         help='an earlier output directory: run the given tools again into its report, '
                              'replacing their results; --budget is for this invocation')
     args = parser.parse_args(argv)
+    if args.render:
+        report = json.loads((args.render / 'report.json').read_text())
+        (args.render / 'RESULTS.md').write_text(markdown(report))
+        print(args.render / 'RESULTS.md')
+        return 0
     try:
         runs = [Run(s) for s in args.run]
         prices = dict(parse_price(s) for s in args.price)
@@ -355,6 +369,8 @@ def main(argv=None):
         parser.error(str(e))
     if not runs:
         parser.error('at least one --run')
+    if args.budget is None:
+        parser.error('--budget is required')
     if len({r.key for r in runs}) != len(runs):
         parser.error('each --run once')
     if not 0 < args.budget <= 50:

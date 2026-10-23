@@ -120,7 +120,9 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
   Ryter also gets the project's run file with that check as `test` and
   `check`; the others are told the command in the brief.
 - Cost is what the tool reports: Ryter's spend events, Claude Code's
-  `total_cost_usd`, OpenCode's cost per step. Codex reports tokens only, so a
+  `total_cost_usd`, OpenCode's cost per step. Claude Code's figure is its own
+  estimate at list prices, whatever the login, and the table marks it so (†):
+  on a subscription nothing is billed per token. Codex reports tokens only, so a
   Codex run needs `--price model=input,cached,output` (dollars per million)
   and its cost is marked as priced from that table; OpenCode falls back to the
   table when it reports no cost (a subscription login). A task a tool could
@@ -134,7 +136,10 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
   task, so a stopped run compares the same tasks.
 - The output directory holds `report.json`, `RESULTS.md` (the table), and per
   task and tool the prompt, the tool's output, stderr and the project as it
-  was left. The published runs are under `docs/bench/`.
+  was left. `--into DIR` runs the given tools again into an earlier report,
+  replacing their results and spend; `--render DIR` rewrites its table from
+  `report.json` without running anything. The published runs are under
+  `docs/bench/`.
 
 No CI job runs this, and the runner refuses to start a paid task on a fixture
 whose reference solution does not pass or whose unchanged project does.
