@@ -33,7 +33,7 @@
                                                                                                                     ┊
                                                                                                                     ┊
                                                                                                                     ┊
-                   ↑↓ move   ←→ change   enter edit/start   esc close                                               ┊
+                   ↑↓ move   ←→ change   enter choose/start   esc close                                             ┊
                  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘               ┊
                                                                                                                     ┊
                                                                                                                     ┊

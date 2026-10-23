@@ -2,15 +2,22 @@
 //! the TUI: pick the connection, the model, the level and a budget, and
 //! watch tasks solved per dollar come in. The run is `ryter bench`'s, in a
 //! thread; its table lands under `~/.ryter/bench/` and its headline in the
-//! chat.
+//! chat. The model is picked from the connection's list, with context and
+//! prices, as `/models` shows it.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::text::{Line, Span};
 use ryter_bench::{Level, Progress, Report, TaskResult};
+use ryter_core::{ModelInfo, format_tokens};
 
+use super::models::price;
 use super::widgets::{self, Al, Field, Form, Kind};
 use super::{Body, Notice, Outcome, Panel};
 use crate::action::Action;
-use crate::chat::wrap;
+use crate::activity::SPINNER;
+use crate::chat::{short_model, wrap};
 use crate::theme::Theme;
 use crate::view::View;
 
@@ -54,11 +61,20 @@ enum Phase {
 #[derive(Debug, Clone)]
 pub struct Benchmark {
     form: Form,
-    /// Editing the model via the composer.
+    /// Editing the budget via the composer.
     editing: bool,
     phase: Phase,
     /// The keyed connections, in the select's order.
     connections: Vec<String>,
+    /// Every keyed connection's models, as `/models` lists them: the
+    /// built-in rows until the lists come.
+    catalog: Vec<ModelInfo>,
+    /// Some keyed connection's list is still to come.
+    loading: bool,
+    /// Connections whose list has come, or won't.
+    settled: BTreeSet<String>,
+    /// The model list is open, with the cursor on this row.
+    picking: Option<usize>,
 }
 
 impl Benchmark {
@@ -84,6 +100,18 @@ impl Benchmark {
             .iter()
             .position(|c| c == &connection)
             .unwrap_or(0);
+        let mut catalog = Vec::new();
+        for c in &view.connections {
+            if !connections.contains(&c.name) {
+                continue;
+            }
+            let mut fb = crate::view::fallback_models(&c.kind, &c.model);
+            for m in &mut fb {
+                m.connection = Some(c.name.clone());
+            }
+            catalog.extend(fb);
+        }
+        let loading = view.connections.iter().any(|c| c.has_key);
         let fields = vec![
             Field::new(
                 "connection",
@@ -128,7 +156,189 @@ impl Benchmark {
             editing: false,
             phase: Phase::Setup,
             connections,
+            catalog,
+            loading,
+            settled: BTreeSet::new(),
+            picking: None,
         }
+    }
+
+    /// The connection chosen on the form.
+    fn connection(&self, view: &View) -> String {
+        self.connections
+            .get(self.select_idx("connection"))
+            .cloned()
+            .unwrap_or_else(|| view.connection.clone())
+    }
+
+    /// The chosen connection's models, those the filter keeps when the list
+    /// is open, in the catalog's order.
+    fn listed(&self, view: &View) -> Vec<&ModelInfo> {
+        let connection = self.connection(view);
+        let f = if self.picking.is_some() {
+            view.composer.text().trim().to_ascii_lowercase()
+        } else {
+            String::new()
+        };
+        self.catalog
+            .iter()
+            .filter(|m| m.connection.as_deref() == Some(connection.as_str()))
+            .filter(|m| {
+                f.is_empty()
+                    || m.id.to_ascii_lowercase().contains(&f)
+                    || short_model(&m.id).to_ascii_lowercase().contains(&f)
+            })
+            .collect()
+    }
+
+    fn set_model(&mut self, model: &str) {
+        if let Some(Kind::Text(t)) = self.form.get_mut("model").map(|f| &mut f.kind) {
+            *t = model.trim().to_string();
+        }
+    }
+
+    /// The connection changed: its own default model goes in the model
+    /// field, as a model from the last connection is not on this one.
+    fn follow_connection(&mut self, view: &View) {
+        let connection = self.connection(view);
+        let own = view
+            .connections
+            .iter()
+            .find(|c| c.name == connection)
+            .map(|c| c.model.clone())
+            .filter(|m| !m.is_empty())
+            .or_else(|| self.listed(view).first().map(|m| m.id.clone()))
+            .unwrap_or_default();
+        self.set_model(&own);
+    }
+
+    /// Open the model list, the cursor on the model in the field.
+    fn open_list(&mut self, view: &mut View) {
+        view.composer.clear();
+        self.picking = Some(0);
+        let model = self.model();
+        if let Some(i) = self.listed(view).iter().position(|m| m.id == model) {
+            self.picking = Some(i);
+        }
+    }
+
+    /// Take a `Models` notice as `/models` does: the rows of the
+    /// connections it carries or covers are replaced, even to none; the
+    /// rest stay; a connection that has lost its key goes.
+    fn set_models(
+        &mut self,
+        view: &View,
+        models: &[ModelInfo],
+        covered: &[String],
+        failed: &[String],
+    ) {
+        let on = |m: &ModelInfo| {
+            m.connection
+                .clone()
+                .unwrap_or_else(|| view.connection.clone())
+        };
+        if !models.is_empty() || !covered.is_empty() {
+            let keyed = |c: &str| self.connections.iter().any(|n| n == c);
+            let mut replaced: BTreeSet<String> = models.iter().map(on).collect();
+            replaced.extend(covered.iter().cloned());
+            let mut by_connection: BTreeMap<String, Vec<ModelInfo>> = BTreeMap::new();
+            for m in models {
+                if keyed(&on(m)) {
+                    by_connection.entry(on(m)).or_default().push(m.clone());
+                }
+            }
+            for m in &self.catalog {
+                let c = on(m);
+                if !replaced.contains(&c) && keyed(&c) {
+                    by_connection.entry(c).or_default().push(m.clone());
+                }
+            }
+            self.catalog = by_connection.into_values().flatten().collect();
+        }
+        self.settled.extend(covered.iter().cloned());
+        self.settled.extend(failed.iter().cloned());
+        self.loading = view
+            .connections
+            .iter()
+            .any(|c| c.has_key && !self.settled.contains(&c.name));
+        if let Some(sel) = self.picking {
+            let n = self.listed(view).len();
+            self.picking = Some(sel.min(n.saturating_sub(1)));
+        }
+    }
+
+    /// The open model list: the chosen connection's models with context
+    /// and prices, the cursor on one.
+    fn render_list(&self, view: &View, w: usize, h: usize, theme: Theme) -> Vec<Line<'static>> {
+        let list = self.listed(view);
+        let n = list.len();
+        let sel = self.picking.unwrap_or(0).min(n.saturating_sub(1));
+        let rows_h = h.saturating_sub(3).max(1);
+        let first = super::window(sel, n, rows_h);
+        let rows: Vec<Vec<String>> = list
+            .iter()
+            .skip(first)
+            .take(rows_h)
+            .map(|m| {
+                vec![
+                    m.id.clone(),
+                    m.context_length
+                        .map(format_tokens)
+                        .unwrap_or_else(|| "?".into()),
+                    price(m.input_per_million),
+                    price(m.output_per_million),
+                ]
+            })
+            .collect();
+        let toolless: Vec<bool> = list
+            .iter()
+            .skip(first)
+            .take(rows_h)
+            .map(|m| m.tools == Some(false))
+            .collect();
+        let mut lines = vec![widgets::text(
+            &format!("model on {} · type to filter", self.connection(view)),
+            theme,
+        )];
+        let mut table = widgets::table(
+            &["model", "context", "in/M", "out/M"],
+            &rows,
+            &[Al::L, Al::R, Al::R, Al::R],
+            (n > 0).then_some(sel.saturating_sub(first)),
+            w,
+            theme,
+        );
+        for (i, off) in toolless.iter().enumerate() {
+            if *off && i != sel.saturating_sub(first) {
+                if let Some(line) = table.get_mut(i + 1) {
+                    for span in &mut line.spans {
+                        span.style = span.style.fg(theme.dim);
+                    }
+                }
+            }
+        }
+        lines.extend(table);
+        if self.loading {
+            let frame = SPINNER[(view.now_ms / 80) as usize % SPINNER.len()];
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {frame} "), theme.on_panel(theme.accent)),
+                Span::styled("loading models…", theme.panel_muted()),
+            ]));
+        } else if n == 0 {
+            let f = view.composer.text().trim().to_string();
+            lines.push(widgets::note(
+                &if f.is_empty() {
+                    "no model listed; type an id and press enter".to_string()
+                } else {
+                    format!("no listed model matches; enter uses \"{f}\" as the id")
+                },
+                theme,
+            ));
+        }
+        if let Some(note) = &view.models_note {
+            lines.push(widgets::note(note, theme));
+        }
+        lines
     }
 
     fn select_idx(&self, id: &str) -> usize {
@@ -170,17 +380,22 @@ impl Benchmark {
             view.error("name a model to run the bench on");
             return Outcome::Stay;
         }
+        let connection = self.connection(view);
+        if self.catalog.iter().any(|m| {
+            m.id == self.model()
+                && m.connection.as_deref() == Some(connection.as_str())
+                && m.tools == Some(false)
+        }) {
+            view.error("that model can't call tools, so it can't read a file or run a test");
+            return Outcome::Stay;
+        }
         let tasks = ryter_bench::select(&[], self.level()).len();
         if tasks == 0 {
             view.error("no task at that level");
             return Outcome::Stay;
         }
         Outcome::Act(Action::StartBench {
-            connection: self
-                .connections
-                .get(self.select_idx("connection"))
-                .cloned()
-                .unwrap_or_else(|| view.connection.clone()),
+            connection,
             model: self.model(),
             level: self.level(),
             budget_usd: self.budget(),
@@ -191,6 +406,14 @@ impl Benchmark {
             }
             .to_string(),
         })
+    }
+
+    /// `←`/`→` on the focused field; a new connection brings its model.
+    fn adjust(&mut self, view: &View, delta: i32) {
+        let on_connection = self.form.current().is_some_and(|f| f.id == "connection");
+        if self.form.adjust(delta) && on_connection {
+            self.follow_connection(view);
+        }
     }
 
     fn rows_for(tasks: &[&ryter_bench::Task]) -> Vec<Row> {
@@ -385,8 +608,11 @@ impl Panel for Benchmark {
 
     fn legend(&self, _view: &View) -> String {
         match &self.phase {
+            Phase::Setup if self.picking.is_some() => {
+                "↑↓ move · type to filter · enter choose · esc back".into()
+            }
             Phase::Setup if self.editing => "type · enter apply · esc cancel".into(),
-            Phase::Setup => "↑↓ move · ←→ change · enter edit/start · esc close".into(),
+            Phase::Setup => "↑↓ move · ←→ change · enter choose/start · esc close".into(),
             Phase::Running {
                 confirm_stop: true, ..
             } => "⏎ stop · n keep running".into(),
@@ -400,7 +626,12 @@ impl Panel for Benchmark {
     }
 
     fn input(&self, _view: &View) -> Option<String> {
-        self.editing.then(|| "model".to_string())
+        if self.picking.is_some() {
+            return Some("filter".into());
+        }
+        self.editing
+            .then(|| self.form.current().map(|f| f.label.clone()))
+            .flatten()
     }
 
     fn prefill(&self, _view: &View) -> Option<String> {
@@ -412,6 +643,9 @@ impl Panel for Benchmark {
     fn render(&self, view: &View, width: u16, height: u16, theme: Theme) -> Body {
         let w = usize::from(width);
         let mut lines = match &self.phase {
+            Phase::Setup if self.picking.is_some() => {
+                self.render_list(view, w, usize::from(height), theme)
+            }
             Phase::Setup => {
                 let mut lines = Vec::new();
                 if view.bench_running {
@@ -483,6 +717,44 @@ impl Panel for Benchmark {
             }
             Phase::Setup => {}
         }
+        if let Some(sel) = self.picking {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.picking = None;
+                    view.composer.clear();
+                    Outcome::Stay
+                }
+                KeyCode::Up => {
+                    self.picking = Some(sel.saturating_sub(1));
+                    Outcome::Stay
+                }
+                KeyCode::Down => {
+                    let n = self.listed(view).len();
+                    self.picking = Some((sel + 1).min(n.saturating_sub(1)));
+                    Outcome::Stay
+                }
+                KeyCode::Enter => {
+                    let typed = view.composer.text().trim().to_string();
+                    let chosen = self
+                        .listed(view)
+                        .get(sel)
+                        .map(|m| m.id.clone())
+                        .or_else(|| (!typed.is_empty()).then_some(typed));
+                    if let Some(id) = chosen {
+                        self.set_model(&id);
+                        self.picking = None;
+                        view.composer.clear();
+                    }
+                    Outcome::Stay
+                }
+                _ => {
+                    if super::edit_field(&mut view.composer, key) {
+                        self.picking = Some(0);
+                    }
+                    Outcome::Stay
+                }
+            };
+        }
         if self.editing {
             return match key.code {
                 KeyCode::Esc => {
@@ -515,17 +787,21 @@ impl Panel for Benchmark {
                 Outcome::Stay
             }
             KeyCode::Left => {
-                self.form.adjust(-1);
+                self.adjust(view, -1);
                 Outcome::Stay
             }
             KeyCode::Right | KeyCode::Char(' ') => {
-                self.form.adjust(1);
+                self.adjust(view, 1);
                 Outcome::Stay
             }
             KeyCode::Enter => match self.form.current().map(|f| (f.id, &f.kind)) {
                 Some(("start", _)) => self.start(view),
+                Some(("model", _)) => {
+                    self.open_list(view);
+                    Outcome::Stay
+                }
                 Some((_, Kind::Select { .. })) => {
-                    self.form.adjust(1);
+                    self.adjust(view, 1);
                     Outcome::Stay
                 }
                 Some((_, Kind::Text(_) | Kind::Number { .. })) => {
@@ -544,8 +820,13 @@ impl Panel for Benchmark {
         }
     }
 
-    fn on_notice(&mut self, n: &Notice, _view: &mut View) {
+    fn on_notice(&mut self, n: &Notice, view: &mut View) {
         match n {
+            Notice::Models {
+                models,
+                covered,
+                failed,
+            } => self.set_models(view, models, covered, failed),
             Notice::Bench(progress) => {
                 if !matches!(self.phase, Phase::Running { .. }) {
                     if !matches!(progress, Progress::Started { .. } | Progress::Finished(_)) {
@@ -619,5 +900,217 @@ impl Panel for Benchmark {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+
+    fn row(id: &str, conn: &str, rates: (f64, f64), tools: bool) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            context_length: Some(200_000),
+            input_per_million: Some(rates.0),
+            output_per_million: Some(rates.1),
+            cached_per_million: None,
+            cache_write_per_million: None,
+            connection: Some(conn.into()),
+            created: None,
+            tools: Some(tools),
+        }
+    }
+
+    /// Two keyed connections; the session (and so the build hat) on
+    /// spacexsi's grok-4.6.
+    fn two_connections() -> View {
+        let mut v = View::new("spacexsi".into(), "grok-4.6".into(), "/tmp".into());
+        for (name, model) in [("spacexsi", "grok-4.6"), ("openrouter", "qwen/qwen3.7-max")] {
+            v.connections.push(crate::view::ConnRow {
+                name: name.into(),
+                kind: name.into(),
+                model: model.into(),
+                has_key: true,
+            });
+        }
+        v
+    }
+
+    fn lists(p: &mut Benchmark, v: &mut View) {
+        p.set_models(
+            v,
+            &[
+                row("grok-4.6", "spacexsi", (2.0, 6.0), true),
+                row("grok-4.3", "spacexsi", (1.25, 2.5), true),
+                row("qwen/qwen3.7-max", "openrouter", (1.6, 6.4), true),
+                row("minimax/minimax-m2.7", "openrouter", (0.3, 1.2), true),
+                row("openai/gpt-6-image", "openrouter", (5.0, 15.0), false),
+            ],
+            &["spacexsi".into(), "openrouter".into()],
+            &[],
+        );
+    }
+
+    fn key(p: &mut Benchmark, v: &mut View, code: KeyCode) -> Outcome {
+        p.key(KeyEvent::new(code, KeyModifiers::NONE), v)
+    }
+
+    fn typed(p: &mut Benchmark, v: &mut View, text: &str) {
+        for ch in text.chars() {
+            key(p, v, KeyCode::Char(ch));
+        }
+    }
+
+    fn text(p: &Benchmark, v: &View) -> String {
+        p.render(v, 84, 24, Theme::truecolor_dark())
+            .lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect::<String>()
+                    + "\n"
+            })
+            .collect()
+    }
+
+    /// Enter on the model opens the connection's list with context and
+    /// prices, as `/models` shows them; typing filters it; Enter takes
+    /// the row under the cursor into the field.
+    #[test]
+    fn enter_on_the_model_lists_the_connections_models_with_prices() {
+        let mut v = two_connections();
+        let mut p = Benchmark::new(&v);
+        lists(&mut p, &mut v);
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Enter);
+        assert_eq!(p.input(&v).as_deref(), Some("filter"));
+        let t = text(&p, &v);
+        assert!(t.contains("model on spacexsi"), "{t}");
+        assert!(
+            t.contains("grok-4.6") && t.contains("$2") && t.contains("$6"),
+            "{t}"
+        );
+        assert!(t.contains("grok-4.3") && t.contains("$1.25"), "{t}");
+        assert!(!t.contains("qwen"), "another connection's rows: {t}");
+        assert!(!p.loading);
+        typed(&mut p, &mut v, "4.3");
+        let t = text(&p, &v);
+        assert!(t.contains("grok-4.3") && !t.contains("grok-4.6"), "{t}");
+        key(&mut p, &mut v, KeyCode::Enter);
+        assert_eq!(p.model(), "grok-4.3");
+        assert!(p.picking.is_none());
+        assert!(v.composer.text().is_empty());
+        let t = text(&p, &v);
+        assert!(t.contains("grok-4.3") && t.contains("start the run"), "{t}");
+    }
+
+    /// Esc leaves the field as it was; a filter nothing matches lets Enter
+    /// take the typed id, for a model the list leaves out.
+    #[test]
+    fn esc_keeps_the_model_and_an_unlisted_id_can_be_typed() {
+        let mut v = two_connections();
+        let mut p = Benchmark::new(&v);
+        lists(&mut p, &mut v);
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Enter);
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Esc);
+        assert_eq!(p.model(), "grok-4.6");
+        key(&mut p, &mut v, KeyCode::Enter);
+        typed(&mut p, &mut v, "grok-5-preview");
+        let t = text(&p, &v);
+        assert!(t.contains("no listed model matches"), "{t}");
+        key(&mut p, &mut v, KeyCode::Enter);
+        assert_eq!(p.model(), "grok-5-preview");
+    }
+
+    /// Changing the connection puts its default model in the field: the
+    /// last connection's model is not on this one.
+    #[test]
+    fn a_new_connection_brings_its_own_model() {
+        let mut v = two_connections();
+        let mut p = Benchmark::new(&v);
+        lists(&mut p, &mut v);
+        key(&mut p, &mut v, KeyCode::Right);
+        assert_eq!(p.connection(&v), "openrouter");
+        assert_eq!(p.model(), "qwen/qwen3.7-max");
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Enter);
+        let t = text(&p, &v);
+        assert!(t.contains("model on openrouter"), "{t}");
+        assert!(
+            t.contains("minimax/minimax-m2.7") && t.contains("$0.3"),
+            "{t}"
+        );
+        assert!(!t.contains("grok-4.6"), "{t}");
+        key(&mut p, &mut v, KeyCode::Esc);
+        key(&mut p, &mut v, KeyCode::Up);
+        key(&mut p, &mut v, KeyCode::Left);
+        assert_eq!(p.model(), "grok-4.6");
+    }
+
+    /// A model the catalog says can't call tools is refused at the start.
+    #[test]
+    fn a_toolless_model_is_refused() {
+        let mut v = two_connections();
+        let mut p = Benchmark::new(&v);
+        lists(&mut p, &mut v);
+        key(&mut p, &mut v, KeyCode::Right);
+        p.set_model("openai/gpt-6-image");
+        while p.form.current().is_some_and(|f| f.id != "start") {
+            p.form.step(1);
+        }
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay));
+        assert!(
+            v.messages
+                .iter()
+                .any(|m| m.body.contains("can't call tools")),
+            "{:?}",
+            v.messages
+                .iter()
+                .map(|m| m.body.clone())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Until the lists come the built-in rows stand and the list says it
+    /// is loading; a one-connection list replaces that connection's rows
+    /// and keeps the other's.
+    #[test]
+    fn the_lists_arrive_per_connection() {
+        let mut v = two_connections();
+        let mut p = Benchmark::new(&v);
+        assert!(p.loading);
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Enter);
+        let t = text(&p, &v);
+        assert!(
+            t.contains("loading models") && t.contains("grok-4.6"),
+            "{t}"
+        );
+        p.set_models(
+            &v,
+            &[row("grok-4.3", "spacexsi", (1.25, 2.5), true)],
+            &["spacexsi".into()],
+            &[],
+        );
+        assert!(p.loading, "openrouter's list is still to come");
+        let t = text(&p, &v);
+        assert!(t.contains("grok-4.3") && !t.contains("grok-4.6"), "{t}");
+        p.set_models(&v, &[], &[], &["openrouter".into()]);
+        assert!(!p.loading);
+        key(&mut p, &mut v, KeyCode::Esc);
+        key(&mut p, &mut v, KeyCode::Up);
+        key(&mut p, &mut v, KeyCode::Right);
+        key(&mut p, &mut v, KeyCode::Down);
+        key(&mut p, &mut v, KeyCode::Enter);
+        let t = text(&p, &v);
+        assert!(
+            t.contains("qwen/qwen3.7-max"),
+            "the built-in row stays: {t}"
+        );
     }
 }

@@ -504,7 +504,7 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     match id {
         // Every keyed connection's models: the All hats seat lists them
         // as a hat's does.
-        PanelId::Models => cx.send(Work::ListAllModels),
+        PanelId::Models | PanelId::Benchmark => cx.send(Work::ListAllModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
             load_project_spend(view, &cx.home, &cx.workspace);
