@@ -10,7 +10,7 @@
                  ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖               ┊   grok-4.6
                    benchmark                                                               10 tasks                 ┊   asks first
                   › connection     ‹ spacexsi ›                                                                     ┊ ● Audit  grok-4.6                     $0
-                    model          grok-4.6                                                                         ┊ ● Scribe follows all hats             $0
+                    models         grok-4.6                                                                         ┊ ● Scribe follows all hats             $0
                     tasks          ‹ standard ›                                                                     ┊
                     budget usd     ‹ 5.00 ›                                                                         ┊
                     sandbox        ‹ workspace ›                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
@@ -33,7 +33,7 @@
                                                                                                                     ┊
                                                                                                                     ┊
                                                                                                                     ┊
-                   ↑↓ move   ←→ change   enter choose/start   esc close                                             ┊
+                   ↑↓ move   ←→ change   enter pick/start   ⌫ unpick   esc close                                    ┊
                  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘               ┊
                                                                                                                     ┊
                                                                                                                     ┊

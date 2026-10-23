@@ -37,7 +37,7 @@ pub struct Options {
     pub binary: PathBuf,
     pub connection: String,
     pub model: String,
-    /// Dollars for the whole run.
+    /// Dollars for the whole run: for each model's, when several are compared.
     pub budget_usd: f64,
     /// Per task.
     pub timeout: Duration,
@@ -66,6 +66,13 @@ impl Cancel {
 /// What the runner reports as it goes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Progress {
+    /// A model's run is starting: the `index`th of `total` compared.
+    Model {
+        connection: String,
+        model: String,
+        index: usize,
+        total: usize,
+    },
     /// A task's build hat is starting, under this cap.
     Started {
         name: String,

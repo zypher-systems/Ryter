@@ -4,15 +4,18 @@
 //!
 //! The fixtures are embedded at build time from `bench/` in the repository
 //! (`task.toml`, `repo/`, `hidden/`; never a solution). `ryter bench` and the
-//! `/benchmark` panel both run through [`run`].
+//! `/benchmark` panel both run through [`run_models`]: one run per model, and
+//! a comparison when there are several.
 
 mod fixtures {
     include!(concat!(env!("OUT_DIR"), "/fixtures.rs"));
 }
+pub mod compare;
 pub mod report;
 pub mod run;
 pub mod task;
 
+pub use compare::{Comparison, ModelRow, Seat, folder, run_models, slug};
 pub use report::{Check, Report, Summary, TaskResult};
 pub use run::{Cancel, Options, Progress, RESERVE_USD, allowance, run};
 pub use task::{File, Level, Task, select, tasks};

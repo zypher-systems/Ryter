@@ -269,12 +269,11 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
         Action::StartBench {
-            connection,
-            model,
+            seats,
             level,
             budget_usd,
             sandbox,
-        } => start_bench(view, cx, connection, model, level, budget_usd, sandbox),
+        } => start_bench(view, cx, seats, level, budget_usd, sandbox),
         Action::CancelBench => match &cx.bench {
             Some(cancel) => {
                 cancel.cancel();
@@ -966,8 +965,7 @@ fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: S
 fn start_bench(
     view: &mut View,
     cx: &mut Ctx,
-    connection: String,
-    model: String,
+    seats: Vec<ryter_bench::Seat>,
     level: Option<ryter_bench::Level>,
     budget_usd: f64,
     sandbox: String,
@@ -980,13 +978,19 @@ fn start_bench(
         view.error("wait for the turn to finish before a benchmark run");
         return;
     }
-    if !cx.cfg.connections.contains_key(&connection) {
-        view.error(format!("unknown connection {connection}"));
+    if seats.is_empty() {
+        view.error("pick a model to run the bench on");
         return;
     }
-    if !config::has_secret(&cx.cfg, &connection) {
-        view.error(format!("connection {connection} has no API key"));
-        return;
+    for seat in &seats {
+        if !cx.cfg.connections.contains_key(&seat.connection) {
+            view.error(format!("unknown connection {}", seat.connection));
+            return;
+        }
+        if !config::has_secret(&cx.cfg, &seat.connection) {
+            view.error(format!("connection {} has no API key", seat.connection));
+            return;
+        }
     }
     if !(ryter_bench::RESERVE_USD + 0.01..=50.0).contains(&budget_usd) {
         view.error("the budget is dollars from 0.11 (the reserve and a cent) to 50");
@@ -1005,27 +1009,29 @@ fn start_bench(
         }
     };
     let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
-    let slug: String = model
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .collect();
     let cancel = ryter_bench::Cancel::default();
     let opts = ryter_bench::Options {
         binary,
-        connection,
-        model,
+        connection: seats[0].connection.clone(),
+        model: seats[0].model.clone(),
         budget_usd,
         timeout: std::time::Duration::from_secs(600),
         sandbox,
-        dir: cx.home.join("bench").join(format!("{stamp}-{slug}")),
+        dir: cx
+            .home
+            .join("bench")
+            .join(ryter_bench::folder(&stamp, &seats)),
         cancel: cancel.clone(),
     };
+    let on = match seats.as_slice() {
+        [one] => format!("{} ({})", one.model, one.connection),
+        _ => format!("{} models", seats.len()),
+    };
     view.system(format!(
-        "benchmark: {} task{} on {} ({}), budget ${budget_usd:.2}, 600 s per task, sandbox {} · the run is in {}",
+        "benchmark: {} task{} on {on}, budget ${budget_usd:.2}{}, 600 s per task, sandbox {} · the run is in {}",
         tasks.len(),
         if tasks.len() == 1 { "" } else { "s" },
-        opts.model,
-        opts.connection,
+        if seats.len() > 1 { " per model" } else { "" },
         opts.sandbox,
         opts.dir.display()
     ));
@@ -1034,10 +1040,10 @@ fn start_bench(
     let tx = cx.notice_tx.clone();
     std::thread::spawn(move || {
         let progress = tx.clone();
-        let report = ryter_bench::run(&tasks, &opts, |p| {
+        let comparison = ryter_bench::run_models(&tasks, &seats, &opts, |p| {
             let _ = progress.send(Notice::Bench(p));
         });
-        let _ = tx.send(Notice::BenchDone(Box::new(report)));
+        let _ = tx.send(Notice::BenchDone(Box::new(comparison)));
     });
 }
 

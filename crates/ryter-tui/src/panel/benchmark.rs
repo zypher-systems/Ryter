@@ -2,14 +2,15 @@
 //! the TUI: pick the connection, the model, the level and a budget, and
 //! watch tasks solved per dollar come in. The run is `ryter bench`'s, in a
 //! thread; its table lands under `~/.ryter/bench/` and its headline in the
-//! chat. The model is picked from the connection's list, with context and
-//! prices, as `/models` shows it.
+//! chat. The models are picked from each connection's list, with context
+//! and prices, as `/models` shows it; several run in turn and are compared,
+//! so the cheapest one with a clean sheet can be seated for the job.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::{Line, Span};
-use ryter_bench::{Level, Progress, Report, TaskResult};
+use ryter_bench::{Comparison, Level, Progress, Report, Seat, TaskResult};
 use ryter_core::{ModelInfo, format_tokens};
 
 use super::models::price;
@@ -41,12 +42,26 @@ enum State {
     Done(TaskResult),
 }
 
+/// A model whose run is over, while the next runs.
+#[derive(Debug, Clone, PartialEq)]
+struct ModelLine {
+    seat: Seat,
+    solved: usize,
+    tasks: usize,
+    usd: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum Phase {
     /// The form.
     Setup,
     /// A run is going.
     Running {
+        /// The model on now, of `models` compared.
+        model: Option<Seat>,
+        models: usize,
+        /// The models done so far, in order.
+        finished: Vec<ModelLine>,
         rows: Vec<Row>,
         spent: f64,
         activity: String,
@@ -54,7 +69,7 @@ enum Phase {
         confirm_stop: bool,
     },
     /// The run finished.
-    Done(Box<Report>),
+    Done(Box<Comparison>),
 }
 
 /// The benchmark panel.
@@ -66,6 +81,8 @@ pub struct Benchmark {
     phase: Phase,
     /// The keyed connections, in the select's order.
     connections: Vec<String>,
+    /// The models to run, each on its connection, in the order picked.
+    seats: Vec<Seat>,
     /// Every keyed connection's models, as `/models` lists them: the
     /// built-in rows until the lists come.
     catalog: Vec<ModelInfo>,
@@ -112,6 +129,11 @@ impl Benchmark {
             catalog.extend(fb);
         }
         let loading = view.connections.iter().any(|c| c.has_key);
+        let seats = if model.is_empty() {
+            Vec::new()
+        } else {
+            vec![Seat::new(&connection, &model)]
+        };
         let fields = vec![
             Field::new(
                 "connection",
@@ -121,7 +143,7 @@ impl Benchmark {
                     idx,
                 },
             ),
-            Field::new("model", "model", Kind::Text(model)),
+            Field::new("models", "models", Kind::Text(String::new())),
             Field::new(
                 "level",
                 "tasks",
@@ -151,16 +173,48 @@ impl Benchmark {
             ),
             Field::new("start", "start the run", Kind::Action),
         ];
-        Self {
+        let mut p = Self {
             form: Form::new(fields),
             editing: false,
             phase: Phase::Setup,
             connections,
+            seats,
             catalog,
             loading,
             settled: BTreeSet::new(),
             picking: None,
+        };
+        p.show_seats(view);
+        p
+    }
+
+    /// The seats as the form shows them: the model, with its connection
+    /// when it is not the form's.
+    fn seats_text(&self, view: &View) -> String {
+        let home = self.connection(view);
+        self.seats
+            .iter()
+            .map(|s| s.label(&home))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    fn show_seats(&mut self, view: &View) {
+        let text = self.seats_text(view);
+        if let Some(Kind::Text(t)) = self.form.get_mut("models").map(|f| &mut f.kind) {
+            *t = text;
         }
+    }
+
+    /// Add the seat, or remove it when it is picked already.
+    fn toggle_seat(&mut self, view: &View, seat: Seat) {
+        match self.seats.iter().position(|s| *s == seat) {
+            Some(i) => {
+                self.seats.remove(i);
+            }
+            None => self.seats.push(seat),
+        }
+        self.show_seats(view);
     }
 
     /// The connection chosen on the form.
@@ -191,35 +245,21 @@ impl Benchmark {
             .collect()
     }
 
-    fn set_model(&mut self, model: &str) {
-        if let Some(Kind::Text(t)) = self.form.get_mut("model").map(|f| &mut f.kind) {
-            *t = model.trim().to_string();
-        }
-    }
-
-    /// The connection changed: its own default model goes in the model
-    /// field, as a model from the last connection is not on this one.
-    fn follow_connection(&mut self, view: &View) {
-        let connection = self.connection(view);
-        let own = view
-            .connections
-            .iter()
-            .find(|c| c.name == connection)
-            .map(|c| c.model.clone())
-            .filter(|m| !m.is_empty())
-            .or_else(|| self.listed(view).first().map(|m| m.id.clone()))
-            .unwrap_or_default();
-        self.set_model(&own);
-    }
-
-    /// Open the model list, the cursor on the model in the field.
+    /// Open the model list, the cursor on the first model picked from this
+    /// connection, or at the top.
     fn open_list(&mut self, view: &mut View) {
         view.composer.clear();
-        self.picking = Some(0);
-        let model = self.model();
-        if let Some(i) = self.listed(view).iter().position(|m| m.id == model) {
-            self.picking = Some(i);
-        }
+        let connection = self.connection(view);
+        let first = self
+            .seats
+            .iter()
+            .find(|s| s.connection == connection)
+            .map(|s| s.model.clone());
+        self.picking = Some(
+            first
+                .and_then(|m| self.listed(view).iter().position(|r| r.id == m))
+                .unwrap_or(0),
+        );
     }
 
     /// Take a `Models` notice as `/models` does: the rows of the
@@ -275,12 +315,19 @@ impl Benchmark {
         let sel = self.picking.unwrap_or(0).min(n.saturating_sub(1));
         let rows_h = h.saturating_sub(3).max(1);
         let first = super::window(sel, n, rows_h);
+        let connection = self.connection(view);
+        let picked = |id: &str| {
+            self.seats
+                .iter()
+                .any(|s| s.connection == connection && s.model == id)
+        };
         let rows: Vec<Vec<String>> = list
             .iter()
             .skip(first)
             .take(rows_h)
             .map(|m| {
                 vec![
+                    if picked(&m.id) { "✓" } else { "" }.to_string(),
                     m.id.clone(),
                     m.context_length
                         .map(format_tokens)
@@ -297,13 +344,13 @@ impl Benchmark {
             .map(|m| m.tools == Some(false))
             .collect();
         let mut lines = vec![widgets::text(
-            &format!("model on {} · type to filter", self.connection(view)),
+            &format!("models on {connection} · enter adds or removes · type to filter"),
             theme,
         )];
         let mut table = widgets::table(
-            &["model", "context", "in/M", "out/M"],
+            &["", "model", "context", "in/M", "out/M"],
             &rows,
-            &[Al::L, Al::R, Al::R, Al::R],
+            &[Al::L, Al::L, Al::R, Al::R, Al::R],
             (n > 0).then_some(sel.saturating_sub(first)),
             w,
             theme,
@@ -356,13 +403,6 @@ impl Benchmark {
         }
     }
 
-    fn model(&self) -> String {
-        match self.form.get("model").map(|f| &f.kind) {
-            Some(Kind::Text(t)) => t.trim().to_string(),
-            _ => String::new(),
-        }
-    }
-
     fn budget(&self) -> f64 {
         match self.form.get("budget").map(|f| &f.kind) {
             Some(Kind::Number { value, .. }) => *value,
@@ -376,17 +416,21 @@ impl Benchmark {
             view.error("a benchmark run is already going; its result lands in the chat");
             return Outcome::Stay;
         }
-        if self.model().is_empty() {
-            view.error("name a model to run the bench on");
+        if self.seats.is_empty() {
+            view.error("pick a model to run the bench on");
             return Outcome::Stay;
         }
-        let connection = self.connection(view);
-        if self.catalog.iter().any(|m| {
-            m.id == self.model()
-                && m.connection.as_deref() == Some(connection.as_str())
-                && m.tools == Some(false)
+        if let Some(seat) = self.seats.iter().find(|s| {
+            self.catalog.iter().any(|m| {
+                m.id == s.model
+                    && m.connection.as_deref() == Some(s.connection.as_str())
+                    && m.tools == Some(false)
+            })
         }) {
-            view.error("that model can't call tools, so it can't read a file or run a test");
+            view.error(format!(
+                "{} can't call tools, so it can't read a file or run a test",
+                seat.model
+            ));
             return Outcome::Stay;
         }
         let tasks = ryter_bench::select(&[], self.level()).len();
@@ -395,8 +439,7 @@ impl Benchmark {
             return Outcome::Stay;
         }
         Outcome::Act(Action::StartBench {
-            connection,
-            model: self.model(),
+            seats: self.seats.clone(),
             level: self.level(),
             budget_usd: self.budget(),
             sandbox: if self.select_idx("sandbox") == 0 {
@@ -408,11 +451,10 @@ impl Benchmark {
         })
     }
 
-    /// `←`/`→` on the focused field; a new connection brings its model.
+    /// `←`/`→` on the focused field; a new connection relabels the seats.
     fn adjust(&mut self, view: &View, delta: i32) {
-        let on_connection = self.form.current().is_some_and(|f| f.id == "connection");
-        if self.form.adjust(delta) && on_connection {
-            self.follow_connection(view);
+        if self.form.adjust(delta) {
+            self.show_seats(view);
         }
     }
 
@@ -429,7 +471,11 @@ impl Benchmark {
             .collect()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_running(
+        model: Option<&Seat>,
+        models: usize,
+        finished: &[ModelLine],
         rows: &[Row],
         spent: f64,
         activity: &str,
@@ -445,14 +491,45 @@ impl Benchmark {
             .iter()
             .filter(|r| matches!(&r.state, State::Done(t) if t.solved == Some(true)))
             .count();
-        let mut lines = vec![widgets::text(
+        let mut lines = Vec::new();
+        if models > 1 {
+            for f in finished {
+                lines.push(widgets::note(
+                    &format!(
+                        "{} {} {}/{} for {}",
+                        if f.solved == f.tasks && f.tasks > 0 {
+                            "✓"
+                        } else {
+                            "✗"
+                        },
+                        f.seat.model,
+                        f.solved,
+                        f.tasks,
+                        ryter_bench::report::usd(f.usd)
+                    ),
+                    theme,
+                ));
+            }
+            if let Some(m) = model {
+                lines.push(widgets::text(
+                    &format!(
+                        "model {} of {models}: {} ({})",
+                        finished.len() + 1,
+                        m.model,
+                        m.connection
+                    ),
+                    theme,
+                ));
+            }
+        }
+        lines.push(widgets::text(
             &format!(
                 "{done} of {} done · {solved} solved · spent {}",
                 rows.len(),
                 ryter_bench::report::usd(Some(spent))
             ),
             theme,
-        )];
+        ));
         if !activity.is_empty() {
             for row in wrap::wrap_plain(activity, w.saturating_sub(2)) {
                 lines.push(widgets::note(&row, theme));
@@ -495,6 +572,79 @@ impl Benchmark {
                 "stop the run after the task in progress?  ⏎ yes · n no",
                 theme,
             ));
+        }
+        lines
+    }
+
+    /// Several models: a line per model, best first, with the tasks each
+    /// did not solve; the task-by-task table is in the file.
+    fn render_compared(
+        c: &Comparison,
+        w: usize,
+        theme: Theme,
+    ) -> Vec<ratatui::text::Line<'static>> {
+        let mut lines: Vec<ratatui::text::Line<'static>> =
+            wrap::wrap_plain(&c.headline(), w.saturating_sub(2))
+                .iter()
+                .map(|row| widgets::text(row, theme))
+                .collect();
+        lines.push(widgets::note(
+            &format!(
+                "{} · budget ${:.2} per model · {} s per task",
+                c.ryter, c.budget_usd, c.timeout_seconds
+            ),
+            theme,
+        ));
+        lines.push(widgets::blank(theme));
+        let table: Vec<Vec<String>> = c
+            .ranked()
+            .iter()
+            .map(|row| {
+                let s = &row.summary;
+                let clean = s.tasks > 0 && s.solved == s.tasks && row.stopped.is_none();
+                vec![
+                    format!("{} {}", if clean { "✓" } else { "✗" }, row.seat.model),
+                    row.seat.connection.clone(),
+                    format!("{}/{}", s.solved, s.tasks),
+                    ryter_bench::report::usd(s.usd),
+                    ryter_bench::report::usd(s.usd_per_solved),
+                    // The reason for a stop is in the headline above.
+                    format!(
+                        "{}{}",
+                        row.failed.join(", "),
+                        if row.stopped.is_some() {
+                            " · stopped"
+                        } else {
+                            ""
+                        }
+                    ),
+                ]
+            })
+            .collect();
+        lines.extend(widgets::table(
+            &[
+                "model",
+                "connection",
+                "solved",
+                "cost",
+                "per solved",
+                "not solved",
+            ],
+            &table,
+            &[Al::L, Al::L, Al::R, Al::R, Al::R, Al::L],
+            None,
+            w,
+            theme,
+        ));
+        lines.push(widgets::blank(theme));
+        for row in wrap::wrap_plain(
+            &format!(
+                "the table, task by task, is in {}",
+                c.directory.join("RESULTS.md").display()
+            ),
+            w.saturating_sub(2),
+        ) {
+            lines.push(widgets::note(&row, theme));
         }
         lines
     }
@@ -602,17 +752,20 @@ impl Panel for Benchmark {
                     .count();
                 format!("{done} of {}", rows.len())
             }
-            Phase::Done(r) => format!("{}/{}", r.summary().solved, r.summary().tasks),
+            Phase::Done(c) => match c.single() {
+                Some(r) => format!("{}/{}", r.summary().solved, r.summary().tasks),
+                None => format!("{} models", c.runs.len()),
+            },
         }
     }
 
     fn legend(&self, _view: &View) -> String {
         match &self.phase {
             Phase::Setup if self.picking.is_some() => {
-                "↑↓ move · type to filter · enter choose · esc back".into()
+                "↑↓ move · type to filter · enter add/remove · esc done".into()
             }
             Phase::Setup if self.editing => "type · enter apply · esc cancel".into(),
-            Phase::Setup => "↑↓ move · ←→ change · enter choose/start · esc close".into(),
+            Phase::Setup => "↑↓ move · ←→ change · enter pick/start · ⌫ unpick · esc close".into(),
             Phase::Running {
                 confirm_stop: true, ..
             } => "⏎ stop · n keep running".into(),
@@ -622,7 +775,11 @@ impl Panel for Benchmark {
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
-        (84, 24)
+        match &self.phase {
+            // Room for the models' lines and what each did not solve.
+            Phase::Done(c) if c.single().is_none() => (104, 24),
+            _ => (84, 24),
+        }
     }
 
     fn input(&self, _view: &View) -> Option<String> {
@@ -667,12 +824,28 @@ impl Panel for Benchmark {
                 lines
             }
             Phase::Running {
+                model,
+                models,
+                finished,
                 rows,
                 spent,
                 activity,
                 confirm_stop,
-            } => Self::render_running(rows, *spent, activity, *confirm_stop, w, theme),
-            Phase::Done(report) => Self::render_done(report, w, theme),
+            } => Self::render_running(
+                model.as_ref(),
+                *models,
+                finished,
+                rows,
+                *spent,
+                activity,
+                *confirm_stop,
+                w,
+                theme,
+            ),
+            Phase::Done(c) => match c.single() {
+                Some(report) => Self::render_done(report, w, theme),
+                None => Self::render_compared(c, w, theme),
+            },
         };
         lines.truncate(usize::from(height).max(1));
         Body {
@@ -735,15 +908,17 @@ impl Panel for Benchmark {
                 }
                 KeyCode::Enter => {
                     let typed = view.composer.text().trim().to_string();
-                    let chosen = self
-                        .listed(view)
-                        .get(sel)
-                        .map(|m| m.id.clone())
-                        .or_else(|| (!typed.is_empty()).then_some(typed));
-                    if let Some(id) = chosen {
-                        self.set_model(&id);
-                        self.picking = None;
-                        view.composer.clear();
+                    let listed = self.listed(view).get(sel).map(|m| m.id.clone());
+                    match listed {
+                        Some(id) => self.toggle_seat(view, Seat::new(self.connection(view), id)),
+                        // A model the list leaves out: the typed id, and the
+                        // filter goes so the list is whole again.
+                        None if !typed.is_empty() => {
+                            self.toggle_seat(view, Seat::new(self.connection(view), typed));
+                            view.composer.clear();
+                            self.picking = Some(0);
+                        }
+                        None => {}
                     }
                     Outcome::Stay
                 }
@@ -794,9 +969,16 @@ impl Panel for Benchmark {
                 self.adjust(view, 1);
                 Outcome::Stay
             }
+            KeyCode::Backspace | KeyCode::Delete
+                if self.form.current().is_some_and(|f| f.id == "models") =>
+            {
+                self.seats.pop();
+                self.show_seats(view);
+                Outcome::Stay
+            }
             KeyCode::Enter => match self.form.current().map(|f| (f.id, &f.kind)) {
                 Some(("start", _)) => self.start(view),
-                Some(("model", _)) => {
+                Some(("models", _)) => {
                     self.open_list(view);
                     Outcome::Stay
                 }
@@ -829,19 +1011,29 @@ impl Panel for Benchmark {
             } => self.set_models(view, models, covered, failed),
             Notice::Bench(progress) => {
                 if !matches!(self.phase, Phase::Running { .. }) {
-                    if !matches!(progress, Progress::Started { .. } | Progress::Finished(_)) {
+                    if !matches!(
+                        progress,
+                        Progress::Model { .. } | Progress::Started { .. } | Progress::Finished(_)
+                    ) {
                         return;
                     }
                     // A run started from this or an earlier panel: follow it
                     // from here on with the tasks it will cover.
                     self.phase = Phase::Running {
+                        model: None,
+                        models: 1,
+                        finished: Vec::new(),
                         rows: Self::rows_for(&ryter_bench::select(&[], self.level())),
                         spent: 0.0,
                         activity: String::new(),
                         confirm_stop: false,
                     };
                 }
+                let level = self.level();
                 let Phase::Running {
+                    model,
+                    models,
+                    finished,
                     rows,
                     spent,
                     activity,
@@ -850,6 +1042,41 @@ impl Panel for Benchmark {
                 else {
                     return;
                 };
+                if let Progress::Model {
+                    connection,
+                    model: id,
+                    total,
+                    ..
+                } = progress
+                {
+                    // The last model's rows fold into its line; the next
+                    // starts on fresh rows.
+                    if let Some(last) = model.take() {
+                        let scored: Vec<&TaskResult> = rows
+                            .iter()
+                            .filter_map(|r| match &r.state {
+                                State::Done(t) if t.solved.is_some() => Some(t),
+                                _ => None,
+                            })
+                            .collect();
+                        finished.push(ModelLine {
+                            seat: last,
+                            solved: scored.iter().filter(|t| t.solved == Some(true)).count(),
+                            tasks: scored.len(),
+                            usd: scored
+                                .iter()
+                                .map(|t| t.usd)
+                                .sum::<Option<f64>>()
+                                .filter(|_| !scored.is_empty()),
+                        });
+                    }
+                    *model = Some(Seat::new(connection, id));
+                    *models = *total;
+                    *rows = Self::rows_for(&ryter_bench::select(&[], level));
+                    *spent = 0.0;
+                    activity.clear();
+                    return;
+                }
                 let row = |rows: &mut Vec<Row>, name: &str| -> usize {
                     if let Some(i) = rows.iter().position(|r| r.name == name) {
                         return i;
@@ -891,6 +1118,7 @@ impl Panel for Benchmark {
                         activity.clear();
                     }
                     Progress::Stopped { why } => *activity = format!("stopped: {why}"),
+                    Progress::Model { .. } => {}
                 }
             }
             Notice::BenchDone(report) => self.phase = Phase::Done(report.clone()),
@@ -976,90 +1204,139 @@ mod tests {
             .collect()
     }
 
-    /// Enter on the model opens the connection's list with context and
-    /// prices, as `/models` shows them; typing filters it; Enter takes
-    /// the row under the cursor into the field.
+    fn seats(p: &Benchmark) -> Vec<String> {
+        p.seats
+            .iter()
+            .map(|s| format!("{}:{}", s.connection, s.model))
+            .collect()
+    }
+
+    /// The form opens on the build hat's model; Enter on the models row
+    /// lists the connection's models with context and prices, as `/models`
+    /// shows them, the picked one marked; typing filters; Enter adds the
+    /// row under the cursor, and the list stays open for the next.
     #[test]
-    fn enter_on_the_model_lists_the_connections_models_with_prices() {
+    fn enter_on_the_models_lists_the_connections_models_with_prices() {
         let mut v = two_connections();
         let mut p = Benchmark::new(&v);
         lists(&mut p, &mut v);
+        assert_eq!(seats(&p), vec!["spacexsi:grok-4.6"]);
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Enter);
         assert_eq!(p.input(&v).as_deref(), Some("filter"));
         let t = text(&p, &v);
-        assert!(t.contains("model on spacexsi"), "{t}");
+        assert!(t.contains("models on spacexsi"), "{t}");
         assert!(
-            t.contains("grok-4.6") && t.contains("$2") && t.contains("$6"),
+            t.contains("✓  grok-4.6") && t.contains("$2") && t.contains("$6"),
             "{t}"
         );
         assert!(t.contains("grok-4.3") && t.contains("$1.25"), "{t}");
         assert!(!t.contains("qwen"), "another connection's rows: {t}");
-        assert!(!p.loading);
         typed(&mut p, &mut v, "4.3");
         let t = text(&p, &v);
         assert!(t.contains("grok-4.3") && !t.contains("grok-4.6"), "{t}");
         key(&mut p, &mut v, KeyCode::Enter);
-        assert_eq!(p.model(), "grok-4.3");
+        assert_eq!(seats(&p), vec!["spacexsi:grok-4.6", "spacexsi:grok-4.3"]);
+        assert!(p.picking.is_some(), "the list stays open for the next pick");
+        assert!(text(&p, &v).contains("✓  grok-4.3"));
+        // Enter again takes it out.
+        key(&mut p, &mut v, KeyCode::Enter);
+        assert_eq!(seats(&p), vec!["spacexsi:grok-4.6"]);
+        key(&mut p, &mut v, KeyCode::Esc);
         assert!(p.picking.is_none());
         assert!(v.composer.text().is_empty());
         let t = text(&p, &v);
-        assert!(t.contains("grok-4.3") && t.contains("start the run"), "{t}");
+        assert!(t.contains("grok-4.6") && t.contains("start the run"), "{t}");
     }
 
-    /// Esc leaves the field as it was; a filter nothing matches lets Enter
-    /// take the typed id, for a model the list leaves out.
+    /// A filter nothing matches lets Enter add the typed id, for a model
+    /// the list leaves out; Backspace on the models row removes the last.
     #[test]
-    fn esc_keeps_the_model_and_an_unlisted_id_can_be_typed() {
+    fn an_unlisted_id_can_be_typed_and_backspace_removes_the_last() {
         let mut v = two_connections();
         let mut p = Benchmark::new(&v);
         lists(&mut p, &mut v);
         key(&mut p, &mut v, KeyCode::Down);
-        key(&mut p, &mut v, KeyCode::Enter);
-        key(&mut p, &mut v, KeyCode::Down);
-        key(&mut p, &mut v, KeyCode::Esc);
-        assert_eq!(p.model(), "grok-4.6");
         key(&mut p, &mut v, KeyCode::Enter);
         typed(&mut p, &mut v, "grok-5-preview");
         let t = text(&p, &v);
         assert!(t.contains("no listed model matches"), "{t}");
         key(&mut p, &mut v, KeyCode::Enter);
-        assert_eq!(p.model(), "grok-5-preview");
+        assert_eq!(
+            seats(&p),
+            vec!["spacexsi:grok-4.6", "spacexsi:grok-5-preview"]
+        );
+        assert!(
+            v.composer.text().is_empty(),
+            "the filter goes with the pick"
+        );
+        key(&mut p, &mut v, KeyCode::Esc);
+        key(&mut p, &mut v, KeyCode::Backspace);
+        assert_eq!(seats(&p), vec!["spacexsi:grok-4.6"]);
+        key(&mut p, &mut v, KeyCode::Backspace);
+        assert!(seats(&p).is_empty());
+        while p.form.current().is_some_and(|f| f.id != "start") {
+            p.form.step(1);
+        }
+        assert!(matches!(key(&mut p, &mut v, KeyCode::Enter), Outcome::Stay));
+        assert!(
+            v.messages.iter().any(|m| m.body.contains("pick a model")),
+            "no seat, no run"
+        );
     }
 
-    /// Changing the connection puts its default model in the field: the
-    /// last connection's model is not on this one.
+    /// Models from two connections sit side by side: the form names the
+    /// connection of a seat that is not on the form's, and the start
+    /// carries every seat with its own connection.
     #[test]
-    fn a_new_connection_brings_its_own_model() {
+    fn seats_from_two_connections_are_compared() {
         let mut v = two_connections();
         let mut p = Benchmark::new(&v);
         lists(&mut p, &mut v);
         key(&mut p, &mut v, KeyCode::Right);
         assert_eq!(p.connection(&v), "openrouter");
-        assert_eq!(p.model(), "qwen/qwen3.7-max");
+        let t = text(&p, &v);
+        assert!(t.contains("grok-4.6 (spacexsi)"), "{t}");
         key(&mut p, &mut v, KeyCode::Down);
         key(&mut p, &mut v, KeyCode::Enter);
         let t = text(&p, &v);
-        assert!(t.contains("model on openrouter"), "{t}");
+        assert!(t.contains("models on openrouter"), "{t}");
         assert!(
             t.contains("minimax/minimax-m2.7") && t.contains("$0.3"),
             "{t}"
         );
         assert!(!t.contains("grok-4.6"), "{t}");
+        typed(&mut p, &mut v, "minimax");
+        key(&mut p, &mut v, KeyCode::Enter);
         key(&mut p, &mut v, KeyCode::Esc);
-        key(&mut p, &mut v, KeyCode::Up);
-        key(&mut p, &mut v, KeyCode::Left);
-        assert_eq!(p.model(), "grok-4.6");
+        let t = text(&p, &v);
+        assert!(
+            t.contains("grok-4.6 (spacexsi) · minimax/minimax-m2.7"),
+            "{t}"
+        );
+        while p.form.current().is_some_and(|f| f.id != "start") {
+            p.form.step(1);
+        }
+        match key(&mut p, &mut v, KeyCode::Enter) {
+            Outcome::Act(Action::StartBench { seats, .. }) => assert_eq!(
+                seats,
+                vec![
+                    Seat::new("spacexsi", "grok-4.6"),
+                    Seat::new("openrouter", "minimax/minimax-m2.7")
+                ]
+            ),
+            _ => panic!("the start carries the seats"),
+        }
     }
 
-    /// A model the catalog says can't call tools is refused at the start.
+    /// A model the catalog says can't call tools is refused at the start,
+    /// by name.
     #[test]
     fn a_toolless_model_is_refused() {
         let mut v = two_connections();
         let mut p = Benchmark::new(&v);
         lists(&mut p, &mut v);
-        key(&mut p, &mut v, KeyCode::Right);
-        p.set_model("openai/gpt-6-image");
+        p.toggle_seat(&v, Seat::new("openrouter", "openai/gpt-6-image"));
         while p.form.current().is_some_and(|f| f.id != "start") {
             p.form.step(1);
         }
@@ -1067,7 +1344,7 @@ mod tests {
         assert!(
             v.messages
                 .iter()
-                .any(|m| m.body.contains("can't call tools")),
+                .any(|m| m.body.contains("openai/gpt-6-image can't call tools")),
             "{:?}",
             v.messages
                 .iter()

@@ -124,15 +124,17 @@ enum Command {
         /// One task by name; repeatable.
         #[arg(long = "task")]
         tasks: Vec<String>,
-        /// Dollars for the whole run, from 0.11 to 50. Required to run.
+        /// Dollars per model, from 0.11 to 50. Required to run.
         #[arg(long)]
         budget: Option<f64>,
         /// Connection name (default: the last used, or the config's).
         #[arg(long)]
         connection: Option<String>,
-        /// Model id (default: the connection's).
-        #[arg(short = 'm', long)]
-        model: Option<String>,
+        /// Model id (default: the connection's); repeatable, to compare
+        /// models on the same tasks. `connection=model` names another
+        /// connection for that one.
+        #[arg(short = 'm', long = "model")]
+        models: Vec<String>,
         /// Seconds per task.
         #[arg(long, default_value_t = 600)]
         timeout: u64,
@@ -378,7 +380,7 @@ fn main() -> ExitCode {
             tasks,
             budget,
             connection,
-            model,
+            models,
             timeout,
             sandbox,
             output,
@@ -388,7 +390,7 @@ fn main() -> ExitCode {
             tasks,
             budget,
             connection,
-            model,
+            models,
             timeout,
             sandbox,
             output,
@@ -740,14 +742,15 @@ struct BenchArgs {
     tasks: Vec<String>,
     budget: Option<f64>,
     connection: Option<String>,
-    model: Option<String>,
+    models: Vec<String>,
     timeout: u64,
     sandbox: Option<String>,
     output: Option<std::path::PathBuf>,
     list: bool,
 }
 
-/// `ryter bench`: the tasks on one model, the table on stdout and in a file.
+/// `ryter bench`: the tasks on one model or several, the table on stdout
+/// and in a file.
 /// Returns whether the run stopped early.
 fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     use std::io::Write as _;
@@ -767,7 +770,7 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         return Ok(false);
     }
     let budget = args.budget.ok_or_else(|| {
-        Error::Config("--budget is required: dollars for the whole run, from 0.11 to 50".into())
+        Error::Config("--budget is required: dollars per model, from 0.11 to 50".into())
     })?;
     if !(ryter_bench::RESERVE_USD + 0.01..=50.0).contains(&budget) {
         return Err(Error::Config(
@@ -777,20 +780,42 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     let home = config::home_dir();
     let cfg = config::load(None, false)?;
     let last = config::load_last_route(&home);
-    let (conn_name, model) = config::resolve_route(
-        &cfg,
-        last.as_ref(),
-        args.connection.as_deref(),
-        args.model.as_deref(),
-        |c| config::has_secret(&cfg, c),
-    );
-    if !cfg.connections.contains_key(&conn_name) {
-        return Err(Error::Config(format!("unknown connection {conn_name}")));
-    }
-    if !config::has_secret(&cfg, &conn_name) {
-        return Err(Error::Config(format!(
-            "connection {conn_name} has no API key"
-        )));
+    // The seats: each `-m`, on `--connection` unless it says `connection=`;
+    // none given, the route's own model.
+    let mut seats = Vec::new();
+    let given: Vec<(Option<String>, Option<String>)> = if args.models.is_empty() {
+        vec![(args.connection.clone(), None)]
+    } else {
+        args.models
+            .iter()
+            .map(|m| match m.split_once('=') {
+                Some((c, m)) if !c.is_empty() && !m.is_empty() => {
+                    (Some(c.to_string()), Some(m.to_string()))
+                }
+                _ => (args.connection.clone(), Some(m.clone())),
+            })
+            .collect()
+    };
+    for (connection, model) in given {
+        let (conn_name, model) = config::resolve_route(
+            &cfg,
+            last.as_ref(),
+            connection.as_deref(),
+            model.as_deref(),
+            |c| config::has_secret(&cfg, c),
+        );
+        if !cfg.connections.contains_key(&conn_name) {
+            return Err(Error::Config(format!("unknown connection {conn_name}")));
+        }
+        if !config::has_secret(&cfg, &conn_name) {
+            return Err(Error::Config(format!(
+                "connection {conn_name} has no API key"
+            )));
+        }
+        let seat = ryter_bench::Seat::new(conn_name, model);
+        if !seats.contains(&seat) {
+            seats.push(seat);
+        }
     }
     let sandbox = match args.sandbox {
         Some(s) => s.parse::<SandboxProfile>()?.to_string(),
@@ -800,35 +825,41 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     let binary = std::env::current_exe().map_err(|e| Error::Io(e.to_string()))?;
     let dir = args.output.unwrap_or_else(|| {
         let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
-        let slug: String = model
-            .chars()
-            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-            .collect();
-        home.join("bench").join(format!("{stamp}-{slug}"))
+        home.join("bench").join(ryter_bench::folder(&stamp, &seats))
     });
     let opts = ryter_bench::Options {
         binary,
-        connection: conn_name,
-        model,
+        connection: seats[0].connection.clone(),
+        model: seats[0].model.clone(),
         budget_usd: budget,
         timeout: std::time::Duration::from_secs(args.timeout),
         sandbox,
         dir,
         cancel: ryter_bench::Cancel::default(),
     };
+    let on = match seats.as_slice() {
+        [one] => format!("{} ({})", one.model, one.connection),
+        _ => format!("{} models", seats.len()),
+    };
     println!(
-        "ryter bench: {} task{} on {} ({}), budget ${budget:.2}, {} s per task; the run is in {}",
+        "ryter bench: {} task{} on {on}, budget ${budget:.2}{}, {} s per task; the run is in {}",
         tasks.len(),
         if tasks.len() == 1 { "" } else { "s" },
-        opts.model,
-        opts.connection,
+        if seats.len() > 1 { " per model" } else { "" },
         args.timeout,
         opts.dir.display()
     );
     let mut out = io::stdout();
-    let report = ryter_bench::run(&tasks, &opts, |progress| {
+    let report = ryter_bench::run_models(&tasks, &seats, &opts, |progress| {
         use ryter_bench::Progress;
         match progress {
+            Progress::Model {
+                connection,
+                model,
+                index,
+                total,
+            } if total > 1 => println!("— {model} ({connection}), {} of {total} —", index + 1),
+            Progress::Model { .. } => {}
             Progress::Started {
                 name,
                 index,

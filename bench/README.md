@@ -116,9 +116,14 @@ ryter bench --level hard --budget 5              # the hard tasks on the default
 ryter bench --task slugify --connection anthropic -m claude-sonnet-4-5 --budget 1
 ```
 
-`/benchmark` in the TUI is the same run from a form: connection, model (picked
+`/benchmark` in the TUI is the same run from a form: connection, models (picked
 from the connection's list, with context and prices), level, budget and
-sandbox, with the tasks ticking through in a panel and the headline in the chat. Either way each task runs in a fresh copy under the build hat as
+sandbox, with the tasks ticking through in a panel and the headline in the chat.
+Several models (`-m` repeated from the shell, `-m connection=model` for one on
+another connection) run in turn under the same budget each and end in a
+comparison, a line per model, most solved first then cheapest, and the tasks
+against the models: the way to pick the cheapest model with a clean sheet for
+a job. Either way each task runs in a fresh copy under the build hat as
 its own `ryter` process (`--json --hat build --always-approve`, the user's
 environment for its login, a per-task cap in the copy's `.ryter/config.toml`),
 and is scored by its hidden tests in the bare environment described below. The

@@ -7,7 +7,7 @@
   ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖  ┊ HATS
     benchmark                                                               10 tasks    ┊ ● Plan   grok-4.6         $0
    › connection     ‹ spacexsi ›                                                        ┊ ┃ Build                   $0
-     model          grok-4.6                                                            ┊   grok-4.6
+     models         grok-4.6                                                            ┊   grok-4.6
      tasks          ‹ standard ›                                                        ┊   asks first
      budget usd     ‹ 5.00 ›                                                            ┊ ● Audit  grok-4.6         $0
      sandbox        ‹ workspace ›                                                       ┊ ● Scribe follows all ha…  $0
@@ -30,7 +30,7 @@
                                                                                         ┊
                                                                                         ┊
                                                                                         ┊
-    ↑↓ move   ←→ change   enter choose/start   esc close                                ┊
+    ↑↓ move   ←→ change   enter pick/start   ⌫ unpick   esc close                       ┊
   ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘  ┊
                                                                                         ┊
   ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊

@@ -199,8 +199,8 @@ pub enum Action {
     /// keeping the file's other changes.
     /// `/benchmark`: run the bench's tasks on a model, under a budget.
     StartBench {
-        connection: String,
-        model: String,
+        /// The models to run, each on its connection; several are compared.
+        seats: Vec<ryter_bench::Seat>,
         /// One level, or every task.
         level: Option<ryter_bench::Level>,
         budget_usd: f64,

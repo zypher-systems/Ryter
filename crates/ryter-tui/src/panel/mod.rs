@@ -116,8 +116,8 @@ pub enum Notice {
     SessionsChanged,
     /// A benchmark run moved on (`/benchmark`).
     Bench(ryter_bench::Progress),
-    /// A benchmark run finished.
-    BenchDone(Box<ryter_bench::Report>),
+    /// A benchmark run finished: one model's report, or several compared.
+    BenchDone(Box<ryter_bench::Comparison>),
 }
 
 /// A popout.

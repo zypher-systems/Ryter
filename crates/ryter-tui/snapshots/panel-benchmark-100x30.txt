@@ -4,7 +4,7 @@
  ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ryter  ⎇ 0.2.0-patch
    benchmark                                                 10 tasks   ┊
   › connection     ‹ spacexsi ›                                         ┊ HATS
-    model          grok-4.6                                             ┊ ● Plan   grok-4.6     $0
+    models         grok-4.6                                             ┊ ● Plan   grok-4.6     $0
     tasks          ‹ standard ›                                         ┊ ┃ Build               $0
     budget usd     ‹ 5.00 ›                                             ┊   grok-4.6
     sandbox        ‹ workspace ›                                        ┊   asks first
@@ -23,7 +23,7 @@
                                                                         ┊ Build  ╌╌╌╌╌╌╌╌       $0
                                                                         ┊
                                                                         ┊
-   ↑↓ move   ←→ change   enter choose/start   esc close                 ┊
+   ↑↓ move   ←→ change   enter pick/start   ⌫ unpick   esc close        ┊
  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊
   ╰──────────────────────────────────────────────────────────────────╯  ┊
                                                                         ┊

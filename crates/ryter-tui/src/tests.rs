@@ -3875,7 +3875,7 @@ fn a_change_put_back_without_a_model_does_not_promise_undo() {
 #[test]
 fn the_benchmark_panel_starts_a_run_and_follows_it() {
     use crate::panel::Notice;
-    use ryter_bench::{Level, Progress, Report, TaskResult};
+    use ryter_bench::{Comparison, Level, Progress, Report, Seat, TaskResult};
     let press = |v: &mut View, code: KeyCode| {
         crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
     };
@@ -3911,8 +3911,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
     assert_eq!(
         act,
         Action::StartBench {
-            connection: "spacexsi".into(),
-            model: "grok-4.6".into(),
+            seats: vec![Seat::new("spacexsi", "grok-4.6")],
             level: Some(Level::Hard),
             budget_usd: 2.5,
             sandbox: "off".into(),
@@ -4014,7 +4013,18 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         stopped: Some("cancelled before ts-debounce".into()),
         directory: PathBuf::from("/home/me/.ryter/bench/run"),
     };
-    panel::on_notice(&mut v, &Notice::BenchDone(Box::new(report)));
+    let one = Comparison {
+        date: "2026-10-23".into(),
+        ryter: "0.38.0".into(),
+        level: Some(Level::Hard),
+        budget_usd: 2.5,
+        timeout_seconds: 600,
+        sandbox: "workspace".into(),
+        runs: vec![report.clone()],
+        stopped: None,
+        directory: PathBuf::from("/home/me/.ryter/bench/run"),
+    };
+    panel::on_notice(&mut v, &Notice::BenchDone(Box::new(one.clone())));
     let shown = render_to_string(&v, 120, 40);
     assert!(
         shown.contains("1/2 solved for $0.080, 12.5 solved per dollar, 1 skipped; stopped:")
@@ -4025,9 +4035,76 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         shown.contains("/home/me/.ryter/bench/run/RESULTS.md"),
         "{shown}"
     );
-    // r goes back to the form; esc closes.
+    // r goes back to the form. Two models compared: the panel says which
+    // model is on and folds the last one into a line; the finished view
+    // ranks them, best first, with what each did not solve.
     press(&mut v, KeyCode::Char('r'));
     assert!(render_to_string(&v, 120, 40).contains("start the run"));
+    let model = |model: &str, index: usize| {
+        Notice::Bench(Progress::Model {
+            connection: "spacexsi".into(),
+            model: model.into(),
+            index,
+            total: 2,
+        })
+    };
+    panel::on_notice(&mut v, &model("grok-4.3", 0));
+    panel::on_notice(&mut v, &started("expr-precedence", 0));
+    panel::on_notice(
+        &mut v,
+        &Notice::Bench(Progress::Finished(result(
+            "expr-precedence",
+            Some(true),
+            Some(0.02),
+        ))),
+    );
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("model 1 of 2: grok-4.3 (spacexsi)"),
+        "{shown}"
+    );
+    panel::on_notice(&mut v, &model("grok-4.6", 1));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(shown.contains("✓ grok-4.3 1/1 for $0.020"), "{shown}");
+    assert!(
+        shown.contains("model 2 of 2: grok-4.6 (spacexsi)"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("· expr-precedence") && shown.contains("waiting"),
+        "fresh rows for the next model: {shown}"
+    );
+    let mut cheap = report.clone();
+    cheap.model = "grok-4.3".into();
+    cheap.results = vec![
+        result("expr-precedence", Some(true), Some(0.02)),
+        result("migrate-dependencies", Some(true), Some(0.03)),
+    ];
+    cheap.total_usd = 0.05;
+    cheap.stopped = None;
+    let two = Comparison {
+        runs: vec![cheap, report],
+        directory: PathBuf::from("/home/me/.ryter/bench/cmp"),
+        ..one
+    };
+    panel::on_notice(&mut v, &Notice::BenchDone(Box::new(two)));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("2 models on 3 tasks: grok-4.3 2/2 for $0.050 · grok-4.6 1/2 for $0.080"),
+        "{shown}"
+    );
+    let cheap_row = shown.find("✓ grok-4.3").unwrap();
+    let dear_row = shown.find("✗ grok-4.6").unwrap();
+    assert!(cheap_row < dear_row, "best first: {shown}");
+    assert!(
+        shown.contains("1/2 for $0.080 (stopped)")
+            && shown.contains("migrate-dependencies, rust-c"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("/home/me/.ryter/bench/cmp/RESULTS.md"),
+        "{shown}"
+    );
     assert_eq!(press(&mut v, KeyCode::Esc), Action::None);
     assert!(v.panels.is_empty());
 }
