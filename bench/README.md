@@ -89,6 +89,69 @@ Visible checks are deliberately weaker than the hidden tests. Work that passes
 the checks and its review but fails the hidden tests is a **false pass**: the
 number that says how far a review can be trusted.
 
+## Comparing with other tools: tasks solved per dollar
+
+`bench/compare.py` gives the same tasks to Ryter and to the other coding agents
+installed on the machine (Claude Code, Codex, OpenCode, Kilo), each in a fresh copy
+of the task's project with the same brief, and scores every one by the hidden
+tests. The number that comes out is tasks solved per dollar, with the cost per
+solved task, the median minutes and the time-outs beside it.
+
+```sh
+python3 bench/compare.py --run ryter=anthropic:claude-sonnet-4-5 \
+    --run claude=claude-sonnet-4-5 --run opencode=anthropic/claude-sonnet-4-5 \
+    --budget 10 --dry-run                       # validate, print the commands, call nothing
+python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
+    --price gpt-5.2=1.75,0.175,14 --budget 10   # the run
+```
+
+- `--run tool=model`, once per tool and model; `ryter=connection:model` names
+  the Ryter connection. The same model on every tool is the fair comparison;
+  the runner does not check that, the table shows what ran. Two models of
+  one tool are two runs, each with its own column and directory.
+- Every tool runs as you have it set up: its own login, its own settings and
+  hooks. Nothing is copied between tools, and no key is read. Ryter uses the
+  connection's key from your Ryter home. The scoring does not: the fixture's
+  git and the hidden tests run under the same bare environment the
+  reference solution was proven in (a private `HOME`, no git config, an
+  offline Cargo), so nothing in your shell can pass or fail a tree for a tool.
+- Each tool is run so that it asks nobody anything: Ryter with
+  `--always-approve` under the `workspace` sandbox (Linux), Claude Code with
+  `--dangerously-skip-permissions`, Codex with `--sandbox workspace-write`,
+  OpenCode and Kilo with `--auto`. The project is a throwaway copy under `target/`.
+- The prompt is one scope paragraph (work only here, no installing, no
+  network, no commit) and the task's brief, which names the check to pass.
+  Ryter also gets the project's run file with that check as `test` and
+  `check`; the others are told the command in the brief.
+- Cost is what the tool reports: Ryter's spend events, Claude Code's
+  `total_cost_usd`, OpenCode's and Kilo's cost per step. Claude Code's figure is its own
+  estimate at list prices, whatever the login, and the table marks it so (†):
+  on a subscription nothing is billed per token. Codex reports tokens only, so a
+  Codex run needs `--price model=input,cached,output` (dollars per million)
+  and its cost is marked as priced from that table; OpenCode falls back to the
+  table when it reports no cost (a subscription login). A task a tool could
+  not price stops the run, as incomplete accounting does in live mode.
+- `--budget` is dollars for the whole run, all tools together, from $0.11 to
+  50. The runner stops before a task when what is left, past the reserve
+  ($0.10), is under a cent; where a tool has a cap of its own (Ryter's
+  session budget, Claude Code's `--max-budget-usd`) it gets what is left.
+  Codex and OpenCode have none, so the per-task `--timeout` (600 s) is their
+  only bound.
+- One attempt per task, tasks in order, every tool on a task before the next
+  task, so a stopped run compares the same tasks.
+- The output directory holds `report.json`, `RESULTS.md` (the table), and per
+  task and run (`<task>/<tool>-<model>`) the prompt, the tool's output, stderr
+  and the project as it was left. `--into DIR` runs the given tools again
+  into an earlier report, replacing their results and spend once every
+  fixture has been proven again; `--render DIR` rewrites its table from
+  `report.json` without running anything. The published runs are under
+  `docs/bench/`.
+
+No CI job runs this, and the runner refuses to start a paid task on a fixture
+whose reference solution does not pass or whose unchanged project does. The
+solved tree it proves that with is removed before any tool starts. The runner
+needs Python 3.12 or newer.
+
 ## Recorded live result
 
 See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md), made on

@@ -17,7 +17,7 @@
    not a git repository                                                                 ┊ Context
                                                                                         ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
                                                                                         ┊  ⢰⠋      ⠙⡆ 12k
-   ↑↓ file   pgup/pgdn diff   tab scope   x undo file   c commit   r refresh   esc      ┊  ⢸   5%   ⡧ of 256k
+   ↑↓ file   ←→ change   x drop change   X undo file   tab scope   c commit   esc       ┊  ⢸   5%   ⡧ of 256k
  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊  ⠸⣄      ⣠⠇
                                                                                         ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
                                                                                         ┊

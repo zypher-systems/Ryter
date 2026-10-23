@@ -265,6 +265,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
             }
         }
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
+        Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
 
         Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
         Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),

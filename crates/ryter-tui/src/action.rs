@@ -186,12 +186,22 @@ pub enum Action {
     },
     /// `o` on the audit popout: open the audit's file.
     OpenAuditFile(String),
-    /// `/changes` `x`: put one file back as `base` had it.
+    /// `/changes` `X`: put one file back as `base` had it.
     Revert {
         /// Commit to restore from.
         base: String,
         /// Repository-relative path.
         path: String,
+    },
+    /// `/changes` `x`: put one change of a file back as `base` had it,
+    /// keeping the file's other changes.
+    RevertHunk {
+        /// Commit to restore from.
+        base: String,
+        /// Repository-relative path.
+        path: String,
+        /// The change, as the diff numbers them (0-based).
+        hunk: usize,
     },
     /// `/commit`: draft a message for these paths.
     DraftCommit(Vec<String>),

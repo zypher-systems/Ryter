@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat: the conversation holds the request, the diff of app/server.js and the new test file, and the reply with its cost; the rail at the right has the four hats with their models and spend, the plan on record, the context ring, the spend per hat and the two uncommitted files.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.37.0. Apache-2.0.
+Linux first. The current release is 0.38.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.37.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.37.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.38.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
@@ -60,6 +60,28 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 - **Web search** is a row under the connections in `/provider`: Tavily, your own SearXNG server, or off. The choice is saved, and the session you are in starts using it at once.
 
 Nothing is committed unless you commit it.
+
+## Tasks solved per dollar
+
+The bench's ten tasks, given to Ryter, Claude Code and OpenCode on the same model, `claude-opus-5-5`, each in a fresh copy of the same project with the same brief, scored by hidden tests. All three solved all ten; the difference is the cost.
+
+| Tool | Solved | Cost | Per solved task |
+|---|---|---|---|
+| Ryter | 10/10 | $0.73 | $0.07 |
+| OpenCode | 10/10 | $1.17 | $0.12 |
+| Claude Code | 10/10 | $2.42 † | $0.24 |
+
+† Claude Code's own estimate at list prices; it was signed in with a subscription, so nothing was billed per token. The other two are what Anthropic charged an API key. A second pass the next day gave the same ten solved each and totals within three percent.
+
+The same ten on `mistralai/mistral-large-4-0` through OpenRouter, every cost what OpenRouter charged:
+
+| Tool | Solved | Cost | Per solved task |
+|---|---|---|---|
+| Ryter | 9/10 | $0.30 | $0.03 |
+| Kilo | 9/10 | $0.41 | $0.05 |
+| OpenCode | 9/10 | $0.52 | $0.06 |
+
+All three failed the same task the same way, which is the model's doing. The runs, how they were made and what they do not show are in [`docs/bench/`](docs/bench/README.md); `bench/compare.py` makes another with the tools you have installed.
 
 ## CLI
 
