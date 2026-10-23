@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import statistics
@@ -33,6 +34,9 @@ from run import commands, isolated_env, overlay, passed, validate  # noqa: E402
 
 TOOLS = ['ryter', 'claude', 'codex', 'opencode', 'kilo']
 RESERVE_USD = 0.10
+# A tool's cap is written with two decimals, and a cap of 0 means no cap to
+# Ryter; so a task starts only with a cent or more to spend.
+MIN_CAP_USD = 0.01
 SCOPE = ('Work only in this project, the current directory. Do not install packages, use other '
          'projects, external services or the network, or change system or user configuration. '
          'Do not commit. Use the existing dependencies. This is a command-line project with no '
@@ -58,6 +62,12 @@ class Run:
     @property
     def key(self):
         return f'{self.tool}={self.connection + ":" if self.connection else ""}{self.model}'
+
+    @property
+    def directory(self):
+        """The run's directory name under a task: the key with its
+        punctuation flattened, so two models of one tool never share one."""
+        return re.sub(r'[^A-Za-z0-9._-]+', '-', self.key)
 
     def __repr__(self):
         return self.key
@@ -89,6 +99,15 @@ def prompt_for(spec):
     return SCOPE + brief.strip() + '\n'
 
 
+def cap_text(cap_usd):
+    """A task's cap as the tools take it, two decimals. Never `0.00`: to
+    Ryter a cap of 0 is no cap at all."""
+    text = f'{cap_usd:.2f}'
+    if float(text) <= 0:
+        raise ValueError(f'a cap of ${cap_usd} would be written as 0, which turns the cap off')
+    return text
+
+
 def command_for(run, binary, prompt, cap_usd):
     """The tool's command line for one task in the current directory, with
     no question asked of a person. `cap_usd` is this task's cap where the
@@ -98,7 +117,7 @@ def command_for(run, binary, prompt, cap_usd):
                 '--connection', run.connection, '--model', run.model, '-p', prompt]
     if run.tool == 'claude':
         return ['claude', '-p', prompt, '--output-format', 'json', '--dangerously-skip-permissions',
-                '--no-session-persistence', '--model', run.model, '--max-budget-usd', f'{cap_usd:.2f}']
+                '--no-session-persistence', '--model', run.model, '--max-budget-usd', cap_text(cap_usd)]
     if run.tool == 'codex':
         return ['codex', 'exec', '--json', '--sandbox', 'workspace-write', '--ephemeral',
                 '--color', 'never', '-m', run.model, prompt]
@@ -215,6 +234,19 @@ def changed_files(status):
                   if line and not line[3:].startswith('.ryter/') and '__pycache__' not in line[3:])
 
 
+def stale_directories(report, runs):
+    """The directories of the results `merge_into` is about to drop, relative
+    to the output directory. A result from before directories were recorded
+    lived under the tool's name."""
+    stale = []
+    for name, task in report['tasks'].items():
+        for key in runs:
+            old = task.get('results', {}).get(key)
+            if old:
+                stale.append(old.get('directory') or f'{name}/{key.partition("=")[0]}')
+    return stale
+
+
 def merge_into(report, runs):
     """Prepare an existing report for `runs` to be run again into it: their
     earlier results go, with their spend; the run keys stay in order."""
@@ -230,13 +262,20 @@ def merge_into(report, runs):
 
 
 def execute(run, task, spec, directory, binary, env, timeout, cap_usd, price):
+    """One tool on one task. The tool runs with `env`, the user's own, since
+    its login lives there; the fixture's git and the scoring run under the
+    isolated environment `validate` proved the baseline fails in, so what
+    is in the user's shell cannot pass or fail a tree on the tool's behalf."""
     directory.mkdir(parents=True)
     project = directory / 'project'
     project.mkdir()
+    score_home = directory / 'score-home'
+    score_home.mkdir()
+    score_env = isolated_env(score_home)
     overlay(task / 'repo', project)
     init = commands(project, ['git init -q -b main', 'git config user.name "Ryter bench"',
                               'git config user.email bench@localhost', 'git config commit.gpgsign false',
-                              'git add -A && git commit -qm baseline'], env)
+                              'git add -A && git commit -qm baseline'], score_env)
     if not passed(init):
         return {'error': 'fixture git initialization failed', 'checks': init, 'usd': None}
     if run.tool == 'ryter':
@@ -245,7 +284,7 @@ def execute(run, task, spec, directory, binary, env, timeout, cap_usd, price):
         # The run file is the project's own: its test and its fast check.
         (ryter / 'run.toml').write_text('test = ' + json.dumps(spec['checks']) + '\n'
                                         + 'check = ' + json.dumps(spec['checks'][0]) + '\n')
-        (ryter / 'config.toml').write_text(f'[spend]\nsession_budget_usd = {cap_usd:.2f}\n[update]\nmode = "off"\n')
+        (ryter / 'config.toml').write_text(f'[spend]\nsession_budget_usd = {cap_text(cap_usd)}\n[update]\nmode = "off"\n')
         trust = subprocess.run([str(binary), 'trust'], cwd=project, env=env, capture_output=True,
                                text=True, timeout=15)
         if trust.returncode:
@@ -257,15 +296,15 @@ def execute(run, task, spec, directory, binary, env, timeout, cap_usd, price):
     # kernel, so the copy is `PWD` too.
     env = dict(env, PWD=str(project))
     code, stdout, seconds, timed_out = run_tool(command, project, env, timeout, directory)
-    row = {'run': run.key, 'exit': code, 'seconds': round(seconds, 1), 'timed_out': timed_out,
-           'charge': charge(run, stdout, price)}
+    row = {'run': run.key, 'directory': f'{task.name}/{run.directory}', 'exit': code,
+           'seconds': round(seconds, 1), 'timed_out': timed_out, 'charge': charge(run, stdout, price)}
     row['usd'] = row['charge']['usd']
-    status = subprocess.run(['git', 'status', '--porcelain'], cwd=project, env=env,
+    status = subprocess.run(['git', 'status', '--porcelain'], cwd=project, env=score_env,
                             capture_output=True, text=True)
     row['changed'] = changed_files(status.stdout)
     # The hidden tests are copied in only now.
     overlay(task / 'hidden', project)
-    row['acceptance'] = commands(project, spec['accept'], env)
+    row['acceptance'] = commands(project, spec['accept'], score_env)
     row['solved'] = passed(row['acceptance'])
     return row
 
@@ -379,8 +418,8 @@ def main(argv=None):
         parser.error('--budget is required')
     if len({r.key for r in runs}) != len(runs):
         parser.error('each --run once')
-    if not 0 < args.budget <= 50:
-        parser.error('--budget is dollars above zero and at most 50')
+    if not RESERVE_USD + MIN_CAP_USD <= args.budget <= 50:
+        parser.error(f'--budget is dollars from {RESERVE_USD + MIN_CAP_USD:.2f} (the reserve and a cent) to 50')
     for r in runs:
         if r.tool == 'codex' and r.model not in prices:
             parser.error(f'codex reports tokens only: give --price {r.model}=input,cached,output')
@@ -394,18 +433,11 @@ def main(argv=None):
         if args.output or args.task or args.dry_run:
             parser.error('--into takes the earlier report whole: no --output, no --task, no --dry-run')
         output = args.into.resolve()
-        report = merge_into(json.loads((output / 'report.json').read_text()), [r.key for r in runs])
-        report.pop('stopped', None)
-        report['versions'].update({r.tool: tool_version(r, args.binary) for r in runs})
-        report['prices'].update(prices)
-        report.setdefault('reruns', []).append({'date': time.strftime('%Y-%m-%d'), 'runs': [r.key for r in runs],
-                                                'budget_usd': args.budget, 'command': sys.argv[1:]})
+        report = json.loads((output / 'report.json').read_text())
         tasks = [(ROOT / 'bench' / name, tomllib.loads((ROOT / 'bench' / name / 'task.toml').read_text()))
                  for name in report['tasks']]
         for task, _spec in tasks:
             shutil.rmtree(output / task.name / 'validation', ignore_errors=True)
-            for r in runs:
-                shutil.rmtree(output / task.name / r.tool, ignore_errors=True)
     else:
         output = (args.output or ROOT / 'target' / f'compare-{time.strftime("%Y%m%d-%H%M%S")}').resolve()
         output.mkdir(parents=True, exist_ok=False)
@@ -418,15 +450,37 @@ def main(argv=None):
                  if not args.task or p.parent.name in args.task]
         if not tasks:
             parser.error('no matching task')
-    spent_before = report['total_usd']
     for task, spec in tasks:
         record = validate(task, spec, output / task.name / 'validation')
         report['tasks'].setdefault(task.name, {'results': {}})['validation'] = record
         print(f'reference {task.name}: {record["valid"]}', flush=True)
+        if record['valid']:
+            # The solved tree is not left where a tool could read it.
+            for tree in ['baseline', 'reference']:
+                shutil.rmtree(output / task.name / 'validation' / tree, ignore_errors=True)
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     if not all(t['validation']['valid'] for t in report['tasks'].values()):
         print(f'Invalid or unavailable reference; nothing called. See {output / "report.json"}')
         return 1
+    if args.into:
+        # Only now, with every fixture proven, does the earlier report lose
+        # the runs' results and their directories.
+        keys = [r.key for r in runs]
+        stale = stale_directories(report, keys)
+        report = merge_into(report, keys)
+        report.pop('stopped', None)
+        report['versions'].update({r.tool: tool_version(r, args.binary) for r in runs})
+        report['prices'].update(prices)
+        report.setdefault('reruns', []).append({'date': time.strftime('%Y-%m-%d'), 'runs': keys,
+                                                'budget_usd': args.budget, 'command': sys.argv[1:]})
+        for rel in stale:
+            if rel and not rel.startswith('/') and '..' not in Path(rel).parts:
+                shutil.rmtree(output / rel, ignore_errors=True)
+        for task, _spec in tasks:
+            for r in runs:
+                shutil.rmtree(output / task.name / r.directory, ignore_errors=True)
+        (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+    spent_before = report['total_usd']
     if args.dry_run:
         task, spec = tasks[0]
         print(f'\nFor {task.name}, in a fresh copy of bench/{task.name}/repo, each would run:')
@@ -438,10 +492,10 @@ def main(argv=None):
     for task, spec in tasks:
         for r in runs:
             cap = allowance(args.budget, report['total_usd'] - spent_before)
-            if cap <= 0:
+            if cap < MIN_CAP_USD:
                 report['stopped'] = f'budget reserve reached before {task.name} on {r.key}'
                 break
-            row = execute(r, task, spec, output / task.name / r.tool, args.binary, env, args.timeout,
+            row = execute(r, task, spec, output / task.name / r.directory, args.binary, env, args.timeout,
                           cap, prices.get(r.model))
             report['tasks'][task.name]['results'][r.key] = row
             if row.get('usd') is not None:

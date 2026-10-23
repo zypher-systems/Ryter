@@ -3820,10 +3820,52 @@ fn one_change_of_a_file_is_dropped_on_its_own() {
         &ryter_core::AgentEvent::Reverted {
             path: "config.rs".into(),
             hunk: Some(1),
+            undoable: true,
             error: None,
         },
     );
     assert_eq!(status(&v), "1 of 1 · change 1 of 1");
+}
+
+/// With no model connected (a first run with no key, say), the worker
+/// puts the change back itself and nothing is recorded for `/undo`, so the
+/// chat does not promise it. With a model, it does.
+#[test]
+fn a_change_put_back_without_a_model_does_not_promise_undo() {
+    let mut v = idle();
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Reverted {
+            path: "config.rs".into(),
+            hunk: Some(1),
+            undoable: false,
+            error: None,
+        },
+    );
+    let last = v
+        .messages
+        .last()
+        .map(|m| m.body.clone())
+        .unwrap_or_default();
+    assert_eq!(
+        last,
+        "put back change 2 of config.rs · not recorded for /undo, since no model is connected"
+    );
+    crate::run_events_apply(
+        &mut v,
+        AgentEvent::Reverted {
+            path: "config.rs".into(),
+            hunk: None,
+            undoable: true,
+            error: None,
+        },
+    );
+    let last = v
+        .messages
+        .last()
+        .map(|m| m.body.clone())
+        .unwrap_or_default();
+    assert_eq!(last, "put back config.rs · /undo brings it back");
 }
 
 /// Removing a connection, an MCP server or a skill is the same question

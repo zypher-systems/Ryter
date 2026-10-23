@@ -330,13 +330,23 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             (None, Some(e)) => view.error(format!("commit failed: {e}")),
             (None, None) => {}
         },
-        AgentEvent::Reverted { path, hunk, error } => {
+        AgentEvent::Reverted {
+            path,
+            hunk,
+            undoable,
+            error,
+        } => {
             let what = match hunk {
                 Some(h) => format!("change {} of {path}", h + 1),
                 None => path.to_string(),
             };
             match error {
-                None => view.system(format!("put back {what} · /undo brings it back")),
+                None if *undoable => view.system(format!("put back {what} · /undo brings it back")),
+                // No model connected: the worker put it back itself, with
+                // nothing recorded for `/undo` to find.
+                None => view.system(format!(
+                    "put back {what} · not recorded for /undo, since no model is connected"
+                )),
                 Some(e) => view.error(format!("couldn't put back {what}: {e}")),
             }
         }

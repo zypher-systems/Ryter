@@ -446,7 +446,7 @@ Keys:
 - `X` puts the whole file back as it was at that point, deleting it if the file is new. The same question.
 - `c` opens `/commit`; `r` reads the files again.
 
-Ryter snapshots first, so `/undo` brings a dropped change or a file back. The panel updates when a turn finishes. You can open it while a turn is running, but dropping a change, undoing a file and committing wait for the turn to finish.
+Ryter snapshots first, so `/undo` brings a dropped change or a file back; with no model connected there is no snapshot, and the chat line says so. A link, or a file that is not text, has no lines to take apart either: `x` there asks about the file. The panel updates when a turn finishes. You can open it while a turn is running, but dropping a change, undoing a file and committing wait for the turn to finish.
 
 **`/commit`** lists the uncommitted files, all ticked; `space` unticks one.
 - **The message.** The model drafts it from the diff, your project's recent commit subjects (so it follows your style), and the conversation, including the model's narration of why. `e` edits it in the message box (`Shift+Enter` or `Alt+Enter` for a new line), and `d` drafts again. The draft is one small model call at low reasoning, and its cost shows in the spend card.

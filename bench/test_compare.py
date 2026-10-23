@@ -3,8 +3,8 @@ each tool's output. No tool is run and nothing is paid."""
 import json
 import unittest
 
-from compare import (Run, allowance, changed_files, charge, command_for, markdown, merge_into, parse_price,
-                     price_tokens, prompt_for, summarize)
+from compare import (Run, allowance, cap_text, changed_files, charge, command_for, markdown, merge_into,
+                     parse_price, price_tokens, prompt_for, stale_directories, summarize)
 
 
 def lines(*rows):
@@ -21,6 +21,12 @@ class Runs(unittest.TestCase):
         for bad in ['ryter=claude-sonnet-4-5', 'cursor=x', 'claude', 'codex=', 'ryter=:m', 'ryter=c:']:
             with self.assertRaises(ValueError, msg=bad):
                 Run(bad)
+
+    def test_two_models_of_one_tool_get_their_own_directories(self):
+        a, b = Run('ryter=anthropic:claude-sonnet-4-5'), Run('ryter=anthropic:claude-opus-4-5')
+        self.assertEqual(a.directory, 'ryter-anthropic-claude-sonnet-4-5')
+        self.assertNotEqual(a.directory, b.directory)
+        self.assertEqual(Run('opencode=anthropic/claude-sonnet-4-5').directory, 'opencode-anthropic-claude-sonnet-4-5')
 
     def test_every_tool_runs_without_asking_and_ryter_is_sandboxed(self):
         prompt = 'do the thing'
@@ -78,6 +84,16 @@ class Prices(unittest.TestCase):
         self.assertAlmostEqual(allowance(5.0, 4.85), 0.05)
         self.assertEqual(allowance(5.0, 4.95), 0.0)
         self.assertEqual(allowance(5.0, 6.0), 0.0)
+
+    def test_a_cap_is_never_written_as_zero(self):
+        # To Ryter `session_budget_usd = 0` is no cap, so under half a cent is refused.
+        self.assertEqual(cap_text(0.5), '0.50')
+        self.assertEqual(cap_text(0.014), '0.01')
+        for cap in [0.004, 0.0, 0.00499]:
+            with self.assertRaises(ValueError, msg=cap):
+                cap_text(cap)
+        with self.assertRaises(ValueError):
+            command_for(Run('claude=sonnet'), '/bin/ryter', 'p', 0.004)
 
 
 class Charges(unittest.TestCase):
@@ -181,6 +197,13 @@ class Summary(unittest.TestCase):
         self.assertIn('Budget $7.00', md)
         self.assertIn('Run again on 2026-10-23, replacing their earlier results: `codex=g`.', md)
         self.assertIn('| a | ✓ $0.100 | ✓ $0.300 | not run | not run |', md)
+
+    def test_a_rerun_removes_only_the_directories_of_the_results_it_replaces(self):
+        report = self.report()
+        report['tasks']['a']['results']['codex=g']['directory'] = 'a/codex-g'
+        # b's codex row is from before directories were recorded: the tool's name.
+        self.assertEqual(stale_directories(report, ['codex=g', 'opencode=o']), ['a/codex-g', 'b/codex'])
+        self.assertEqual(stale_directories(report, ['opencode=o']), [])
 
     def test_an_unpriced_task_leaves_the_run_without_a_cost(self):
         report = self.report()

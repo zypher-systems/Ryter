@@ -107,10 +107,14 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
 
 - `--run tool=model`, once per tool and model; `ryter=connection:model` names
   the Ryter connection. The same model on every tool is the fair comparison;
-  the runner does not check that, the table shows what ran.
+  the runner does not check that, the table shows what ran. Two models of
+  one tool are two runs, each with its own column and directory.
 - Every tool runs as you have it set up: its own login, its own settings and
   hooks. Nothing is copied between tools, and no key is read. Ryter uses the
-  connection's key from your Ryter home.
+  connection's key from your Ryter home. The scoring does not: the fixture's
+  git and the hidden tests run under the same bare environment the
+  reference solution was proven in (a private `HOME`, no git config, an
+  offline Cargo), so nothing in your shell can pass or fail a tree for a tool.
 - Each tool is run so that it asks nobody anything: Ryter with
   `--always-approve` under the `workspace` sandbox (Linux), Claude Code with
   `--dangerously-skip-permissions`, Codex with `--sandbox workspace-write`,
@@ -127,22 +131,26 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
   and its cost is marked as priced from that table; OpenCode falls back to the
   table when it reports no cost (a subscription login). A task a tool could
   not price stops the run, as incomplete accounting does in live mode.
-- `--budget` is dollars for the whole run, all tools together, at most 50.
-  The runner stops before a task when what is left is under the reserve
-  ($0.10); where a tool has a cap of its own (Ryter's session budget, Claude
-  Code's `--max-budget-usd`) it gets what is left. Codex and OpenCode have
-  none, so the per-task `--timeout` (600 s) is their only bound.
+- `--budget` is dollars for the whole run, all tools together, from $0.11 to
+  50. The runner stops before a task when what is left, past the reserve
+  ($0.10), is under a cent; where a tool has a cap of its own (Ryter's
+  session budget, Claude Code's `--max-budget-usd`) it gets what is left.
+  Codex and OpenCode have none, so the per-task `--timeout` (600 s) is their
+  only bound.
 - One attempt per task, tasks in order, every tool on a task before the next
   task, so a stopped run compares the same tasks.
 - The output directory holds `report.json`, `RESULTS.md` (the table), and per
-  task and tool the prompt, the tool's output, stderr and the project as it
-  was left. `--into DIR` runs the given tools again into an earlier report,
-  replacing their results and spend; `--render DIR` rewrites its table from
+  task and run (`<task>/<tool>-<model>`) the prompt, the tool's output, stderr
+  and the project as it was left. `--into DIR` runs the given tools again
+  into an earlier report, replacing their results and spend once every
+  fixture has been proven again; `--render DIR` rewrites its table from
   `report.json` without running anything. The published runs are under
   `docs/bench/`.
 
 No CI job runs this, and the runner refuses to start a paid task on a fixture
-whose reference solution does not pass or whose unchanged project does.
+whose reference solution does not pass or whose unchanged project does. The
+solved tree it proves that with is removed before any tool starts. The runner
+needs Python 3.12 or newer.
 
 ## Recorded live result
 

@@ -637,6 +637,7 @@ pub fn run(init: WorkerInit) {
                 let _ = ev_tx.send(AgentEvent::Reverted {
                     path,
                     hunk: None,
+                    undoable: agent.is_some(),
                     error: result.err().map(|e| e.to_string()),
                 });
             }
@@ -650,6 +651,7 @@ pub fn run(init: WorkerInit) {
                 let _ = ev_tx.send(AgentEvent::Reverted {
                     path,
                     hunk: Some(hunk),
+                    undoable: agent.is_some(),
                     error: result.err().map(|e| e.to_string()),
                 });
             }

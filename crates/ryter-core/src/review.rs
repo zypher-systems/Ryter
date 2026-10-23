@@ -357,15 +357,31 @@ pub fn revert_file(dir: &Path, base: &str, path: &str) -> Result<()> {
 }
 
 /// `path` as `base` had it (`None`: not there) and as it is now (`None`:
-/// deleted), for a diff that can be taken apart hunk by hunk.
+/// deleted), for a diff that can be taken apart hunk by hunk. A link, at
+/// either point, or a file that is not text is an error: to git a link is
+/// its target's name, and reading or writing it through would reach the
+/// file it points at, so the whole file is the change there.
 pub fn file_versions(
     dir: &Path,
     base: &str,
     path: &str,
 ) -> Result<(Option<String>, Option<String>)> {
     let top = root(dir)?;
+    let whole = |why: &str| Error::Io(format!("{path} {why}; undo the file instead"));
+    if git(&top, &["ls-tree", base, "--", path]).is_ok_and(|t| t.starts_with("120000")) {
+        return Err(whole("was a link"));
+    }
+    let full = top.join(path);
+    let new = match std::fs::symlink_metadata(&full) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(Error::Io(format!("{path}: {e}"))),
+        Ok(m) if m.file_type().is_symlink() => return Err(whole("is a link")),
+        Ok(_) => {
+            let bytes = std::fs::read(&full).map_err(|e| Error::Io(format!("{path}: {e}")))?;
+            Some(String::from_utf8(bytes).map_err(|_| whole("is not text"))?)
+        }
+    };
     let old = git(&top, &["show", &format!("{base}:{path}")]).ok();
-    let new = std::fs::read_to_string(top.join(path)).ok();
     Ok((old, new))
 }
 
@@ -754,6 +770,79 @@ mod tests {
         revert_file(p, &base, "new.txt").unwrap();
         assert!(!p.join("new.txt").exists());
         assert!(changes(p, &base).unwrap().files.is_empty());
+    }
+
+    /// A link is its target's name to git, and a file that is not text has
+    /// no lines: neither is taken apart, so a change of it can't be dropped
+    /// on its own, and `revert_hunk` never writes through a link. `X`, the
+    /// whole file, still works on them.
+    #[test]
+    #[cfg(unix)]
+    fn a_link_or_a_file_that_is_not_text_is_not_taken_apart() {
+        let d = repo();
+        let p = d.path();
+        let base = head_base(p);
+        // The link is the change, and `other.txt` must stay what it is.
+        fs::write(p.join("other.txt"), "other\n").unwrap();
+        git(p, &["add", "other.txt"]).unwrap();
+        git(p, &["commit", "-qm", "other"]).unwrap();
+        let base2 = head_base(p);
+        fs::remove_file(p.join("keep.txt")).unwrap();
+        std::os::unix::fs::symlink("other.txt", p.join("keep.txt")).unwrap();
+        let e = file_versions(p, &base2, "keep.txt")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("keep.txt is a link; undo the file instead"),
+            "{e}"
+        );
+        let e = revert_hunk(p, &base2, "keep.txt", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("is a link"), "{e}");
+        assert_eq!(fs::read_to_string(p.join("other.txt")).unwrap(), "other\n");
+        assert!(
+            fs::symlink_metadata(p.join("keep.txt"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        revert_file(p, &base2, "keep.txt").unwrap();
+        assert_eq!(
+            fs::read_to_string(p.join("keep.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        // A link in the base, a plain file now: the old side is a name, not lines.
+        git(p, &["add", "-A"]).unwrap();
+        fs::remove_file(p.join("gone.txt")).unwrap();
+        std::os::unix::fs::symlink("other.txt", p.join("gone.txt")).unwrap();
+        git(p, &["add", "-A"]).unwrap();
+        git(p, &["commit", "-qm", "link"]).unwrap();
+        let base3 = head_base(p);
+        fs::remove_file(p.join("gone.txt")).unwrap();
+        fs::write(p.join("gone.txt"), "plain\n").unwrap();
+        let e = file_versions(p, &base3, "gone.txt")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("gone.txt was a link; undo the file instead"),
+            "{e}"
+        );
+        // Bytes that are not text.
+        fs::write(p.join("keep.txt"), b"one\n\xff\xfe\n").unwrap();
+        let e = file_versions(p, &base, "keep.txt").unwrap_err().to_string();
+        assert!(
+            e.contains("keep.txt is not text; undo the file instead"),
+            "{e}"
+        );
+        let e = revert_hunk(p, &base, "keep.txt", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("is not text"), "{e}");
+        assert!(p.join("keep.txt").exists(), "nothing is removed by mistake");
+        // A file that is gone is still gone, not an error of its own.
+        fs::remove_file(p.join("keep.txt")).unwrap();
+        assert_eq!(file_versions(p, &base, "keep.txt").unwrap().1, None);
     }
 
     #[test]
