@@ -330,10 +330,16 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             (None, Some(e)) => view.error(format!("commit failed: {e}")),
             (None, None) => {}
         },
-        AgentEvent::Reverted { path, error } => match error {
-            None => view.system(format!("put back {path} · /undo brings it back")),
-            Some(e) => view.error(format!("couldn't put back {path}: {e}")),
-        },
+        AgentEvent::Reverted { path, hunk, error } => {
+            let what = match hunk {
+                Some(h) => format!("change {} of {path}", h + 1),
+                None => path.to_string(),
+            };
+            match error {
+                None => view.system(format!("put back {what} · /undo brings it back")),
+                Some(e) => view.error(format!("couldn't put back {what}: {e}")),
+            }
+        }
         AgentEvent::Error { message } => {
             let was_busy = view.busy || view.activity.busy();
             view.busy = false;

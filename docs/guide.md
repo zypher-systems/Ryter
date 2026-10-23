@@ -434,16 +434,17 @@ A folder that isn't a repository gets git set up before the first change, and Ry
 
 ### Review and commit
 
-**`/changes`** lists every changed file with its diff. You can compare against either of two points:
+**`/changes`** lists every changed file with its diff, taken apart change by change: each change of a file sits under a heading that says which it is and the lines it covers, numbered as the file is now, highlighted like the file. You can compare against either of two points:
 - **Uncommitted** (the default): the last commit. This is what `/commit` would commit.
 - **Last turn** (press `Tab`): the snapshot taken when the latest build turn started, so you see just what that turn did.
 
 Keys:
-- `↑↓` picks a file, and `PgUp`/`PgDn` scroll its diff.
-- `x` puts one file back as it was at that point, deleting it if the file is new. It asks first: `Enter` puts it back, `n` keeps it. Ryter snapshots first, so `/undo` brings it back.
-- `c` opens `/commit`.
+- `↑↓` picks a file, `←→` (or `[` `]`) picks one of its changes, and `PgUp`/`PgDn` scroll the diff.
+- `x` drops the selected change alone: those lines go back to how they were at that point, and the file's other changes stay. It asks first: `Enter` drops it, `n` keeps it. A binary file, or one that is gone, has nothing to take apart, so `x` asks about the file.
+- `X` puts the whole file back as it was at that point, deleting it if the file is new. The same question.
+- `c` opens `/commit`; `r` reads the files again.
 
-The panel updates when a turn finishes. You can open it while a turn is running, but undoing a file and committing wait for the turn to finish.
+Ryter snapshots first, so `/undo` brings a dropped change or a file back. The panel updates when a turn finishes. You can open it while a turn is running, but dropping a change, undoing a file and committing wait for the turn to finish.
 
 **`/commit`** lists the uncommitted files, all ticked; `space` unticks one.
 - **The message.** The model drafts it from the diff, your project's recent commit subjects (so it follows your style), and the conversation, including the model's narration of why. `e` edits it in the message box (`Shift+Enter` or `Alt+Enter` for a new line), and `d` drafts again. The draft is one small model call at low reasoning, and its cost shows in the spend card.

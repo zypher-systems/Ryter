@@ -1,12 +1,14 @@
-//! `/changes` — what changed in the files, file by file, with the diff; undo
-//! one file; start a commit.
+//! `/changes` — what changed in the files, file by file, with the diff taken
+//! apart change by change; drop one change or undo a file; start a commit.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ryter_core::AgentEvent;
+use ryter_core::diff::FileDiff;
 use ryter_core::review::{self, Status};
 
 use super::{Body, Outcome, Panel, PanelEnv, widgets};
@@ -27,6 +29,15 @@ pub enum Scope {
     LastTurn,
 }
 
+/// What `x` or `X` is about to put back, once the question is answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Revert {
+    /// The whole file.
+    File,
+    /// One change of it (0-based), the file's other changes kept.
+    Hunk(usize),
+}
+
 /// Changes browser.
 #[derive(Debug, Clone)]
 pub struct Changes {
@@ -35,9 +46,20 @@ pub struct Changes {
     scope: Scope,
     data: Result<review::Changes, String>,
     selected: usize,
-    diff: Vec<String>,
-    scroll: usize,
-    confirm_revert: bool,
+    /// The selected file's diff, change by change, when it can be taken
+    /// apart; the numbering is the one `revert_hunk` uses.
+    diff: Option<FileDiff>,
+    /// Git's own text for a file the diff cannot take apart (binary).
+    text: Vec<String>,
+    /// The selected change of the diff.
+    hunk: usize,
+    /// First diff row shown. Set while drawing when `follow` asks for the
+    /// selected change, since only the drawing knows the rows.
+    scroll: Cell<usize>,
+    follow: Cell<bool>,
+    /// Rows the diff had at the last drawing, for paging.
+    rows: Cell<usize>,
+    confirm: Option<Revert>,
     note: Option<String>,
 }
 
@@ -50,9 +72,13 @@ impl Changes {
             scope: Scope::Uncommitted,
             data: Err(String::new()),
             selected: 0,
-            diff: Vec::new(),
-            scroll: 0,
-            confirm_revert: false,
+            diff: None,
+            text: Vec::new(),
+            hunk: 0,
+            scroll: Cell::new(0),
+            follow: Cell::new(false),
+            rows: Cell::new(0),
+            confirm: None,
             note: None,
         };
         c.reload(view);
@@ -93,17 +119,44 @@ impl Changes {
         self.files().get(self.selected)
     }
 
+    /// The selected file's changes, as the diff counts them.
+    fn hunks(&self) -> usize {
+        self.diff.as_ref().map_or(0, |d| d.hunks.len())
+    }
+
+    /// Whether one change of the selected file can be put back on its own:
+    /// the diff took it apart, and the file is still there to write.
+    fn can_drop_hunk(&self) -> bool {
+        self.hunks() > 0 && self.current().is_some_and(|f| f.status != Status::Deleted)
+    }
+
     fn load_diff(&mut self) {
-        self.scroll = 0;
-        self.diff = match (&self.data, self.current()) {
-            (Ok(c), Some(f)) => review::file_diff(&self.cwd, c, &f.path)
-                .lines()
-                // The file header repeats what the list shows.
-                .skip_while(|l| !l.starts_with("@@") && !l.starts_with("Binary"))
-                .map(wrap::expand_tabs)
-                .collect(),
-            _ => Vec::new(),
+        self.scroll.set(0);
+        self.follow.set(false);
+        self.hunk = 0;
+        self.diff = None;
+        self.text = Vec::new();
+        let (Ok(c), Some(f)) = (&self.data, self.current()) else {
+            return;
         };
+        if !f.binary {
+            // The file as the base had it and as it is now; a deleted file
+            // is every line removed.
+            if let Ok((old, new)) = review::file_versions(&self.cwd, &c.base, &f.path) {
+                let whole =
+                    FileDiff::whole(f.path.clone(), old.as_deref(), new.as_deref().unwrap_or(""));
+                if let Some(d) = whole.filter(|d| !d.hunks.is_empty()) {
+                    self.diff = Some(d);
+                    return;
+                }
+            }
+        }
+        self.text = review::file_diff(&self.cwd, c, &f.path)
+            .lines()
+            // The file header repeats what the list shows.
+            .skip_while(|l| !l.starts_with("@@") && !l.starts_with("Binary"))
+            .map(wrap::expand_tabs)
+            .collect();
     }
 
     fn select(&mut self, delta: isize) {
@@ -115,6 +168,18 @@ impl Changes {
         if next != self.selected {
             self.selected = next;
             self.load_diff();
+        }
+    }
+
+    fn select_hunk(&mut self, delta: isize) {
+        let n = self.hunks();
+        if n == 0 {
+            return;
+        }
+        let next = (self.hunk as isize + delta).clamp(0, n as isize - 1) as usize;
+        if next != self.hunk {
+            self.hunk = next;
+            self.follow.set(true);
         }
     }
 
@@ -181,7 +246,7 @@ impl Changes {
         )
     }
 
-    fn diff_row(line: &str, w: usize, theme: Theme) -> Line<'static> {
+    fn text_row(line: &str, w: usize, theme: Theme) -> Line<'static> {
         let color = if line.starts_with("@@") {
             theme.accent
         } else if line.starts_with('+') {
@@ -197,6 +262,86 @@ impl Changes {
             format!(" {}", wrap::truncate(line, w.saturating_sub(2))),
             theme.on_panel(color),
         ))
+    }
+
+    /// The change's heading: which it is, and the lines of the file it
+    /// covers (the new file's where it has them, the old file's for lines
+    /// that only went).
+    fn hunk_heading(&self, i: usize, w: usize, theme: Theme) -> Line<'static> {
+        let Some(d) = &self.diff else {
+            return widgets::blank(theme);
+        };
+        let lines = &d.hunks[i].lines;
+        let news: Vec<usize> = lines.iter().filter_map(|l| l.new).collect();
+        let span = match (news.first(), news.last()) {
+            (Some(a), Some(b)) if a == b => format!("line {a}"),
+            (Some(a), Some(b)) => format!("lines {a}–{b}"),
+            _ => {
+                let olds: Vec<usize> = lines.iter().filter_map(|l| l.old).collect();
+                match (olds.first(), olds.last()) {
+                    (Some(a), Some(b)) if a == b => format!("line {a} removed"),
+                    (Some(a), Some(b)) => format!("lines {a}–{b} removed"),
+                    _ => String::new(),
+                }
+            }
+        };
+        let selected = i == self.hunk;
+        let label = format!(
+            "{} change {} of {} · {span} ",
+            if selected { "▸" } else { "─" },
+            i + 1,
+            d.hunks.len()
+        );
+        let rule = format!(
+            " {label}{}",
+            "─".repeat(w.saturating_sub(wrap::width(&label) + 2))
+        );
+        let style = if selected {
+            theme.on_panel(theme.accent).add_modifier(Modifier::BOLD)
+        } else {
+            theme.panel_muted()
+        };
+        Line::from(Span::styled(rule, style))
+    }
+
+    /// The diff pane's rows, and the row each change starts on.
+    fn diff_rows(&self, w: usize, theme: Theme) -> (Vec<Line<'static>>, Vec<usize>) {
+        let mut rows = Vec::new();
+        let mut starts = Vec::new();
+        match &self.diff {
+            Some(d) => {
+                let hunks = crate::chat::diff::hunk_rows(d, w, theme, theme.panel_bg);
+                for (i, body) in hunks.into_iter().enumerate() {
+                    starts.push(rows.len());
+                    rows.push(self.hunk_heading(i, w, theme));
+                    rows.extend(body);
+                }
+            }
+            None => rows.extend(self.text.iter().map(|l| Self::text_row(l, w, theme))),
+        }
+        (rows, starts)
+    }
+
+    /// The one question's words.
+    fn question(&self, r: Revert) -> Option<String> {
+        let f = self.current()?;
+        let when = match self.scope {
+            Scope::Uncommitted => "at the last commit",
+            Scope::LastTurn => "before the last build turn",
+        };
+        Some(match r {
+            Revert::Hunk(i) => format!(
+                "drop change {} of {} in {}, back to {}?",
+                i + 1,
+                self.hunks(),
+                f.path,
+                when.trim_start_matches("at ")
+            ),
+            Revert::File if f.status == Status::Added => {
+                format!("delete {} (it didn't exist {when})?", f.path)
+            }
+            Revert::File => format!("put {} back as it was {when}?", f.path),
+        })
     }
 }
 
@@ -217,16 +362,26 @@ impl Panel for Changes {
 
     fn status(&self, _view: &View) -> String {
         match self.current() {
+            Some(_) if self.hunks() > 0 => format!(
+                "{} of {} · change {} of {}",
+                self.selected + 1,
+                self.files().len(),
+                self.hunk + 1,
+                self.hunks()
+            ),
             Some(_) => format!("{} of {}", self.selected + 1, self.files().len()),
             None => String::new(),
         }
     }
 
     fn legend(&self, _view: &View) -> String {
-        if self.confirm_revert {
-            "⏎ put it back · n keep · esc".into()
-        } else {
-            "↑↓ file · pgup/pgdn diff · tab scope · x undo file · c commit · r refresh · esc".into()
+        match self.confirm {
+            Some(Revert::File) => "⏎ put it back · n keep · esc".into(),
+            Some(Revert::Hunk(_)) => "⏎ drop it · n keep · esc".into(),
+            None => {
+                "↑↓ file · ←→ change · x drop change · X undo file · tab scope · c commit · esc"
+                    .into()
+            }
         }
     }
 
@@ -270,10 +425,18 @@ impl Panel for Changes {
                 lines.push(self.file_row(f, i == self.selected, w, theme));
             }
             let diff_h = h.saturating_sub(
-                lines.len() + 1 + usize::from(self.note.is_some() || self.confirm_revert),
+                lines.len() + 1 + usize::from(self.note.is_some() || self.confirm.is_some()),
             );
-            let total = self.diff.len();
-            let scroll = self.scroll.min(total.saturating_sub(diff_h));
+            let (rows, starts) = self.diff_rows(w, theme);
+            let total = rows.len();
+            self.rows.set(total);
+            if self.follow.replace(false) {
+                if let Some(&at) = starts.get(self.hunk) {
+                    self.scroll.set(at);
+                }
+            }
+            let scroll = self.scroll.get().min(total.saturating_sub(diff_h));
+            self.scroll.set(scroll);
             let path = self.current().map(|f| f.path.clone()).unwrap_or_default();
             let range = if total > diff_h {
                 format!(
@@ -290,27 +453,16 @@ impl Panel for Changes {
                 "─".repeat(w.saturating_sub(wrap::width(&label) + 1))
             );
             lines.push(widgets::note(&rule, theme));
-            for l in self.diff.iter().skip(scroll).take(diff_h) {
-                lines.push(Self::diff_row(l, w, theme));
-            }
+            lines.extend(rows.into_iter().skip(scroll).take(diff_h));
         }
-        let footer = if self.confirm_revert {
-            self.current().map(|f| {
-                let when = match self.scope {
-                    Scope::Uncommitted => "at the last commit",
-                    Scope::LastTurn => "before the last build turn",
-                };
-                let what = if f.status == Status::Added {
-                    format!("delete {} (it didn't exist {when})?", f.path)
-                } else {
-                    format!("put {} back as it was {when}?", f.path)
-                };
-                widgets::colored(&format!("{what}  ⏎ yes · n no"), theme.warn, theme)
-            })
-        } else {
-            self.note
+        let footer = match self.confirm {
+            Some(r) => self
+                .question(r)
+                .map(|q| widgets::colored(&format!("{q}  ⏎ yes · n no"), theme.warn, theme)),
+            None => self
+                .note
                 .as_ref()
-                .map(|n| widgets::colored(n, theme.warn, theme))
+                .map(|n| widgets::colored(n, theme.warn, theme)),
         };
         if let Some(f) = footer {
             while lines.len() < h - 1 {
@@ -328,19 +480,20 @@ impl Panel for Changes {
 
     fn key(&mut self, key: KeyEvent, view: &mut View) -> Outcome {
         self.note = None;
-        if self.confirm_revert {
+        if let Some(r) = self.confirm {
             // The one question's keys: Enter yes, n (or Esc) no.
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y' | 'Y') => {
-                    self.confirm_revert = false;
+                    self.confirm = None;
                     if let (Ok(base), Some(f)) = (self.base(view), self.current()) {
-                        return Outcome::Act(Action::Revert {
-                            base,
-                            path: f.path.clone(),
+                        let path = f.path.clone();
+                        return Outcome::Act(match r {
+                            Revert::File => Action::Revert { base, path },
+                            Revert::Hunk(hunk) => Action::RevertHunk { base, path, hunk },
                         });
                     }
                 }
-                KeyCode::Char('n' | 'N') | KeyCode::Esc => self.confirm_revert = false,
+                KeyCode::Char('n' | 'N') | KeyCode::Esc => self.confirm = None,
                 _ => {}
             }
             return Outcome::Stay;
@@ -349,12 +502,15 @@ impl Panel for Changes {
             KeyCode::Esc => return Outcome::Close,
             KeyCode::Up | KeyCode::Char('k') => self.select(-1),
             KeyCode::Down | KeyCode::Char('j') => self.select(1),
+            KeyCode::Left | KeyCode::Char('[') => self.select_hunk(-1),
+            KeyCode::Right | KeyCode::Char(']') => self.select_hunk(1),
             KeyCode::PageDown | KeyCode::Char(' ') => {
-                self.scroll = (self.scroll + PAGE).min(self.diff.len().saturating_sub(1));
+                self.scroll
+                    .set((self.scroll.get() + PAGE).min(self.rows.get().saturating_sub(1)));
             }
-            KeyCode::PageUp => self.scroll = self.scroll.saturating_sub(PAGE),
-            KeyCode::Home => self.scroll = 0,
-            KeyCode::End => self.scroll = self.diff.len().saturating_sub(PAGE),
+            KeyCode::PageUp => self.scroll.set(self.scroll.get().saturating_sub(PAGE)),
+            KeyCode::Home => self.scroll.set(0),
+            KeyCode::End => self.scroll.set(self.rows.get().saturating_sub(PAGE)),
             KeyCode::Tab | KeyCode::BackTab => {
                 self.scope = match self.scope {
                     Scope::Uncommitted => Scope::LastTurn,
@@ -366,9 +522,21 @@ impl Panel for Changes {
             KeyCode::Char('r') => self.reload(view),
             KeyCode::Char('x') if self.current().is_some() => {
                 if view.busy {
+                    self.note =
+                        Some("wait for the turn to finish before putting a change back".into());
+                } else if self.can_drop_hunk() {
+                    self.confirm = Some(Revert::Hunk(self.hunk));
+                } else {
+                    // Nothing to take apart (binary, or a file that is gone):
+                    // the file is the change.
+                    self.confirm = Some(Revert::File);
+                }
+            }
+            KeyCode::Char('X') if self.current().is_some() => {
+                if view.busy {
                     self.note = Some("wait for the turn to finish before undoing a file".into());
                 } else {
-                    self.confirm_revert = true;
+                    self.confirm = Some(Revert::File);
                 }
             }
             KeyCode::Char('c') => {

@@ -13,7 +13,7 @@
    not a git repository                                                 ┊
                                                                         ┊
                                                                         ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-   ↑↓ file   pgup/pgdn diff   tab scope   x undo file   c commit        ┊ Context
+   ↑↓ file   ←→ change   x drop change   X undo file   tab scope        ┊ Context
  ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
                                                                         ┊ 12k of 256k           5%
                                                                         ┊

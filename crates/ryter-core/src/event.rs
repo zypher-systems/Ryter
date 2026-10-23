@@ -266,6 +266,9 @@ pub enum AgentEvent {
     Reverted {
         /// The file.
         path: String,
+        /// The one change of it that was put back (0-based), or the whole file.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        hunk: Option<usize>,
         /// What went wrong, if it did.
         error: Option<String>,
     },

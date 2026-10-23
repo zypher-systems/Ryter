@@ -5,7 +5,7 @@
 //! the file's own. A long diff shows its first rows and says how many more
 //! there are; `Ctrl+O` shows every edit (and audit) whole.
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ryter_core::diff::{DiffLine, FileDiff, Hunk, LineKind};
 
@@ -76,7 +76,7 @@ pub fn render_folded(
         }
         let rows = highlighted(hunk, ext.as_deref(), theme);
         for (line, chunks) in hunk.lines.iter().zip(rows) {
-            let pieces = row(line, chunks, num_w, text_w, width, tinted, theme);
+            let pieces = row(line, chunks, num_w, text_w, width, tinted, theme.bg, theme);
             if out.len() + pieces.len() > max_rows && !out.is_empty() {
                 break 'hunks;
             }
@@ -93,6 +93,46 @@ pub fn render_folded(
         out.push(note(&more, width, theme));
     }
     out
+}
+
+/// Every hunk of `diff` as its own rows, whole, numbered with one width
+/// across the hunks, on `bg` where a row has no tint of its own. For a
+/// view that takes the diff apart change by change.
+pub fn hunk_rows(
+    diff: &FileDiff,
+    width: usize,
+    theme: Theme,
+    bg: Color,
+) -> Vec<Vec<Line<'static>>> {
+    let num_w = diff
+        .hunks
+        .iter()
+        .flat_map(|h| &h.lines)
+        .filter_map(|l| l.new.or(l.old))
+        .max()
+        .unwrap_or(1)
+        .to_string()
+        .len();
+    let text_w = width.saturating_sub(num_w + 3).max(4);
+    let ext = std::path::Path::new(&diff.path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_string);
+    let tinted =
+        theme.diff_add_bg != theme.bg && !matches!(theme.mode, ColorMode::Ansi16 | ColorMode::Mono);
+    diff.hunks
+        .iter()
+        .map(|hunk| {
+            let rows = highlighted(hunk, ext.as_deref(), theme);
+            hunk.lines
+                .iter()
+                .zip(rows)
+                .flat_map(|(line, chunks)| {
+                    row(line, chunks, num_w, text_w, width, tinted, bg, theme)
+                })
+                .collect()
+        })
+        .collect()
 }
 
 fn note(text: &str, width: usize, theme: Theme) -> Line<'static> {
@@ -129,6 +169,8 @@ fn highlighted(hunk: &Hunk, ext: Option<&str>, theme: Theme) -> Vec<Vec<Chunk>> 
 
 /// One diff line as screen rows: the number, the sign, the text, and the
 /// row's tint out to the edge. A long line wraps under its own text.
+/// `plain_bg` is the row's background where it has no tint.
+#[allow(clippy::too_many_arguments)]
 fn row(
     line: &DiffLine,
     chunks: Vec<Chunk>,
@@ -136,14 +178,15 @@ fn row(
     text_w: usize,
     width: usize,
     tinted: bool,
+    plain_bg: Color,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let (bg, sign, sign_fg) = match line.kind {
         LineKind::Added => (theme.diff_add_bg, "+", theme.success),
         LineKind::Removed => (theme.diff_del_bg, "-", theme.error),
-        LineKind::Context => (theme.bg, " ", theme.dim),
+        LineKind::Context => (plain_bg, " ", theme.dim),
     };
-    let bg = if tinted { bg } else { theme.bg };
+    let bg = if tinted { bg } else { plain_bg };
     let base = Style::default().bg(bg);
     // Without tints the text itself carries the change.
     let plain = match line.kind {

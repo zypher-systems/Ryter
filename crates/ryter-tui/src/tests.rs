@@ -3702,7 +3702,7 @@ fn removing_a_hook_is_a_plain_question() {
     assert!(v.hooks.is_empty(), "Enter removes it");
 }
 
-/// `x` in `/changes` asks before putting a file back, and the question
+/// `X` in `/changes` asks before putting a file back, and the question
 /// takes the one answer: Enter puts it back, `n` keeps it, another key is
 /// nothing. It used to want `y`, with Enter dismissing the question.
 #[test]
@@ -3721,8 +3721,8 @@ fn putting_a_file_back_is_a_plain_question() {
     let press = |v: &mut View, code: KeyCode| {
         crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
     };
-    assert!(legend(&v).contains("x undo file"), "{}", legend(&v));
-    press(&mut v, KeyCode::Char('x'));
+    assert!(legend(&v).contains("X undo file"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('X'));
     assert_eq!(legend(&v), "⏎ put it back · n keep · esc");
     let shown = render_to_string(&v, 120, 40);
     assert!(
@@ -3733,12 +3733,82 @@ fn putting_a_file_back_is_a_plain_question() {
     assert_eq!(press(&mut v, KeyCode::Char('k')), Action::None);
     assert_eq!(legend(&v), "⏎ put it back · n keep · esc");
     assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
-    assert!(legend(&v).contains("x undo file"), "{}", legend(&v));
-    press(&mut v, KeyCode::Char('x'));
+    assert!(legend(&v).contains("X undo file"), "{}", legend(&v));
+    press(&mut v, KeyCode::Char('X'));
     assert!(
         matches!(press(&mut v, KeyCode::Enter), Action::Revert { path, .. } if path == "config.rs"),
         "Enter puts it back"
     );
+}
+
+/// `/changes` takes a file's diff apart change by change: `←→` picks one,
+/// the heading says which it is and the lines it covers, and `x` drops that
+/// change alone after the one question, keeping the file's other changes.
+/// The chat used to show the whole file or nothing.
+#[test]
+fn one_change_of_a_file_is_dropped_on_its_own() {
+    use ryter_core::review;
+    let repo = changes_repo();
+    let home = tempfile::tempdir().unwrap();
+    let my_env = PanelEnv {
+        home: home.path().to_path_buf(),
+        cwd: repo.path().to_path_buf(),
+        trusted: true,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    };
+    let mut v = idle();
+    let _ = panel::open(&mut v, PanelId::Changes, &my_env);
+    let status = |v: &View| v.panels.top().map(|p| p.status(v)).unwrap_or_default();
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    assert_eq!(status(&v), "1 of 1 · change 1 of 2");
+    let shown = render_to_string(&v, 120, 60);
+    assert!(shown.contains("▸ change 1 of 2 · lines 1–5"), "{shown}");
+    assert!(shown.contains("─ change 2 of 2 · lines 23–28"), "{shown}");
+    assert!(
+        shown.contains("line three") && shown.contains("twenty-five"),
+        "{shown}"
+    );
+    press(&mut v, KeyCode::Right);
+    assert_eq!(status(&v), "1 of 1 · change 2 of 2");
+    assert!(render_to_string(&v, 120, 60).contains("▸ change 2 of 2"));
+    press(&mut v, KeyCode::Right);
+    assert_eq!(
+        status(&v),
+        "1 of 1 · change 2 of 2",
+        "the last change is the last"
+    );
+    // `x` asks about that change alone.
+    press(&mut v, KeyCode::Char('x'));
+    let shown = render_to_string(&v, 120, 60);
+    assert!(
+        shown.contains("drop change 2 of 2 in config.rs, back to the last commit?  ⏎ yes · n no"),
+        "{shown}"
+    );
+    let act = press(&mut v, KeyCode::Enter);
+    let Action::RevertHunk { base, path, hunk } = act else {
+        panic!("{act:?}");
+    };
+    assert_eq!((path.as_str(), hunk), ("config.rs", 1));
+    // What the worker does with it: the second change goes, the first stays.
+    review::revert_hunk(repo.path(), &base, &path, hunk).unwrap();
+    let now = std::fs::read_to_string(repo.path().join("config.rs")).unwrap();
+    assert!(now.contains("line three\n"), "the first change is kept");
+    assert!(
+        now.contains("line 25\n") && !now.contains("twenty-five"),
+        "{now}"
+    );
+    // The panel, told, shows the one change left.
+    panel::on_event(
+        &mut v,
+        &ryter_core::AgentEvent::Reverted {
+            path: "config.rs".into(),
+            hunk: Some(1),
+            error: None,
+        },
+    );
+    assert_eq!(status(&v), "1 of 1 · change 1 of 1");
 }
 
 /// Removing a connection, an MCP server or a skill is the same question
