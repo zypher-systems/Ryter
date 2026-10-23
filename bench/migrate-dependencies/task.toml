@@ -1,0 +1,49 @@
+title = "Order migrations by dependency, and make a run survive a failure"
+level = "hard"
+brief = """
+The `migrate` package applies a registry of migrations to a state file. Today
+it runs them in registration order, knows nothing of dependencies, stops dead
+on a failure, and keeps the state file as a bare JSON list. Change it, across
+the package:
+
+- `migrate/model.py`: `Migration` gains `depends_on`, a list of names
+  (default empty), and `down` may be `None` (default) for a migration that
+  can't be undone.
+- `migrate/errors.py` (new): `MigrateError(Exception)`, and under it
+  `UnknownDependency(name, dependency)`, `CycleError(names)`,
+  `MigrationFailed(name)` and `IrreversibleMigration(name)`, each keeping its
+  arguments as attributes of the same names.
+- `migrate/registry.py`: `Registry.order()` returns every registered migration
+  in an order that puts each one after all it depends on. Among migrations
+  whose dependencies are all placed, the one with the smallest name goes first,
+  so the order is the same on every run. A dependency that isn't registered
+  raises `UnknownDependency`; a cycle raises `CycleError` with the names on
+  the cycle, in dependency order, starting from the smallest of them.
+- `migrate/runner.py`, `Runner(state_path)`:
+  - `apply(registry, dry_run=False)` applies, in `Registry.order()`, the
+    migrations not yet applied, and returns their names in that order. With
+    `dry_run=True` it returns the same names, runs nothing and writes nothing.
+  - The state file is written after each migration that succeeds, before the
+    next one starts. When a migration's `up` raises, the migrations before it
+    in this run stay applied and recorded, it is not recorded, and
+    `MigrationFailed(name)` is raised from the original exception
+    (`raise ... from`). Nothing after it runs.
+  - `rollback(registry, count=1)` undoes the last `count` applied migrations,
+    most recent first, running each one's `down` and recording each step as
+    it goes. Before undoing anything, it checks every one of them has a
+    `down`; if one hasn't, it raises `IrreversibleMigration` for the most
+    recent one that hasn't, and nothing is undone. It returns the names
+    undone, most recent first. A `count` above what is applied undoes them all.
+  - The state file becomes `{"applied": [names in applied order]}`. A missing
+    file means nothing applied. A file in the old format, a bare list, still
+    loads, and the next write stores the new format. Every write goes to a
+    temporary file beside it, then replaces the state file by renaming, so a
+    crash mid-write leaves the old state.
+
+Existing behaviour must not change. Done when
+`python3 -m unittest -q test_migrate` passes.
+"""
+files = ["migrate/model.py", "migrate/errors.py", "migrate/registry.py", "migrate/runner.py"]
+checks = ["python3 -m unittest -q test_migrate"]
+accept = ["python3 -m unittest -q hidden_test_migrate"]
+needs = ["python3 --version"]

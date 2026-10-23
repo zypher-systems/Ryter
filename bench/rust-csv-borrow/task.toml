@@ -1,0 +1,35 @@
+title = "Make csvlite read quoted fields, and borrow what it can"
+level = "hard"
+brief = """
+`csvlite` reads CSV from a `&str`. Today `Reader` splits lines on commas and
+copies every field into a `String`; quotes mean nothing to it. Make it a real
+reader that borrows from its input:
+
+- `Reader::new(input: &'a str)` and `Reader::with_delimiter(self, char)`
+  (default `,`). `Reader<'a>` is an `Iterator` with
+  `Item = Result<Vec<Cow<'a, str>>, Error>`: one item per record, fields in
+  order.
+- Records end at `\\n` or `\\r\\n`. A terminator at the very end does not add
+  a record; an empty input has no records; an empty line is a record with one
+  empty field. A `\\u{FEFF}` byte-order mark at the start of the input is
+  skipped.
+- A field that starts with `"` is quoted: it runs to the next `"` that is not
+  doubled, `""` inside it is one `"`, and the delimiter and line ends inside
+  it are plain characters. After the closing quote the next character must be
+  the delimiter, a line end or the end of the input. A `"` anywhere in an
+  unquoted field is an ordinary character.
+- Borrow whenever the bytes are already in the input: an unquoted field, and
+  a quoted field without a `""` inside, are `Cow::Borrowed` slices of
+  `input`. Only a quoted field with a `""` in it is `Cow::Owned`.
+- `Error` (src/error.rs) gains `UnexpectedAfterQuote { line: usize,
+  column: usize }`, the 1-based line and character column of the character
+  that follows a closing quote and may not; keep `UnterminatedQuote { line }`,
+  the 1-based line on which that record started. Lines count every line end,
+  quoted ones included. After an error the iterator yields nothing more.
+
+Add no dependencies. Done when `cargo test -q --test basic` passes.
+"""
+files = ["src/error.rs", "src/reader.rs"]
+checks = ["cargo test -q --test basic"]
+accept = ["cargo test -q --test hidden"]
+needs = ["cargo --version"]

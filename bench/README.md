@@ -72,18 +72,33 @@ Each task:
 `needs` lists commands that must succeed for the task to run on a machine, such
 as `cargo --version`.
 
-| Task | Language | What it asks for |
-|---|---|---|
-| `cli-limit-flag` | Python | a new flag on a small CLI |
-| `pager-off-by-one` | Python | a one-function bug fix |
-| `rename-across-files` | Python | a rename and its callers |
-| `slugify` | Python | a new function with edge cases |
-| `inventory-reorder` | Python | a feature across four modules, one of them new |
-| `settings-overrides` | Python | bugs in two modules that only show together |
-| `rust-durations` | Rust | a parser, its errors and a formatter, across three modules |
-| `ts-event-bus` | TypeScript | new behaviour in two modules, run by Node with no build |
-| `split-stats-report` | Python | work split into three steps, two of them independent |
-| `runner-script` | Python | a feature in a project whose tests run only through its own script |
+| Task | Level | Language | What it asks for |
+|---|---|---|---|
+| `cli-limit-flag` | standard | Python | a new flag on a small CLI |
+| `pager-off-by-one` | standard | Python | a one-function bug fix |
+| `rename-across-files` | standard | Python | a rename and its callers |
+| `slugify` | standard | Python | a new function with edge cases |
+| `inventory-reorder` | standard | Python | a feature across four modules, one of them new |
+| `settings-overrides` | standard | Python | bugs in two modules that only show together |
+| `rust-durations` | standard | Rust | a parser, its errors and a formatter, across three modules |
+| `ts-event-bus` | standard | TypeScript | new behaviour in two modules, run by Node with no build |
+| `split-stats-report` | standard | Python | work split into three steps, two of them independent |
+| `runner-script` | standard | Python | a feature in a project whose tests run only through its own script |
+| `expr-precedence` | hard | Python | a parser with four precedence levels, a right-associative power, unary minus and error positions |
+| `migrate-dependencies` | hard | Python | dependency order with a stable tie-break, cycle reporting, a run that survives a failure, atomic state |
+| `rust-csv-borrow` | hard | Rust | a quoted-field CSV reader whose fields borrow from the input unless they must not |
+| `ts-debounce` | hard | TypeScript | debounce with leading, trailing and maxWait against an injected clock, and throttle on it |
+
+A task's level is `level` in its `task.toml`; a task that says none is
+standard. `--level standard` or `--level hard` picks one level on either
+runner; without it every task runs. The standard tasks are the ones a current
+model solves; the hard ones each turn on a rule the brief states and the
+visible tests do not check, the kind of thing the published runs showed a
+model getting wrong (`ts-event-bus`, where every Mistral run broke `off` and
+emitted the wildcard twice): a parser's precedence and where an error points,
+an order that must be the same on every run and a run that must leave the
+state file consistent after a failure, a reader that must not copy, and the
+timing of leading, trailing and maxWait calls.
 
 Visible checks are deliberately weaker than the hidden tests. Work that passes
 the checks and its review but fails the hidden tests is a **false pass**: the
@@ -138,7 +153,8 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
   Codex and OpenCode have none, so the per-task `--timeout` (600 s) is their
   only bound.
 - One attempt per task, tasks in order, every tool on a task before the next
-  task, so a stopped run compares the same tasks.
+  task, so a stopped run compares the same tasks. `--level hard` (or
+  `standard`) runs one level; `--task` names tasks.
 - The output directory holds `report.json`, `RESULTS.md` (the table), and per
   task and run (`<task>/<tool>-<model>`) the prompt, the tool's output, stderr
   and the project as it was left. `--into DIR` runs the given tools again
