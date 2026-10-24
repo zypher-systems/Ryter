@@ -1001,10 +1001,10 @@ fn start_bench(
         view.error("no task at that level");
         return;
     }
-    let binary = match std::env::current_exe() {
+    let binary = match ryter_bench::own_binary() {
         Ok(b) => b,
         Err(e) => {
-            view.error(format!("benchmark: can't find the ryter binary: {e}"));
+            view.error(format!("benchmark: {e}"));
             return;
         }
     };

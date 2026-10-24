@@ -20,6 +20,27 @@ use std::time::{Duration, Instant};
 use crate::report::{Check, Report, TaskResult};
 use crate::task::{File, Task};
 
+/// The `ryter` to run the tasks with: this process's own binary, as long as
+/// it is still there. A rebuild while ryter runs replaces the file, and the
+/// bench would otherwise fail every task with "No such file or directory".
+pub fn own_binary() -> Result<PathBuf, String> {
+    let binary =
+        std::env::current_exe().map_err(|e| format!("can't find the ryter binary: {e}"))?;
+    check_binary(&binary)?;
+    Ok(binary)
+}
+
+/// `Err` with the message for the user when `binary` is gone.
+pub fn check_binary(binary: &Path) -> Result<(), String> {
+    if binary.is_file() {
+        return Ok(());
+    }
+    Err(format!(
+        "the ryter binary at {} is gone, replaced or rebuilt since this ryter started: restart ryter and run the bench again",
+        binary.display()
+    ))
+}
+
 /// Kept back from the budget for the last task's overshoot.
 pub const RESERVE_USD: f64 = 0.10;
 /// A cap is written with two decimals, and `0` means no cap to Ryter: a
@@ -626,6 +647,21 @@ fn end_group(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_binary_that_is_gone_is_named_with_the_remedy() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("ryter (deleted)");
+        let msg = check_binary(&gone).unwrap_err();
+        assert!(
+            msg.contains("ryter (deleted)") && msg.contains("restart ryter"),
+            "{msg}"
+        );
+        let here = dir.path().join("ryter");
+        std::fs::write(&here, b"").unwrap();
+        assert_eq!(check_binary(&here), Ok(()));
+        assert!(own_binary().is_ok());
+    }
 
     #[test]
     fn the_allowance_is_whole_cents_past_the_reserve() {

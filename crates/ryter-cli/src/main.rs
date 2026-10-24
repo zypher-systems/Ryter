@@ -822,7 +822,7 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         None if cfg!(target_os = "linux") => "workspace".to_string(),
         None => "off".to_string(),
     };
-    let binary = std::env::current_exe().map_err(|e| Error::Io(e.to_string()))?;
+    let binary = ryter_bench::own_binary().map_err(Error::Io)?;
     let dir = args.output.unwrap_or_else(|| {
         let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
         home.join("bench").join(ryter_bench::folder(&stamp, &seats))

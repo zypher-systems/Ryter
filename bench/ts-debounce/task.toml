@@ -21,7 +21,10 @@ cancelled. Finish it, and add `throttle`:
     `src/timing.ts`) to use instead of the global one. The tests pass a fake.
 - `cancel()` drops any waiting call; `flush()` runs a waiting call now and
   returns its result (or the last result when nothing waits); `pending()` is
-  `true` while a call is waiting to run.
+  `true` only while a call will still run, not merely while a timer is armed:
+  with `leading` alone (no `trailing`, no `maxWait`) nothing is ever pending,
+  and with `leading` and `trailing` a single call leaves nothing pending until
+  a second call comes.
 - `throttle(fn, wait, options?)` is `debounce` with `leading` and `trailing`
   defaulting to `true` and `maxWait` fixed at `wait`.
 
