@@ -16,7 +16,9 @@ cancelled. Finish it, and add `throttle`:
     more than one call.
   - `maxWait`: during a burst, `fn` runs at least once every `maxWait` ms,
     with the latest arguments, counted from the start of the burst or the last
-    run.
+    run, whichever is later. That is the gap between runs, not how long one
+    call may wait: after a run at 100 ms, a call at 150 ms in the same burst
+    (with `maxWait` 100) is run at 200 ms, not after a fresh `wait`.
   - `clock`: a `Clock` (`now`, `setTimeout`, `clearTimeout`; see
     `src/timing.ts`) to use instead of the global one. The tests pass a fake.
 - `cancel()` drops any waiting call; `flush()` runs a waiting call now and
