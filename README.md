@@ -83,7 +83,7 @@ The same ten on `mistralai/mistral-large-4-0` through OpenRouter, every cost wha
 
 All three failed the same task the same way, which is the model's doing. The runs, how they were made and what they do not show are in [`docs/bench/`](docs/bench/README.md); `bench/compare.py` makes another with the tools you have installed.
 
-Run it yourself: `/benchmark` in the TUI, or `ryter bench --level hard --budget 5` from a shell, runs the same tasks on your model and key and writes the table under `~/.ryter/bench/`; `bench/compare.py` in this repository runs them through the other tools too.
+Run it yourself on Linux: `/benchmark` in the TUI, or `ryter bench --level hard --budget 5` from a shell, runs the same tasks on your model and key and writes the table under `~/.ryter/bench/`; `bench/compare.py` in this repository runs them through the other tools too.
 
 ## CLI
 

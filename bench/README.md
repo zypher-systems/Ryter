@@ -130,18 +130,18 @@ environment for its login, a per-task cap in the copy's `.ryter/config.toml`,
 alone), and is scored by its hidden tests in the bare environment described
 below, under the same sandbox as the build hat had: the tests import and build
 what the model wrote. The hat runs under a leader process of Ryter's own
-(`ryter bench-lead`), which guards the hat's tree with what the kernel
-offers: on Linux it is a child subreaper, so a process of the hat's whose
-parent exits is reparented to the leader rather than to `init`; on macOS it
-is `kqueue` process tracking, so the kernel reports every fork in the hat's
-tree and follows the children, and the hat's own process has to be reported
-before it is let run. Either way the tree is whole however a process detaches
-(`setsid`, a scrubbed environment, a daemon's double fork), and when the hat
-ends, or the runner ends it, the leader stops and kills everything under the
-guard before it exits. A task whose tree could not be guarded is not run; one
-whose tree could not be emptied is not scored; a leader that did not come
-back to say so within its grace counts the same. The scoring is done on a
-copy of the model's tree made only then (build output and `.git` left out).
+(`ryter bench-lead`), a Linux child subreaper: a process of the hat's whose
+parent exits is reparented to the leader rather than to `init`, so the hat's
+tree is whole however a process detaches (`setsid`, a scrubbed environment, a
+daemon's double fork), and when the hat ends, or the runner ends it, the
+leader stops and kills everything under itself before it exits. A task whose
+tree could not be emptied is not scored, and a leader that did not come back
+to say so within its grace counts the same. macOS has no equivalent (its
+kernel refuses `kqueue`'s `NOTE_TRACK`, which would follow every fork), so a
+process the model detached could not be found with certainty there: the bench
+runs on Linux only, and `ryter bench` and `/benchmark` say so instead of
+running. The scoring is done on a copy of the model's tree made only then
+(build output and `.git` left out).
 The hidden tests travel in the binary deflated and
 masked, so the binary, which the sandbox lets a model read, does not show them
 to `grep`; a cover, not a secret. The run goes to
@@ -149,8 +149,8 @@ to `grep`; a cover, not a secret. The run goes to
 taken): `report.json`, `RESULTS.md`, and per task the prompt, the build hat's
 events and stderr; the project copies are removed once scored. The budget, the
 reserve and the per-task cap work as in the comparison runner; `--sandbox` is
-the build hat's (`workspace` on a Linux whose kernel has Landlock, `off`
-elsewhere). Ctrl-C, or quitting the TUI, ends the task in progress with
+the build hat's (`workspace` on a Linux whose kernel has Landlock, else
+`off`). Ctrl-C, or quitting the TUI, ends the task in progress with
 everything it started and skips the rest; a task cut short, in the model's
 turn or in its scoring, is not scored, and what it cost still counts. The
 command exits 1 whenever the run did not go to its end. The tool comparison

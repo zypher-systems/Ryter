@@ -977,6 +977,10 @@ fn start_bench(
         view.error("a benchmark run is already going; its result lands in the chat");
         return;
     }
+    if let Err(why) = ryter_bench::guard_available() {
+        view.error(format!("benchmark: {why}"));
+        return;
+    }
     if view.busy {
         view.error("wait for the turn to finish before a benchmark run");
         return;

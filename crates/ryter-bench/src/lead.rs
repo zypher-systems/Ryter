@@ -2,16 +2,14 @@
 //! runner and the hat, whose only children are the hat and whatever the
 //! hat's tree leaves behind.
 //!
-//! The leader guards the hat's tree with what the kernel offers. On Linux it
+//! The leader guards the hat's tree with the kernel. On Linux it
 //! is a child subreaper (`PR_SET_CHILD_SUBREAPER`): a process under it whose
 //! parent exits is reparented to the leader, not to `init`, so the tree
 //! walked by parent pid from the leader is whole at every moment, whatever a
 //! process does with its session (`setsid`), its group or its environment.
-//! On macOS it is `kqueue` process tracking (`EVFILT_PROC` with
-//! `NOTE_TRACK`, through the safe `kqueue` crate): the kernel reports every fork in the leader's subtree and
-//! follows the children, so every process the hat's tree ever had is known
-//! by pid, orphaned or not, and the hat's own process has to show up there
-//! before the hat is let run. Nothing can leave either guard. When the hat
+//! Nothing can leave it. macOS has no equivalent (its kernel refuses
+//! `kqueue`'s `NOTE_TRACK`), so there the tree cannot be guarded and the hat
+//! is not run. When the hat
 //! ends, or the runner asks for the end (the leader's stdin closes, which
 //! also happens when the runner itself dies), the leader stops every process
 //! under the guard, kills it, waits for it to be gone, and exits with the
@@ -211,139 +209,18 @@ impl Guard {
     }
 }
 
-/// `kqueue` process tracking: this process is registered with `NOTE_TRACK`,
-/// so the kernel registers every child it forks, and theirs, and reports
-/// each as `NOTE_CHILD` and later its exit. `tracked` is every process of
-/// the tree that has not exited; `broken` is set when the kernel could not
-/// follow a fork (`NOTE_TRACKERR`), after which the tree is not known. The
-/// `kqueue` crate does the `kevent(2)` calls; this workspace has no `unsafe`.
-#[cfg(target_os = "macos")]
-struct Guard {
-    watcher: kqueue::Watcher,
-    tracked: std::collections::HashSet<u32>,
-    broken: bool,
-}
-
-#[cfg(target_os = "macos")]
-impl Guard {
-    fn arm() -> Result<Self, String> {
-        use kqueue::{EventFilter, FilterFlag, Watcher};
-        let mut watcher = Watcher::new().map_err(|e| format!("no kqueue: {e}"))?;
-        let me = i32::try_from(std::process::id()).map_err(|e| e.to_string())?;
-        watcher
-            .add_pid(
-                me,
-                EventFilter::EVFILT_PROC,
-                FilterFlag::NOTE_TRACK | FilterFlag::NOTE_EXIT,
-            )
-            .map_err(|e| format!("process tracking refused: {e}"))?;
-        watcher
-            .watch()
-            .map_err(|e| format!("process tracking refused: {e}"))?;
-        Ok(Guard {
-            watcher,
-            tracked: std::collections::HashSet::new(),
-            broken: false,
-        })
-    }
-
-    /// Take what the kernel has reported: the first wait is `timeout`, then
-    /// everything already there.
-    fn pump(&mut self, timeout: Duration) {
-        use kqueue::{EventData, Ident, Proc};
-        let mut wait = timeout;
-        while let Some(event) = self.watcher.poll(Some(wait)) {
-            wait = Duration::ZERO;
-            let Ident::Pid(pid) = event.ident else {
-                continue;
-            };
-            let Ok(pid) = u32::try_from(pid) else {
-                continue;
-            };
-            match event.data {
-                EventData::Proc(Proc::Child(_)) => {
-                    self.tracked.insert(pid);
-                }
-                EventData::Proc(Proc::Exit(_)) => {
-                    self.tracked.remove(&pid);
-                }
-                EventData::Proc(Proc::Trackerr) => self.broken = true,
-                _ => {}
-            }
-        }
-    }
-
-    /// The tracking proves itself on the hat: its own process has to be
-    /// reported as a child of ours within a moment, or nothing under it
-    /// would be either.
-    fn saw(&mut self, hat: &Child) -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while Instant::now() < deadline {
-            self.pump(Duration::from_millis(50));
-            if self.tracked.contains(&hat.id()) {
-                return Ok(());
-            }
-            if self.broken {
-                break;
-            }
-        }
-        Err("the hat's own process was not reported by the kernel's process tracking".into())
-    }
-
-    /// Stop and kill every tracked process until the kernel has reported
-    /// every one of them gone, or `EMPTY_BY` has passed; whether the tree
-    /// is empty and was known whole.
-    fn end_tree(&mut self) -> bool {
-        use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
-        let deadline = Instant::now() + EMPTY_BY;
-        self.pump(Duration::ZERO);
-        let mut stopped: std::collections::HashSet<u32> = std::collections::HashSet::new();
-        for _ in 0..5 {
-            let fresh: Vec<u32> = self
-                .tracked
-                .iter()
-                .copied()
-                .filter(|p| !stopped.contains(p))
-                .collect();
-            if fresh.is_empty() {
-                break;
-            }
-            for pid in &fresh {
-                if let Some(pid) = Pid::from_raw(*pid as i32) {
-                    let _ = kill_process(pid, Signal::STOP);
-                }
-            }
-            stopped.extend(fresh);
-            self.pump(Duration::from_millis(20));
-        }
-        loop {
-            self.pump(Duration::ZERO);
-            if self.tracked.is_empty() {
-                return !self.broken;
-            }
-            for pid in self.tracked.clone() {
-                if let Some(pid) = Pid::from_raw(pid as i32) {
-                    let _ = kill_process(pid, Signal::KILL);
-                    let _ = waitpid(Some(pid), WaitOptions::NOHANG);
-                }
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            self.pump(Duration::from_millis(20));
-        }
-    }
-}
-
-/// No subreaper and no process tracking here: the tree cannot be guarded,
-/// so the hat is not run.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// No subreaper here, and nothing in its place: macOS has no equivalent
+/// (`kqueue`'s `NOTE_TRACK`, which would follow every fork, is refused by
+/// its kernel with `ENOTSUP`), so a process whose parent has exited cannot
+/// be found with certainty. The tree cannot be guarded, so the hat is not
+/// run; `guard_available` says so before a run starts.
+#[cfg(not(target_os = "linux"))]
 struct Guard;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(target_os = "linux"))]
 impl Guard {
     fn arm() -> Result<Self, String> {
-        Err("no subreaper or process tracking on this platform".into())
+        Err(NO_GUARD.into())
     }
 
     fn saw(&mut self, _hat: &Child) -> Result<(), String> {
@@ -352,6 +229,22 @@ impl Guard {
 
     fn end_tree(&mut self) -> bool {
         false
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+const NO_GUARD: &str = "the bench runs the model's build hat under a guard that ends every process it started, which needs a Linux child subreaper; this platform has no equivalent, so the bench runs on Linux only";
+
+/// Whether this platform can guard a task's tree, so that a run can be
+/// refused before it starts rather than task by task.
+pub fn guard_available() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(NO_GUARD.into())
     }
 }
 

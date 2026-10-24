@@ -34,6 +34,7 @@ Everything here serves an item of the 1.0 list; the number says which. The direc
 
 **Item 3, setup and models**
 - macOS by hand: install, a key, a change, the TUI at three widths. The sandbox is Linux-only and is labelled so.
+- The bench on macOS. It refuses there since 0.39.0: the build hat runs under a Linux child subreaper so that every process the model started is ended before the hidden tests are written, and macOS has no equivalent (its kernel refuses `kqueue`'s `NOTE_TRACK`). What would do: a helper with the right entitlement, or a scoring that no survivor can reach. Nothing cheap.
 
 **Item 6, the screen**
 - The light theme on a real terminal, with the watermark, looked at by a person.

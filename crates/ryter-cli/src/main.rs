@@ -792,6 +792,7 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         }
         return Ok(false);
     }
+    ryter_bench::guard_available().map_err(Error::Config)?;
     let budget = args.budget.ok_or_else(|| {
         Error::Config("--budget is required: dollars per model, from 0.11 to 50".into())
     })?;

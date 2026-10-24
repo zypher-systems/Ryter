@@ -1,35 +1,31 @@
 //! `ryter bench-lead`: the process a bench task's build hat runs under. Tried
 //! through the binary, since in the test process it would end every child
-//! of the test binary.
+//! of the test binary. The guard is a Linux subreaper; elsewhere the leader
+//! refuses to run the hat at all.
 
 #![cfg(unix)]
 
+#[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::process::{Command, Stdio};
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
+/// Whether `pid` runs: a zombie, which runs no code, does not count.
+#[cfg(target_os = "linux")]
 fn alive(pid: i32) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        // A zombie runs no code.
-        fs::read_to_string(format!("/proc/{pid}/stat"))
-            .ok()
-            .and_then(|s| {
-                s.rsplit_once(')')
-                    .map(|(_, r)| r.split_whitespace().next() != Some("Z"))
-            })
-            .unwrap_or(false)
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .status()
-            .is_ok_and(|s| s.success())
-    }
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|s| {
+            s.rsplit_once(')')
+                .map(|(_, r)| r.split_whitespace().next() != Some("Z"))
+        })
+        .unwrap_or(false)
 }
 
+#[cfg(target_os = "linux")]
 fn pid_in(path: &Path) -> i32 {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline && fs::metadata(path).is_ok_and(|m| m.len() == 0) {
@@ -57,6 +53,7 @@ fn leader(script: &str) -> std::process::Child {
 /// still under the guard (reparented to the subreaper on Linux, followed by
 /// the kernel's process tracking on macOS), and ended before the leader
 /// exits.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_detached_process_whose_parent_is_gone_is_ended_with_the_hat() {
     let has = |program: &str, arg: &str| {
@@ -103,6 +100,7 @@ fn a_detached_process_whose_parent_is_gone_is_ended_with_the_hat() {
 
 /// The runner closing the leader's stdin ends the hat and what it runs,
 /// and the leader exits well within the grace, with a non-zero code.
+#[cfg(target_os = "linux")]
 #[test]
 fn closing_the_control_ends_the_hat_and_its_tree() {
     let dir = tempfile::tempdir().unwrap();
@@ -129,6 +127,7 @@ fn closing_the_control_ends_the_hat_and_its_tree() {
 }
 
 /// The hat's exit code is the leader's; a hat that cannot start is 127.
+#[cfg(target_os = "linux")]
 #[test]
 fn the_hats_exit_code_comes_through() {
     let mut child = leader("exit 7");
@@ -148,4 +147,23 @@ fn the_hats_exit_code_comes_through() {
     drop(stdin);
     assert_eq!(out.status.code(), Some(127));
     assert!(String::from_utf8_lossy(&out.stderr).contains("could not start"));
+}
+
+/// Where there is no subreaper, the leader does not run the hat: exit 122,
+/// the reason on stderr, and the hat's command never ran.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn without_a_subreaper_the_hat_is_not_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("ran");
+    let mut child = leader(&format!("touch {}", marker.display()));
+    let stdin = child.stdin.take();
+    let out = child.wait_with_output().unwrap();
+    drop(stdin);
+    assert_eq!(out.status.code(), Some(122), "{out:?}");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("Linux only"),
+        "{out:?}"
+    );
+    assert!(!marker.exists(), "the hat ran without a guard");
 }
