@@ -895,16 +895,31 @@ mod tests {
     fn ending_a_group_ends_what_it_started_in_other_groups() {
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("pid");
+        // A grandchild in a session of its own: `setsid` where it is (Linux),
+        // Python's `os.setsid` elsewhere (macOS has no `setsid` command).
+        let has = |program: &str, arg: &str| {
+            Command::new(program)
+                .arg(arg)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        let detached = if has("setsid", "true") {
+            format!("setsid sh -c 'echo $$ > {}; sleep 300'", marker.display())
+        } else if has("python3", "--version") {
+            format!(
+                "python3 -c 'import os, time; os.setsid(); open({:?}, \"w\").write(str(os.getpid())); time.sleep(300)'",
+                marker.display().to_string()
+            )
+        } else {
+            eprintln!("neither setsid nor python3 here; the group test has nothing to detach with");
+            return;
+        };
         let mut cmd = Command::new("sh");
-        cmd.args([
-            "-c",
-            &format!(
-                "setsid sh -c 'echo $$ > {}; sleep 300' & wait",
-                marker.display()
-            ),
-        ])
-        .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default());
+        cmd.args(["-c", &format!("{detached} & wait")])
+            .env_clear()
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
         let outcome = spawn_and_wait(cmd, Duration::from_millis(700), &Cancel::default(), |_| {});
         assert!(outcome.timed_out);
         let pid: i32 = fs::read_to_string(&marker)
