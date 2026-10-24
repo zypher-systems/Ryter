@@ -8,7 +8,7 @@
 //! walked by parent pid from the leader is whole at every moment, whatever a
 //! process does with its session (`setsid`), its group or its environment.
 //! On macOS it is `kqueue` process tracking (`EVFILT_PROC` with
-//! `NOTE_TRACK`): the kernel reports every fork in the leader's subtree and
+//! `NOTE_TRACK`, through the safe `kqueue` crate): the kernel reports every fork in the leader's subtree and
 //! follows the children, so every process the hat's tree ever had is known
 //! by pid, orphaned or not, and the hat's own process has to show up there
 //! before the hat is let run. Nothing can leave either guard. When the hat
@@ -212,42 +212,36 @@ impl Guard {
 }
 
 /// `kqueue` process tracking: this process is registered with `NOTE_TRACK`,
-/// so the kernel registers every child it forks, and theirs, with
-/// `NOTE_CHILD`, and reports each one's exit. `tracked` is every process of
+/// so the kernel registers every child it forks, and theirs, and reports
+/// each as `NOTE_CHILD` and later its exit. `tracked` is every process of
 /// the tree that has not exited; `broken` is set when the kernel could not
-/// follow a fork (`NOTE_TRACKERR`), after which the tree is not known.
+/// follow a fork (`NOTE_TRACKERR`), after which the tree is not known. The
+/// `kqueue` crate does the `kevent(2)` calls; this workspace has no `unsafe`.
 #[cfg(target_os = "macos")]
 struct Guard {
-    kq: std::os::fd::OwnedFd,
+    watcher: kqueue::Watcher,
     tracked: std::collections::HashSet<u32>,
     broken: bool,
 }
 
 #[cfg(target_os = "macos")]
 impl Guard {
-    /// `NOTE_CHILD`, which rustix leaves unnamed: the event is the child's,
-    /// made by the kernel for a tracked parent's fork.
-    const NOTE_CHILD: u32 = 0x0000_0004;
-
     fn arm() -> Result<Self, String> {
-        use rustix::event::kqueue::{
-            Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue,
-        };
-        let kq = kqueue().map_err(|e| format!("no kqueue: {e}"))?;
-        let me = Event::new(
-            EventFilter::Proc {
-                pid: rustix::process::getpid(),
-                flags: ProcessEvents::TRACK | ProcessEvents::EXIT,
-            },
-            EventFlags::ADD | EventFlags::ENABLE,
-            std::ptr::null_mut(),
-        );
-        let mut none: [std::mem::MaybeUninit<Event>; 1] = [std::mem::MaybeUninit::uninit()];
-        // SAFETY: a process filter refers to no file descriptor.
-        unsafe { kevent(&kq, &[me], &mut none[..], Some(Duration::ZERO)) }
+        use kqueue::{EventFilter, FilterFlag, Watcher};
+        let mut watcher = Watcher::new().map_err(|e| format!("no kqueue: {e}"))?;
+        let me = i32::try_from(std::process::id()).map_err(|e| e.to_string())?;
+        watcher
+            .add_pid(
+                me,
+                EventFilter::EVFILT_PROC,
+                FilterFlag::NOTE_TRACK | FilterFlag::NOTE_EXIT,
+            )
+            .map_err(|e| format!("process tracking refused: {e}"))?;
+        watcher
+            .watch()
             .map_err(|e| format!("process tracking refused: {e}"))?;
         Ok(Guard {
-            kq,
+            watcher,
             tracked: std::collections::HashSet::new(),
             broken: false,
         })
@@ -256,36 +250,26 @@ impl Guard {
     /// Take what the kernel has reported: the first wait is `timeout`, then
     /// everything already there.
     fn pump(&mut self, timeout: Duration) {
-        use rustix::event::kqueue::{Event, EventFilter, kevent};
+        use kqueue::{EventData, Ident, Proc};
         let mut wait = timeout;
-        loop {
-            let mut storage: [std::mem::MaybeUninit<Event>; 64] =
-                std::array::from_fn(|_| std::mem::MaybeUninit::uninit());
-            // SAFETY: nothing is added; the process filter refers to no fd.
-            let Ok((events, _)) = (unsafe { kevent(&self.kq, &[], &mut storage[..], Some(wait)) })
-            else {
-                return;
+        while let Some(event) = self.watcher.poll(Some(wait)) {
+            wait = Duration::ZERO;
+            let Ident::Pid(pid) = event.ident else {
+                continue;
             };
-            if events.is_empty() {
-                return;
-            }
-            for event in events.iter() {
-                let EventFilter::Proc { pid, flags } = event.filter() else {
-                    continue;
-                };
-                let pid = pid.as_raw_nonzero().get() as u32;
-                let bits = flags.bits();
-                if bits & rustix::event::kqueue::ProcessEvents::TRACKERR.bits() != 0 {
-                    self.broken = true;
-                }
-                if bits & Self::NOTE_CHILD != 0 {
+            let Ok(pid) = u32::try_from(pid) else {
+                continue;
+            };
+            match event.data {
+                EventData::Proc(Proc::Child(_)) => {
                     self.tracked.insert(pid);
                 }
-                if bits & rustix::event::kqueue::ProcessEvents::EXIT.bits() != 0 {
+                EventData::Proc(Proc::Exit(_)) => {
                     self.tracked.remove(&pid);
                 }
+                EventData::Proc(Proc::Trackerr) => self.broken = true,
+                _ => {}
             }
-            wait = Duration::ZERO;
         }
     }
 
