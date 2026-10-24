@@ -66,6 +66,11 @@ struct Cli {
     #[arg(long)]
     sandbox: Option<String>,
 
+    /// Don't remember this connection and model as the next run's route
+    /// (with `-p`; the bench runs its tasks this way).
+    #[arg(long)]
+    no_remember: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -396,7 +401,7 @@ fn main() -> ExitCode {
             output,
             list,
         }) {
-            Ok(stopped) => ExitCode::from(u8::from(stopped)),
+            Ok(ended_early) => ExitCode::from(u8::from(ended_early)),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(1)
@@ -484,7 +489,9 @@ async fn run_prompt(
         .ok_or_else(|| Error::Config(format!("unknown connection {conn_name}")))?;
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name))?;
     let provider = http_provider(conn, key);
-    let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
+    if !cli.no_remember {
+        let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
+    }
     let trusted = config::is_trusted(&cwd);
     // The hat asked for, read before a session is made: a hat that can't
     // be worn must not leave an empty session behind.
@@ -824,8 +831,30 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     let binary = ryter_bench::own_binary().map_err(Error::Io)?;
     let dir = args.output.unwrap_or_else(|| {
         let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
-        home.join("bench").join(ryter_bench::folder(&stamp, &seats))
+        ryter_bench::fresh_dir(&home.join("bench"), &ryter_bench::folder(&stamp, &seats))
     });
+    // Ctrl-C ends the run the way the panel's stop does: the task in
+    // progress is ended, with everything it started, and nothing more is
+    // paid for. The build hat runs in a group of its own, so the signal
+    // alone would end this process and leave it running.
+    let cancel = ryter_bench::Cancel::default();
+    {
+        let cancel = cancel.clone();
+        std::thread::spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            rt.block_on(async {
+                while tokio::signal::ctrl_c().await.is_ok() {
+                    eprintln!("\nryter bench: stopping after the task in progress is ended");
+                    cancel.cancel();
+                }
+            });
+        });
+    }
     let opts = ryter_bench::Options {
         binary,
         connection: seats[0].connection.clone(),
@@ -834,7 +863,7 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         timeout: std::time::Duration::from_secs(args.timeout),
         sandbox,
         dir,
-        cancel: ryter_bench::Cancel::default(),
+        cancel,
     };
     let on = match seats.as_slice() {
         [one] => format!("{} ({})", one.model, one.connection),
@@ -895,7 +924,10 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     println!();
     print!("{}", report.markdown());
     println!("{}", path.display());
-    Ok(report.stopped.is_some())
+    // 1 when anything did not go to its end: a model's run stopped (budget,
+    // an unpriced task, a hat that did not start), a cancel, or a report
+    // that could not be written. A script can tell a partial run from a whole one.
+    Ok(report.ended_early())
 }
 
 fn trust_cmd() -> ryter_core::Result<()> {

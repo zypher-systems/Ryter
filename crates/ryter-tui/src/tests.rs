@@ -4012,6 +4012,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         ],
         stopped: Some("cancelled before ts-debounce".into()),
         directory: PathBuf::from("/home/me/.ryter/bench/run"),
+        save_error: None,
     };
     let one = Comparison {
         date: "2026-10-23".into(),
@@ -4020,9 +4021,11 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         budget_usd: 2.5,
         timeout_seconds: 600,
         sandbox: "workspace".into(),
+        seats: 1,
         runs: vec![report.clone()],
         stopped: None,
         directory: PathBuf::from("/home/me/.ryter/bench/run"),
+        save_error: None,
     };
     panel::on_notice(&mut v, &Notice::BenchDone(Box::new(one.clone())));
     let shown = render_to_string(&v, 120, 40);
@@ -4083,6 +4086,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
     cheap.total_usd = 0.05;
     cheap.stopped = None;
     let two = Comparison {
+        seats: 2,
         runs: vec![cheap, report],
         directory: PathBuf::from("/home/me/.ryter/bench/cmp"),
         ..one

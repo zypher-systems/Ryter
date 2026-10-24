@@ -125,15 +125,23 @@ comparison, a line per model, most solved first then cheapest, and the tasks
 against the models: the way to pick the cheapest model with a clean sheet for
 a job. Either way each task runs in a fresh copy under the build hat as
 its own `ryter` process (`--json --hat build --always-approve`, the user's
-environment for its login, a per-task cap in the copy's `.ryter/config.toml`),
-and is scored by its hidden tests in the bare environment described below. The
-run goes to `~/.ryter/bench/<date-time>-<model>/`: `report.json`, `RESULTS.md`,
-and per task the prompt, the build hat's events and stderr; the project copies
-are removed once scored. The budget, the reserve and the per-task cap work as
-in the comparison runner; `--sandbox` is the build hat's (`workspace` on Linux
-unless the Ryter home is somewhere Landlock refuses to isolate, `off`
-elsewhere). The tool comparison stays here in `bench/compare.py`, since it
-depends on which other tools are installed and how each reports its cost.
+environment for its login, a per-task cap in the copy's `.ryter/config.toml`,
+`--no-remember` so the run leaves the user's default connection and last model
+alone), and is scored by its hidden tests in the bare environment described
+below, under the same sandbox as the build hat had: the tests import and build
+what the model wrote. The hidden tests travel in the binary deflated and
+masked, so the binary, which the sandbox lets a model read, does not show them
+to `grep`; a cover, not a secret. The run goes to
+`~/.ryter/bench/<date-time>-<model>/` (`-2`, `-3` when the minute's name is
+taken): `report.json`, `RESULTS.md`, and per task the prompt, the build hat's
+events and stderr; the project copies are removed once scored. The budget, the
+reserve and the per-task cap work as in the comparison runner; `--sandbox` is
+the build hat's (`workspace` on a Linux whose kernel has Landlock, `off`
+elsewhere). Ctrl-C, or quitting the TUI, ends the task in progress with
+everything it started and skips the rest; a task cut short is not scored. The
+command exits 1 whenever the run did not go to its end. The tool comparison
+stays here in `bench/compare.py`, since it depends on which other tools are
+installed and how each reports its cost.
 
 ## Comparing with other tools: tasks solved per dollar
 

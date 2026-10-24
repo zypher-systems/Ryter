@@ -103,6 +103,27 @@ test("maxWait with leading: the first call runs, then every maxWait, then the ta
   assert.deepEqual(runs, [[0, 0], [200, 150], [400, 350], [520, 420]]);
 });
 
+test("leading without trailing: a call maxWait promised still runs, and flush runs it now", () => {
+  const clock = new FakeClock();
+  const { runs, fn } = record(clock);
+  const d = debounce(fn, 100, { clock, leading: true, trailing: false, maxWait: 200 });
+  d(1);
+  clock.tick(50);
+  d(2);
+  assert.equal(d.pending(), true);
+  clock.tick(300);
+  assert.deepEqual(runs, [[0, 1], [200, 2]]);
+  assert.equal(d.pending(), false);
+  const t = throttle(fn, 100, { clock, trailing: false });
+  t(3);
+  clock.tick(30);
+  t(4);
+  assert.equal(t.pending(), true);
+  assert.equal(t.flush(), 40);
+  assert.equal(t.pending(), false);
+  assert.deepEqual(runs, [[0, 1], [200, 2], [350, 3], [380, 4]]);
+});
+
 test("flush runs the waiting call now and returns its result", () => {
   const clock = new FakeClock();
   const { runs, fn } = record(clock);

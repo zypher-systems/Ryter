@@ -30,6 +30,9 @@ pub struct Ctx {
     pub cancel: Arc<ryter_core::Cancel>,
     /// The `/benchmark` run going, to stop it.
     pub bench: Option<ryter_bench::Cancel>,
+    /// Its thread, waited for before the TUI quits: a paid build hat is
+    /// never left running with nobody watching it.
+    pub bench_thread: Option<std::thread::JoinHandle<()>>,
     /// `~/.ryter`.
     pub home: PathBuf,
     /// Project root.
@@ -1017,10 +1020,7 @@ fn start_bench(
         budget_usd,
         timeout: std::time::Duration::from_secs(600),
         sandbox,
-        dir: cx
-            .home
-            .join("bench")
-            .join(ryter_bench::folder(&stamp, &seats)),
+        dir: ryter_bench::fresh_dir(&cx.home.join("bench"), &ryter_bench::folder(&stamp, &seats)),
         cancel: cancel.clone(),
     };
     let on = match seats.as_slice() {
@@ -1038,13 +1038,13 @@ fn start_bench(
     view.bench_running = true;
     cx.bench = Some(cancel);
     let tx = cx.notice_tx.clone();
-    std::thread::spawn(move || {
+    cx.bench_thread = Some(std::thread::spawn(move || {
         let progress = tx.clone();
         let comparison = ryter_bench::run_models(&tasks, &seats, &opts, |p| {
             let _ = progress.send(Notice::Bench(p));
         });
         let _ = tx.send(Notice::BenchDone(Box::new(comparison)));
-    });
+    }));
 }
 
 /// One tiny request with a tool: catch a data policy, missing tools, or no

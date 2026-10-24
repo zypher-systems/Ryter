@@ -15,10 +15,10 @@ pub mod report;
 pub mod run;
 pub mod task;
 
-pub use compare::{Comparison, ModelRow, Seat, folder, run_models, slug};
+pub use compare::{Comparison, ModelRow, Seat, folder, model_folders, run_models, slug};
 pub use report::{Check, Report, Summary, TaskResult};
 pub use run::{
-    Cancel, Options, Progress, RESERVE_USD, allowance, check_binary, default_sandbox, own_binary,
-    run,
+    Cancel, Options, Progress, RESERVE_USD, allowance, check_binary, default_sandbox, fresh_dir,
+    own_binary, run,
 };
 pub use task::{File, Level, Task, select, tasks};

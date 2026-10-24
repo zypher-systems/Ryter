@@ -85,6 +85,9 @@ pub struct Report {
     pub stopped: Option<String>,
     /// Where the run's logs are.
     pub directory: PathBuf,
+    /// Why the report could not be written, when a save failed.
+    #[serde(skip)]
+    pub save_error: Option<String>,
 }
 
 /// The numbers a run is read by.
@@ -217,7 +220,15 @@ impl Report {
         if let Some(why) = &self.stopped {
             line.push_str(&format!("; stopped: {why}"));
         }
+        if let Some(e) = &self.save_error {
+            line.push_str(&format!("; the report could not be written: {e}"));
+        }
         line
+    }
+
+    /// Whether the run did not go to its end: stopped, or not saved.
+    pub fn ended_early(&self) -> bool {
+        self.stopped.is_some() || self.save_error.is_some()
     }
 }
 
@@ -277,6 +288,7 @@ mod tests {
             ],
             stopped: None,
             directory: PathBuf::from("/tmp/x"),
+            save_error: None,
         }
     }
 

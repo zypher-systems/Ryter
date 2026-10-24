@@ -409,6 +409,18 @@ pub fn apply(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result<(
     apply_on(profile, workspace, home, &Machine::here())
 }
 
+/// [`apply`] with more folders the thread may write: the bench scores a
+/// task's copy under the profile its build hat had, and its checks need
+/// their own Cargo home beside the copy.
+pub fn apply_with(
+    profile: SandboxProfile,
+    workspace: &Path,
+    home: &Path,
+    writable: &[PathBuf],
+) -> Result<()> {
+    apply_scoped(profile, workspace, home, &Machine::here(), writable)
+}
+
 /// [`apply`], on a machine described by hand.
 pub fn apply_on(
     profile: SandboxProfile,

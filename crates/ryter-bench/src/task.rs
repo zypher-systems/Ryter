@@ -50,8 +50,34 @@ impl FromStr for Level {
 pub struct File {
     /// Relative to the project.
     pub path: String,
+    /// As embedded: a hidden test's bytes are deflated and masked.
     pub bytes: &'static [u8],
     pub executable: bool,
+    /// Whether `bytes` must be unmasked first (a hidden test).
+    pub encoded: bool,
+}
+
+impl File {
+    /// The file as it is written out.
+    pub fn contents(&self) -> std::borrow::Cow<'static, [u8]> {
+        if self.encoded {
+            std::borrow::Cow::Owned(unmask(self.bytes))
+        } else {
+            std::borrow::Cow::Borrowed(self.bytes)
+        }
+    }
+}
+
+/// The mask `build.rs` put on a hidden test, off again.
+const MASK: u8 = 0x5A;
+
+/// A hidden test's bytes back from the binary's masked, deflated form.
+pub(crate) fn unmask(covered: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let deflated: Vec<u8> = covered.iter().map(|b| b ^ MASK).collect();
+    let mut out = Vec::new();
+    let _ = flate2::read::DeflateDecoder::new(deflated.as_slice()).read_to_end(&mut out);
+    out
 }
 
 /// One task: what it asks for, how it is checked, and the files it starts from.
@@ -132,12 +158,14 @@ fn parse(name: &str) -> Option<Task> {
                 path: p.to_string(),
                 bytes,
                 executable: *executable,
+                encoded: false,
             });
         } else if let Some(p) = rel.strip_prefix("hidden/") {
             hidden.push(File {
                 path: p.to_string(),
                 bytes,
                 executable: *executable,
+                encoded: true,
             });
         }
     }
@@ -197,7 +225,19 @@ mod tests {
         assert_eq!(select(&[], Some(Level::Standard)).len(), all.len() - 4);
         let t = select(&["ts-debounce".into()], None)[0];
         assert!(t.repo.iter().any(|f| f.path == "src/timing.ts"));
-        assert!(t.hidden.iter().any(|f| f.path == "test/hidden.test.ts"));
+        let hidden = t
+            .hidden
+            .iter()
+            .find(|f| f.path == "test/hidden.test.ts")
+            .expect("the hidden test");
+        assert!(
+            !String::from_utf8_lossy(hidden.bytes).contains("throttle"),
+            "the binary shows the hidden test"
+        );
+        assert!(
+            String::from_utf8_lossy(&hidden.contents()).contains("throttle: leading"),
+            "the hidden test comes back"
+        );
         assert!(
             !t.repo
                 .iter()

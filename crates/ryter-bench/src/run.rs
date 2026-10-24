@@ -20,14 +20,27 @@ use std::time::{Duration, Instant};
 use crate::report::{Check, Report, TaskResult};
 use crate::task::{File, Task};
 
-/// The sandbox a run defaults to: Landlock's `workspace` where it exists,
-/// `off` elsewhere.
+/// The sandbox a run defaults to: Landlock's `workspace` where the kernel
+/// has it, `off` elsewhere, including a Linux without Landlock.
 pub fn default_sandbox() -> &'static str {
-    if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") && ryter_core::sandbox::probe() == "available" {
         "workspace"
     } else {
         "off"
     }
+}
+
+/// `parent/name`, or the first of `name-2`, `name-3`… that does not exist
+/// yet: two runs started in the same minute keep their own folders.
+pub fn fresh_dir(parent: &Path, name: &str) -> PathBuf {
+    let first = parent.join(name);
+    if !first.exists() {
+        return first;
+    }
+    (2..)
+        .map(|n| parent.join(format!("{name}-{n}")))
+        .find(|p| !p.exists())
+        .expect("an unused folder name")
 }
 
 /// The `ryter` to run the tasks with: this process's own binary, as long as
@@ -153,6 +166,7 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
         results: Vec::new(),
         stopped: None,
         directory: opts.dir.clone(),
+        save_error: None,
     };
     let _ = fs::create_dir_all(&opts.dir);
     let total = tasks.len();
@@ -193,8 +207,14 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
         let broken = started && result.solved.is_none();
         let why = result.error.clone().unwrap_or_default();
         report.results.push(result.clone());
-        let _ = report.save(&opts.dir);
+        if let Err(e) = report.save(&opts.dir) {
+            report.save_error = Some(e.to_string());
+        }
         on(Progress::Finished(result));
+        if cancelled {
+            report.stopped = Some(format!("cancelled during {}", task.name));
+            break;
+        }
         if broken {
             report.stopped = Some(format!("{}: {why}", task.name));
             break;
@@ -206,15 +226,16 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
             ));
             break;
         }
-        if cancelled {
-            report.stopped = Some(format!("cancelled during {}", task.name));
-            break;
-        }
     }
     if let Some(why) = &report.stopped {
         on(Progress::Stopped { why: why.clone() });
     }
-    let _ = report.save(&opts.dir);
+    // The last save is the one that counts: a report that could not be
+    // written is said so, not announced as a file.
+    match report.save(&opts.dir) {
+        Ok(_) => report.save_error = None,
+        Err(e) => report.save_error = Some(e.to_string()),
+    }
     report
 }
 
@@ -280,6 +301,7 @@ fn execute(
         "--hat",
         "build",
         "--always-approve",
+        "--no-remember",
         "--sandbox",
         &opts.sandbox,
     ])
@@ -355,7 +377,13 @@ fn execute(
         result.error = Some(why);
         return result;
     }
-    if result.calls == 0 && outcome.status != Some(0) && !outcome.timed_out && !outcome.cancelled {
+    if outcome.cancelled {
+        // Cut short by the user: nothing to score, and no hidden test is
+        // dropped into a tree a tool may still be writing.
+        result.error = Some("cancelled".into());
+        return result;
+    }
+    if result.calls == 0 && outcome.status != Some(0) && !outcome.timed_out {
         // Nothing was asked of the model: the build hat refused to start.
         result.error = Some(format!(
             "ryter did not start: {}",
@@ -367,28 +395,118 @@ fn execute(
         ));
         return result;
     }
-    // The files the model left changed, then the hidden tests, copied in only now.
-    let status = sh(&project, "git status --porcelain", &env, CHECK_TIMEOUT);
-    result.changed = status
-        .output
-        .lines()
-        .filter(|l| l.len() > 3)
-        .map(|l| l[3..].to_string())
-        .filter(|p| !p.starts_with(".ryter/") && !p.contains("__pycache__"))
-        .collect();
     on(Progress::Scoring { name: name.clone() });
-    if let Err(e) = materialize(&task.hidden, &project) {
-        result.error = Some(format!("could not copy the hidden tests: {e}"));
-        return result;
+    // The files the model left changed, then the hidden tests, copied in
+    // only now and run under the sandbox the build hat had: they import
+    // and build what the model wrote.
+    match score(task, &project, &home, &opts.sandbox, &env) {
+        Ok((changed, acceptance)) => {
+            result.changed = changed;
+            result.acceptance = acceptance;
+            result.solved = Some(
+                !result.acceptance.is_empty()
+                    && result.acceptance.iter().all(|c| c.exit == Some(0)),
+            );
+        }
+        Err(why) => result.error = Some(why),
     }
-    result.acceptance = task
-        .accept
-        .iter()
-        .map(|c| sh(&project, c, &env, CHECK_TIMEOUT))
-        .collect();
-    result.solved =
-        Some(!result.acceptance.is_empty() && result.acceptance.iter().all(|c| c.exit == Some(0)));
     result
+}
+
+/// The scoring, on a thread of its own so the sandbox binds it and what
+/// it starts, and nothing else: the files changed, then the hidden tests.
+fn score(
+    task: &Task,
+    project: &Path,
+    home: &Path,
+    sandbox: &str,
+    env: &HashMap<String, String>,
+) -> Result<(Vec<String>, Vec<Check>), String> {
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            if sandbox != "off" {
+                let profile = sandbox
+                    .parse::<ryter_core::sandbox::SandboxProfile>()
+                    .map_err(|e| format!("could not sandbox the scoring: {e}"))?;
+                ryter_core::sandbox::apply_with(
+                    profile,
+                    project,
+                    &ryter_core::config::home_dir(),
+                    &[home.to_path_buf()],
+                )
+                .map_err(|e| format!("could not sandbox the scoring: {e}"))?;
+            }
+            let status = sh(project, "git status --porcelain", env, CHECK_TIMEOUT);
+            let changed = status
+                .output
+                .lines()
+                .filter(|l| l.len() > 3)
+                .map(|l| l[3..].to_string())
+                .filter(|p| !p.starts_with(".ryter/") && !p.contains("__pycache__"))
+                .collect();
+            materialize_hidden(&task.hidden, project)?;
+            let acceptance = task
+                .accept
+                .iter()
+                .map(|c| sh(project, c, env, CHECK_TIMEOUT))
+                .collect();
+            Ok((changed, acceptance))
+        })
+        .join()
+        .map_err(|_| "the scoring thread panicked".to_string())?
+    })
+}
+
+/// The hidden tests into a tree the model has had: through no link of
+/// its making, over no file of its making. A link where a test or one of
+/// its folders should be is a tampered tree, and the task is not scored.
+fn materialize_hidden(files: &[File], project: &Path) -> Result<(), String> {
+    for file in files {
+        let rel = Path::new(&file.path);
+        let mut here = project.to_path_buf();
+        for part in rel.components() {
+            here.push(part);
+            if here
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+            {
+                return Err(format!(
+                    "could not copy the hidden tests: {} is a link",
+                    here.strip_prefix(project).unwrap_or(&here).display()
+                ));
+            }
+        }
+        let path = project.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("could not copy the hidden tests: {e}"))?;
+        }
+        match path.symlink_metadata() {
+            Ok(m) if m.is_dir() => {
+                return Err(format!(
+                    "could not copy the hidden tests: {} is a folder",
+                    file.path
+                ));
+            }
+            Ok(_) => fs::remove_file(&path)
+                .map_err(|e| format!("could not copy the hidden tests: {e}"))?,
+            Err(_) => {}
+        }
+        let bytes = file.contents();
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .and_then(|mut f| f.write_all(&bytes))
+            .map_err(|e| format!("could not copy the hidden tests: {e}"))?;
+        #[cfg(unix)]
+        if file.executable {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+                .map_err(|e| format!("could not copy the hidden tests: {e}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// The fresh copy: the project, its baseline commit, the run file with the
@@ -466,7 +584,7 @@ fn materialize(files: &[File], dir: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&path, file.bytes)?;
+        fs::write(&path, file.contents())?;
         #[cfg(unix)]
         if file.executable {
             use std::os::unix::fs::PermissionsExt;
@@ -635,23 +753,66 @@ fn spawn_and_wait(
     }
 }
 
-/// End a process that ran out of time, and everything it started.
+/// End a process that ran out of time, and everything it started: its own
+/// group, then every descendant, since a shell tool runs in a group of its
+/// own and a killed hat cannot end it.
 fn end_group(child: &mut Child) {
     #[cfg(unix)]
     {
+        // Listed before the hat dies: once it has, its children are
+        // nobody's and the tree is gone.
+        let others = descendants(child.id());
         let group = rustix::process::Pid::from_child(child);
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
         let deadline = Instant::now() + Duration::from_secs(10);
+        let mut reaped = false;
         while Instant::now() < deadline {
             if let Ok(Some(_)) = child.try_wait() {
-                return;
+                reaped = true;
+                break;
             }
             std::thread::sleep(Duration::from_millis(100));
         }
-        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        if !reaped {
+            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+        }
+        for pid in others.into_iter().chain(descendants(child.id())) {
+            if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
+                let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+            }
+        }
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Every process under `root`, by `ps`: the same on Linux and macOS.
+#[cfg(unix)]
+fn descendants(root: u32) -> Vec<u32> {
+    let Ok(out) = Command::new("ps").args(["-eo", "pid=,ppid="]).output() else {
+        return Vec::new();
+    };
+    let pairs: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut found = vec![root];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        for (pid, ppid) in &pairs {
+            if *ppid == parent && !found.contains(pid) {
+                found.push(*pid);
+            }
+        }
+        i += 1;
+    }
+    found.remove(0);
+    found
 }
 
 #[cfg(test)]
@@ -671,6 +832,98 @@ mod tests {
         std::fs::write(&here, b"").unwrap();
         assert_eq!(check_binary(&here), Ok(()));
         assert!(own_binary().is_ok());
+    }
+
+    #[test]
+    fn a_fresh_dir_is_numbered_past_one_that_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(fresh_dir(dir.path(), "run"), dir.path().join("run"));
+        fs::create_dir(dir.path().join("run")).unwrap();
+        assert_eq!(fresh_dir(dir.path(), "run"), dir.path().join("run-2"));
+        fs::create_dir(dir.path().join("run-2")).unwrap();
+        assert_eq!(fresh_dir(dir.path(), "run"), dir.path().join("run-3"));
+        assert!(["workspace", "off"].contains(&default_sandbox()));
+    }
+
+    /// A tree the model left a link in gets no hidden test through it:
+    /// the link's target is untouched and the task is not scored.
+    #[cfg(unix)]
+    #[test]
+    fn hidden_tests_go_through_no_link_and_over_no_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("project");
+        let outside = dir.path().join("outside.txt");
+        fs::create_dir_all(project.join("tests")).unwrap();
+        fs::write(&outside, "mine").unwrap();
+        let files = [File {
+            path: "tests/hidden.rs".into(),
+            bytes: b"fn t() {}\n",
+            executable: false,
+            encoded: false,
+        }];
+        // The file itself a link.
+        std::os::unix::fs::symlink(&outside, project.join("tests/hidden.rs")).unwrap();
+        let why = materialize_hidden(&files, &project).unwrap_err();
+        assert!(why.contains("tests/hidden.rs is a link"), "{why}");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "mine");
+        // Its folder a link.
+        fs::remove_file(project.join("tests/hidden.rs")).unwrap();
+        fs::remove_dir(project.join("tests")).unwrap();
+        std::os::unix::fs::symlink(dir.path(), project.join("tests")).unwrap();
+        let why = materialize_hidden(&files, &project).unwrap_err();
+        assert!(why.contains("tests is a link"), "{why}");
+        assert!(!dir.path().join("hidden.rs").exists());
+        // A plain file of the model's in the way is replaced; a folder is not.
+        fs::remove_file(project.join("tests")).unwrap();
+        fs::create_dir_all(project.join("tests")).unwrap();
+        fs::write(project.join("tests/hidden.rs"), "theirs").unwrap();
+        materialize_hidden(&files, &project).unwrap();
+        assert_eq!(
+            fs::read_to_string(project.join("tests/hidden.rs")).unwrap(),
+            "fn t() {}\n"
+        );
+        fs::remove_file(project.join("tests/hidden.rs")).unwrap();
+        fs::create_dir(project.join("tests/hidden.rs")).unwrap();
+        let why = materialize_hidden(&files, &project).unwrap_err();
+        assert!(why.contains("is a folder"), "{why}");
+    }
+
+    /// A command that leaves a child in a group of its own still ends with
+    /// its group: the descendants are listed before the kill and ended after.
+    #[cfg(unix)]
+    #[test]
+    fn ending_a_group_ends_what_it_started_in_other_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("pid");
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            &format!(
+                "setsid sh -c 'echo $$ > {}; sleep 300' & wait",
+                marker.display()
+            ),
+        ])
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+        let outcome = spawn_and_wait(cmd, Duration::from_millis(700), &Cancel::default(), |_| {});
+        assert!(outcome.timed_out);
+        let pid: i32 = fs::read_to_string(&marker)
+            .unwrap_or_default()
+            .trim()
+            .parse()
+            .expect("the grandchild wrote its pid");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let alive = |pid: i32| {
+            Path::new(&format!("/proc/{pid}")).exists()
+                || Command::new("kill")
+                    .args(["-0", &pid.to_string()])
+                    .status()
+                    .is_ok_and(|s| s.success())
+        };
+        while Instant::now() < deadline && alive(pid) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!alive(pid), "the sleep in its own session survived");
     }
 
     #[test]
@@ -736,6 +989,7 @@ mod tests {
             path: "tools/go".into(),
             bytes: b"#!/bin/sh\n",
             executable: true,
+            encoded: false,
         }];
         materialize(&files, dir.path()).unwrap();
         #[cfg(unix)]

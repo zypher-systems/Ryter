@@ -46,10 +46,17 @@ pub struct Comparison {
     pub budget_usd: f64,
     pub timeout_seconds: u64,
     pub sandbox: String,
+    /// How many models were to run; `runs` is short of it when the
+    /// comparison stopped early.
+    #[serde(default)]
+    pub seats: usize,
     /// One per model, in the order run; a model not reached has no run.
     pub runs: Vec<Report>,
     /// Why the comparison ended before its last model.
     pub stopped: Option<String>,
+    /// Why the comparison could not be written, when a save failed.
+    #[serde(skip)]
+    pub save_error: Option<String>,
     /// Where the runs are: one folder per model under it, or the one run's
     /// own folder when there was one model.
     pub directory: PathBuf,
@@ -66,12 +73,21 @@ pub struct ModelRow {
 }
 
 impl Comparison {
-    /// The one run, when one model was compared with nobody.
+    /// The one run, when one model was compared with nobody. Several
+    /// models of which one ran before a cancel are still a comparison.
     pub fn single(&self) -> Option<&Report> {
         match self.runs.as_slice() {
-            [one] => Some(one),
+            [one] if self.seats <= 1 => Some(one),
             _ => None,
         }
+    }
+
+    /// Whether anything did not go to its end: the comparison stopped, a
+    /// model's run stopped, or a report could not be written.
+    pub fn ended_early(&self) -> bool {
+        self.stopped.is_some()
+            || self.save_error.is_some()
+            || self.runs.iter().any(Report::ended_early)
     }
 
     /// The tasks every run covers, in the first run's order.
@@ -241,19 +257,27 @@ impl Comparison {
         if let Some(why) = &self.stopped {
             parts.push(format!("stopped: {why}"));
         }
+        if let Some(e) = &self.save_error {
+            parts.push(format!("the comparison could not be written: {e}"));
+        }
+        let models = if self.runs.len() == self.seats.max(1) {
+            format!("{} models", self.runs.len())
+        } else {
+            format!("{} of {} models", self.runs.len(), self.seats)
+        };
         format!(
-            "{} models on {tasks} task{}: {}",
-            self.runs.len(),
+            "{models} on {tasks} task{}: {}",
             if tasks == 1 { "" } else { "s" },
             parts.join(" · ")
         )
     }
 
     /// Write `compare.json` and `RESULTS.md` into `dir`; returns the
-    /// table's path. One model's comparison is its report, saved already.
+    /// table's path. One model's comparison is its report, saved in its
+    /// own folder.
     pub fn save(&self, dir: &Path) -> std::io::Result<PathBuf> {
         if let Some(one) = self.single() {
-            return Ok(one.directory.join("RESULTS.md"));
+            return one.save(&one.directory);
         }
         std::fs::create_dir_all(dir)?;
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
@@ -295,6 +319,31 @@ pub fn folder(stamp: &str, seats: &[Seat]) -> String {
     }
 }
 
+/// A folder name per seat, all different: the model's slug; the
+/// connection's in front where two slugs meet (`a/b` and `a-b`, or one
+/// model on two connections); a number after where they still do.
+pub fn model_folders(seats: &[Seat]) -> Vec<String> {
+    let slugs: Vec<String> = seats.iter().map(|s| slug(&s.model)).collect();
+    let mut names: Vec<String> = (0..seats.len())
+        .map(|i| {
+            if slugs.iter().filter(|n| **n == slugs[i]).count() > 1 {
+                format!("{}-{}", slug(&seats[i].connection), slugs[i])
+            } else {
+                slugs[i].clone()
+            }
+        })
+        .collect();
+    for i in 0..names.len() {
+        let base = names[i].clone();
+        let mut n = 2;
+        while names[..i].contains(&names[i]) {
+            names[i] = format!("{base}-{n}");
+            n += 1;
+        }
+    }
+    names
+}
+
 /// Every seat on the same tasks, in turn, each under `opts.budget_usd` of
 /// its own; `opts.connection` and `opts.model` are the seat's, `opts.dir`
 /// the comparison's, with a folder per model under it when there are
@@ -319,11 +368,14 @@ pub fn run_models(
         budget_usd: opts.budget_usd,
         timeout_seconds: opts.timeout.as_secs(),
         sandbox: opts.sandbox.clone(),
+        seats: seats.len(),
         runs: Vec::new(),
         stopped: None,
         directory: opts.dir.clone(),
+        save_error: None,
     };
     let total = seats.len();
+    let folders = model_folders(seats);
     for (index, seat) in seats.iter().enumerate() {
         if opts.cancel.is_cancelled() {
             comparison.stopped = Some(format!("cancelled before {}", seat.model));
@@ -333,11 +385,7 @@ pub fn run_models(
         own.connection = seat.connection.clone();
         own.model = seat.model.clone();
         if total > 1 {
-            let mut name = slug(&seat.model);
-            if seats.iter().filter(|s| s.model == seat.model).count() > 1 {
-                name = format!("{}-{name}", slug(&seat.connection));
-            }
-            own.dir = opts.dir.join(name);
+            own.dir = opts.dir.join(&folders[index]);
         }
         on(Progress::Model {
             connection: seat.connection.clone(),
@@ -347,12 +395,17 @@ pub fn run_models(
         });
         let report = run(tasks, &own, &mut on);
         comparison.runs.push(report);
-        let _ = comparison.save(&opts.dir);
+        if let Err(e) = comparison.save(&opts.dir) {
+            comparison.save_error = Some(e.to_string());
+        }
     }
     if let Some(why) = &comparison.stopped {
         on(Progress::Stopped { why: why.clone() });
     }
-    let _ = comparison.save(&opts.dir);
+    match comparison.save(&opts.dir) {
+        Ok(_) => comparison.save_error = None,
+        Err(e) => comparison.save_error = Some(e.to_string()),
+    }
     comparison
 }
 
@@ -397,6 +450,7 @@ mod tests {
             results,
             stopped: None,
             directory: PathBuf::from("/tmp/x"),
+            save_error: None,
         }
     }
 
@@ -408,6 +462,7 @@ mod tests {
             budget_usd: 5.0,
             timeout_seconds: 600,
             sandbox: "workspace".into(),
+            seats: 2,
             runs: vec![
                 report(
                     "openrouter",
@@ -428,6 +483,7 @@ mod tests {
             ],
             stopped: None,
             directory: PathBuf::from("/tmp/cmp"),
+            save_error: None,
         }
     }
 
@@ -475,6 +531,7 @@ mod tests {
     #[test]
     fn one_model_is_its_report() {
         let mut c = two();
+        c.seats = 1;
         c.runs.truncate(1);
         assert_eq!(c.markdown(), c.runs[0].markdown());
         assert_eq!(c.headline(), c.runs[0].headline());
@@ -492,6 +549,55 @@ mod tests {
             folder("2026-10-23-13-21", &[a, b]),
             "2026-10-23-13-21-compare"
         );
+    }
+
+    #[test]
+    fn one_model_of_two_after_a_cancel_is_still_a_comparison() {
+        let mut c = two();
+        c.runs.truncate(1);
+        c.stopped = Some("cancelled before claude-sonnet-5-5".into());
+        assert!(c.single().is_none());
+        assert!(c.ended_early());
+        let line = c.headline();
+        assert!(
+            line.starts_with("1 of 2 models on")
+                && line.ends_with("stopped: cancelled before claude-sonnet-5-5"),
+            "{line}"
+        );
+        assert!(c.markdown().contains("| Model |"), "the table is written");
+        let dir = tempfile::tempdir().unwrap();
+        c.save(dir.path()).unwrap();
+        assert!(
+            dir.path().join("compare.json").is_file() && dir.path().join("RESULTS.md").is_file()
+        );
+        let mut one = two();
+        one.seats = 1;
+        one.runs.truncate(1);
+        assert!(one.single().is_some());
+        assert_eq!(one.headline(), one.runs[0].headline());
+    }
+
+    #[test]
+    fn model_folders_never_meet() {
+        let seats = [
+            Seat::new("openrouter", "a/b"),
+            Seat::new("openrouter", "a-b"),
+            Seat::new("anthropic", "claude"),
+            Seat::new("openrouter", "claude"),
+            Seat::new("openrouter-", "a-b"),
+        ];
+        let names = model_folders(&seats);
+        assert_eq!(
+            names,
+            [
+                "openrouter-a-b",
+                "openrouter-a-b-2",
+                "anthropic-claude",
+                "openrouter-claude",
+                "openrouter-a-b-3"
+            ]
+        );
+        assert_eq!(model_folders(&seats[2..3]), ["claude"]);
     }
 
     #[test]

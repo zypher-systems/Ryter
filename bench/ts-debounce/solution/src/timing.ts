@@ -61,10 +61,14 @@ export function debounce<A extends unknown[], R>(
     return maxWait === undefined ? left : Math.min(left, maxWait - sinceInvoke);
   };
 
+  // A call waits only for a run that will happen: the trailing edge, or
+  // the maxWait deadline, which is a promise whether or not anything trails.
+  const waiting = (): boolean => lastArgs !== undefined && (trailing || maxWait !== undefined);
+
   const trailingEdge = (time: number): R | undefined => {
     if (timer !== undefined) clock.clearTimeout(timer);
     timer = undefined;
-    if (trailing && lastArgs !== undefined) return invoke(time);
+    if (waiting()) return invoke(time);
     lastArgs = undefined;
     return result;
   };
@@ -72,6 +76,13 @@ export function debounce<A extends unknown[], R>(
   const timerExpired = (): void => {
     const time = clock.now();
     if (shouldInvoke(time)) {
+      // The burst is over, but with nothing trailing a call that maxWait
+      // promised a run still waits for its deadline.
+      const sinceInvoke = time - lastInvokeTime;
+      if (!trailing && maxWait !== undefined && lastArgs !== undefined && sinceInvoke < maxWait) {
+        timer = clock.setTimeout(timerExpired, maxWait - sinceInvoke);
+        return;
+      }
       timer = undefined;
       trailingEdge(time);
       return;
@@ -115,8 +126,7 @@ export function debounce<A extends unknown[], R>(
     lastInvokeTime = 0;
   };
   debounced.flush = () => (timer === undefined ? result : trailingEdge(clock.now()));
-  // A call waits only if something will run it: the trailing edge, or maxWait.
-  debounced.pending = () => timer !== undefined && lastArgs !== undefined && (trailing || maxWait !== undefined);
+  debounced.pending = () => timer !== undefined && waiting();
   return debounced;
 }
 

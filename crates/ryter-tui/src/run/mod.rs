@@ -422,6 +422,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
         notice_tx,
         cancel,
         bench: None,
+        bench_thread: None,
         home: home.clone(),
         workspace: cwd,
         trusted,
@@ -701,6 +702,7 @@ fn loop_ui(
                 // panel is still open.
                 view.bench_running = false;
                 cx.bench = None;
+                cx.bench_thread = None;
                 view.system(format!(
                     "benchmark done · {} · the table is in {}",
                     report.headline(),
@@ -736,7 +738,10 @@ fn loop_ui(
             }
         }
         if cx.want_quit {
-            return Ok(());
+            if may_quit(view, cx) {
+                return Ok(());
+            }
+            dirty = true;
         }
         if let Some(path) = cx.want_edit.take() {
             edit_with_editor(terminal, view, mouse, &path);
@@ -830,7 +835,7 @@ fn loop_ui(
                 Event::FocusGained | Event::FocusLost => Action::None,
             };
             actions::perform(view, cx, action);
-            if cx.want_quit {
+            if cx.want_quit && may_quit(view, cx) {
                 return Ok(());
             }
             if !event::poll(Duration::ZERO).map_err(io_err)? {
@@ -838,6 +843,27 @@ fn loop_ui(
             }
         }
     }
+}
+
+/// Whether a wanted quit may happen now. A benchmark run going is stopped
+/// first and waited for: its build hat is a paid process in a group of its
+/// own, which a quit alone would leave running, and its copy stays trusted
+/// until the run cleans up. The first ask cancels the run and says so; the
+/// loop keeps drawing until the run's thread is done.
+fn may_quit(view: &mut View, cx: &mut Ctx) -> bool {
+    let bench_going = cx.bench_thread.as_ref().is_some_and(|h| !h.is_finished());
+    if !bench_going {
+        return true;
+    }
+    if let Some(cancel) = &cx.bench {
+        if !cancel.is_cancelled() {
+            cancel.cancel();
+            view.system(
+                "quitting once the benchmark run has stopped: its task in progress is being ended",
+            );
+        }
+    }
+    false
 }
 
 /// Apply the agent's events that have arrived, stopping after a tool's

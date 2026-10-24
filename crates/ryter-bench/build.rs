@@ -1,9 +1,17 @@
 //! Embeds the bench's fixtures: each task's `task.toml`, its project
 //! (`repo/`) and its hidden tests (`hidden/`). The reference solutions are
-//! never embedded; the binary carries nothing a model could look up.
+//! never embedded. The hidden tests are deflated and masked before they go
+//! in, so the binary, which the sandbox lets a model read, does not show
+//! them to `grep -a` or `strings`; the runner unmasks them when it scores.
+//! That is a cover, not a secret: a model that knew the format could still
+//! undo it, and the brief gives it no reason to look.
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+/// The mask the runner takes off again (`task::unmask`).
+const MASK: u8 = 0x5A;
 
 const SKIP: &[&str] = &[
     "__pycache__",
@@ -52,6 +60,7 @@ fn main() {
         .canonicalize()
         .expect("the bench directory");
     println!("cargo:rerun-if-changed={}", bench.display());
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR"));
     let mut code = format!(
         "pub static SCOPE: &str = include_str!({:?});\n",
         bench.join("scope.txt").display().to_string()
@@ -76,15 +85,31 @@ fn main() {
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
+            let source = if rel.starts_with("hidden/") {
+                masked(&file, &out_dir.join("hidden").join(&name).join(&rel))
+            } else {
+                file.clone()
+            };
             code.push_str(&format!(
                 "    ({:?}, include_bytes!({:?}), {}),\n",
                 format!("{name}/{rel}"),
-                file.display().to_string(),
+                source.display().to_string(),
                 executable(&file)
             ));
         }
     }
     code.push_str("];\n");
-    let out = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR")).join("fixtures.rs");
-    fs::write(out, code).expect("write fixtures.rs");
+    fs::write(out_dir.join("fixtures.rs"), code).expect("write fixtures.rs");
+}
+
+/// `file` deflated and masked, written under `OUT_DIR`; its path.
+fn masked(file: &Path, into: &Path) -> PathBuf {
+    let bytes = fs::read(file).expect("read a hidden test");
+    let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder.write_all(&bytes).expect("deflate a hidden test");
+    let deflated = encoder.finish().expect("deflate a hidden test");
+    let covered: Vec<u8> = deflated.iter().map(|b| b ^ MASK).collect();
+    fs::create_dir_all(into.parent().expect("a parent")).expect("OUT_DIR/hidden");
+    fs::write(into, covered).expect("write a masked hidden test");
+    into.to_path_buf()
 }

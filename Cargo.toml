@@ -24,7 +24,7 @@ toml = "0.8"
 dirs = "6"
 keyring = { version = "3", default-features = false, features = ["linux-native", "apple-native"] }
 tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "time", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "time", "sync", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking"] }
 futures-util = "0.3"
 async-trait = "0.1"
