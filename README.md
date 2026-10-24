@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat: the conversation holds the request, the diff of app/server.js and the new test file, and the reply with its cost; the rail at the right has the four hats with their models and spend, the plan on record, the context ring, the spend per hat and the two uncommitted files.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.38.0. Apache-2.0.
+Linux first. The current release is 0.39.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.38.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.38.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox, which is Linux-only.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.39.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox and the bench, which are Linux-only.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
@@ -82,6 +82,8 @@ The same ten on `mistralai/mistral-large-4-0` through OpenRouter, every cost wha
 | OpenCode | 9/10 | $0.52 | $0.06 |
 
 All three failed the same task the same way, which is the model's doing. The runs, how they were made and what they do not show are in [`docs/bench/`](docs/bench/README.md); `bench/compare.py` makes another with the tools you have installed.
+
+Run it yourself on Linux: `/benchmark` in the TUI, or `ryter bench --level hard --budget 5` from a shell, runs the same tasks on your model and key and writes the table under `~/.ryter/bench/`; `bench/compare.py` in this repository runs them through the other tools too.
 
 ## CLI
 

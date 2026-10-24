@@ -2,14 +2,14 @@
   New session                                               ● Idle · asks first
   0.2.0-patch
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
-     Commands                                                       4 of 31
+     Commands                                                       5 of 32
      mo
     ›/models         Choose models: one for every hat, or one each for … ▸
      /permissions    Durable allow/ask/deny bash rules from the TUI      ▸
+     /benchmark      Run the bench's tasks on a model and see tasks sol… ▸
      /tools          Tool permission mode for this session               ▸
      ↑↓ move  enter run  esc close
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
-
     / commands
 
 

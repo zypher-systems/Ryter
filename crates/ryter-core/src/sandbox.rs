@@ -201,6 +201,26 @@ pub fn probe() -> String {
     }
 }
 
+/// Whether this kernel's Landlock keeps a sandboxed process from signalling
+/// processes outside its sandbox (ABI 6, Linux 6.12). Where it does not, a
+/// sandboxed command can still end a process of the user's, Ryter included.
+pub fn signal_scoping() -> bool {
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use landlock::{CompatLevel, Compatible, Ruleset, RulesetAttr, Scope};
+        // As `probe_linux` asks for the first version: a hard requirement
+        // the running kernel cannot meet is refused here, before any rule.
+        Ruleset::default()
+            .set_compatibility(CompatLevel::HardRequirement)
+            .scope(Scope::Signal)
+            .is_ok()
+    }
+}
+
 thread_local! {
     static ACTIVE: std::cell::Cell<SandboxProfile> = const { std::cell::Cell::new(SandboxProfile::Off) };
 }
@@ -409,6 +429,18 @@ pub fn apply(profile: SandboxProfile, workspace: &Path, home: &Path) -> Result<(
     apply_on(profile, workspace, home, &Machine::here())
 }
 
+/// [`apply`] with more folders the thread may write: the bench scores a
+/// task's copy under the profile its build hat had, and its checks need
+/// their own Cargo home beside the copy.
+pub fn apply_with(
+    profile: SandboxProfile,
+    workspace: &Path,
+    home: &Path,
+    writable: &[PathBuf],
+) -> Result<()> {
+    apply_scoped(profile, workspace, home, &Machine::here(), writable)
+}
+
 /// [`apply`], on a machine described by hand.
 pub fn apply_on(
     profile: SandboxProfile,
@@ -469,7 +501,7 @@ fn apply_linux(
 ) -> Result<()> {
     use landlock::{
         ABI, Access, AccessFs, CompatLevel, Compatible, Ruleset, RulesetAttr, RulesetCreatedAttr,
-        RulesetStatus, path_beneath_rules,
+        RulesetStatus, Scope, path_beneath_rules,
     };
 
     let abi = ABI::V1;
@@ -490,6 +522,16 @@ fn apply_linux(
         })?
         .set_compatibility(CompatLevel::BestEffort)
         .handle_access(AccessFs::Refer)
+        .map_err(|e| {
+            Error::Config(format!(
+                "sandbox {profile} requested but Landlock is unavailable: {e}"
+            ))
+        })?
+        // A sandboxed process may signal only processes in its own sandbox:
+        // what it started, not Ryter, not the user's other processes, and
+        // not the bench's guard. Linux 6.12 and later (`Scope`, ABI 6);
+        // an older kernel keeps the rest and `signal_scoping()` says so.
+        .scope(Scope::Signal)
         .map_err(|e| {
             Error::Config(format!(
                 "sandbox {profile} requested but Landlock is unavailable: {e}"

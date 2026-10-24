@@ -311,8 +311,9 @@ fn the_provider_panel_offers_web_search() {
 
 #[test]
 fn snapshot_every_panel() {
-    let panels: [(&str, PanelId); 17] = [
+    let panels: [(&str, PanelId); 18] = [
         ("providers", PanelId::Providers),
+        ("benchmark", PanelId::Benchmark),
         ("models", PanelId::Models),
         ("sessions", PanelId::Sessions(SessionsMode::Browse)),
         ("spend", PanelId::Spend),
@@ -3866,6 +3867,252 @@ fn a_change_put_back_without_a_model_does_not_promise_undo() {
         .map(|m| m.body.clone())
         .unwrap_or_default();
     assert_eq!(last, "put back config.rs · /undo brings it back");
+}
+
+/// `/benchmark`: the form starts on the build hat's seat, Enter on the start
+/// row asks for the run, the panel follows the run's notices task by task,
+/// and the finished report is shown with its table's path.
+#[test]
+fn the_benchmark_panel_starts_a_run_and_follows_it() {
+    use crate::panel::Notice;
+    use ryter_bench::{Comparison, Level, Progress, Report, Seat, TaskResult};
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    let mut v = with_panel(PanelId::Benchmark);
+    let shown = render_to_string(&v, 120, 40);
+    for word in [
+        "connection",
+        "spacexsi",
+        "model",
+        "grok-4.6",
+        "tasks",
+        "standard",
+        "budget usd",
+        "5.0",
+        "sandbox",
+        "start the run",
+    ] {
+        assert!(shown.contains(word), "{word}: {shown}");
+    }
+    // tasks → hard; budget → 2.5; then start.
+    press(&mut v, KeyCode::Down);
+    press(&mut v, KeyCode::Down);
+    press(&mut v, KeyCode::Right);
+    press(&mut v, KeyCode::Down);
+    for _ in 0..5 {
+        press(&mut v, KeyCode::Left);
+    }
+    // sandbox → off; then start.
+    press(&mut v, KeyCode::Down);
+    press(&mut v, KeyCode::Right);
+    press(&mut v, KeyCode::Down);
+    let act = press(&mut v, KeyCode::Enter);
+    assert_eq!(
+        act,
+        Action::StartBench {
+            seats: vec![Seat::new("spacexsi", "grok-4.6")],
+            level: Some(Level::Hard),
+            budget_usd: 2.5,
+            sandbox: "off".into(),
+        }
+    );
+    // The run, as its notices arrive.
+    let started = |name: &str, index: usize| {
+        Notice::Bench(Progress::Started {
+            name: name.into(),
+            index,
+            total: 4,
+            cap_usd: 2.4,
+        })
+    };
+    panel::on_notice(&mut v, &started("expr-precedence", 0));
+    panel::on_notice(
+        &mut v,
+        &Notice::Bench(Progress::Activity {
+            name: "expr-precedence".into(),
+            what: "write calc.py".into(),
+        }),
+    );
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("▸ expr-precedence") && shown.contains("running"),
+        "{shown}"
+    );
+    assert!(shown.contains("write calc.py"), "{shown}");
+    assert!(
+        shown.contains("· migrate-dependencies") && shown.contains("waiting"),
+        "{shown}"
+    );
+    let result = |name: &str, solved: Option<bool>, usd: Option<f64>| TaskResult {
+        name: name.into(),
+        title: name.into(),
+        level: Level::Hard,
+        solved,
+        usd,
+        complete: true,
+        calls: if solved.is_some() { 3 } else { 0 },
+        input_tokens: 1,
+        cached_tokens: 0,
+        output_tokens: 1,
+        seconds: 90.0,
+        timed_out: false,
+        cancelled: false,
+        exit: Some(0),
+        changed: vec![],
+        acceptance: vec![],
+        error: solved
+            .is_none()
+            .then(|| "needs `cargo --version`".to_string()),
+        guard_lost: false,
+    };
+    let finished = |r: TaskResult| Notice::Bench(Progress::Finished(r));
+    panel::on_notice(
+        &mut v,
+        &finished(result("expr-precedence", Some(true), Some(0.03))),
+    );
+    panel::on_notice(&mut v, &started("migrate-dependencies", 1));
+    panel::on_notice(
+        &mut v,
+        &finished(result("migrate-dependencies", Some(false), Some(0.05))),
+    );
+    panel::on_notice(&mut v, &finished(result("rust-csv-borrow", None, None)));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("3 of 4 done · 1 solved · spent $0.080"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("✓ expr-precedence") && shown.contains("✗ migrate-dependencies"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("skipped: needs `cargo --version`"),
+        "{shown}"
+    );
+    // Esc asks before stopping; n keeps it going; Enter stops.
+    press(&mut v, KeyCode::Esc);
+    assert!(render_to_string(&v, 120, 40).contains("stop the run after the task in progress?"));
+    press(&mut v, KeyCode::Char('n'));
+    press(&mut v, KeyCode::Esc);
+    assert_eq!(press(&mut v, KeyCode::Enter), Action::CancelBench);
+    let report = Report {
+        date: "2026-10-23".into(),
+        ryter: "0.38.0".into(),
+        connection: "spacexsi".into(),
+        model: "grok-4.6".into(),
+        level: Some(Level::Hard),
+        budget_usd: 2.5,
+        timeout_seconds: 600,
+        sandbox: "workspace".into(),
+        total_usd: 0.08,
+        results: vec![
+            result("expr-precedence", Some(true), Some(0.03)),
+            result("migrate-dependencies", Some(false), Some(0.05)),
+            result("rust-csv-borrow", None, None),
+        ],
+        stopped: Some("cancelled before ts-debounce".into()),
+        directory: PathBuf::from("/home/me/.ryter/bench/run"),
+        save_error: None,
+        guard_lost: false,
+    };
+    let one = Comparison {
+        date: "2026-10-23".into(),
+        ryter: "0.38.0".into(),
+        level: Some(Level::Hard),
+        budget_usd: 2.5,
+        timeout_seconds: 600,
+        sandbox: "workspace".into(),
+        seats: 1,
+        runs: vec![report.clone()],
+        stopped: None,
+        directory: PathBuf::from("/home/me/.ryter/bench/run"),
+        save_error: None,
+    };
+    panel::on_notice(&mut v, &Notice::BenchDone(Box::new(one.clone())));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("1/2 solved for $0.080, 12.5 solved per dollar, 1 skipped; stopped:")
+            && shown.contains("before ts-debounce"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("/home/me/.ryter/bench/run/RESULTS.md"),
+        "{shown}"
+    );
+    // r goes back to the form. Two models compared: the panel says which
+    // model is on and folds the last one into a line; the finished view
+    // ranks them, best first, with what each did not solve.
+    press(&mut v, KeyCode::Char('r'));
+    assert!(render_to_string(&v, 120, 40).contains("start the run"));
+    let model = |model: &str, index: usize| {
+        Notice::Bench(Progress::Model {
+            connection: "spacexsi".into(),
+            model: model.into(),
+            index,
+            total: 2,
+        })
+    };
+    panel::on_notice(&mut v, &model("grok-4.3", 0));
+    panel::on_notice(&mut v, &started("expr-precedence", 0));
+    panel::on_notice(
+        &mut v,
+        &Notice::Bench(Progress::Finished(result(
+            "expr-precedence",
+            Some(true),
+            Some(0.02),
+        ))),
+    );
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("model 1 of 2: grok-4.3 (spacexsi)"),
+        "{shown}"
+    );
+    panel::on_notice(&mut v, &model("grok-4.6", 1));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(shown.contains("✓ grok-4.3 1/1 for $0.020"), "{shown}");
+    assert!(
+        shown.contains("model 2 of 2: grok-4.6 (spacexsi)"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("· expr-precedence") && shown.contains("waiting"),
+        "fresh rows for the next model: {shown}"
+    );
+    let mut cheap = report.clone();
+    cheap.model = "grok-4.3".into();
+    cheap.results = vec![
+        result("expr-precedence", Some(true), Some(0.02)),
+        result("migrate-dependencies", Some(true), Some(0.03)),
+    ];
+    cheap.total_usd = 0.05;
+    cheap.stopped = None;
+    let two = Comparison {
+        seats: 2,
+        runs: vec![cheap, report],
+        directory: PathBuf::from("/home/me/.ryter/bench/cmp"),
+        ..one
+    };
+    panel::on_notice(&mut v, &Notice::BenchDone(Box::new(two)));
+    let shown = render_to_string(&v, 120, 40);
+    assert!(
+        shown.contains("2 models on 3 tasks: grok-4.3 2/2 for $0.050 · grok-4.6 1/2 for $0.080"),
+        "{shown}"
+    );
+    let cheap_row = shown.find("✓ grok-4.3").unwrap();
+    let dear_row = shown.find("✗ grok-4.6").unwrap();
+    assert!(cheap_row < dear_row, "best first: {shown}");
+    assert!(
+        shown.contains("1/2 for $0.080 (stopped)")
+            && shown.contains("migrate-dependencies, rust-c"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("/home/me/.ryter/bench/cmp/RESULTS.md"),
+        "{shown}"
+    );
+    assert_eq!(press(&mut v, KeyCode::Esc), Action::None);
+    assert!(v.panels.is_empty());
 }
 
 /// Removing a connection, an MCP server or a skill is the same question

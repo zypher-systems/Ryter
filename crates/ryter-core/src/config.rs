@@ -2189,6 +2189,29 @@ pub fn trust(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Forget `root` as a trusted folder, if it was one. A folder that is gone
+/// is forgotten by the path it was trusted under.
+pub fn untrust(root: &Path) -> Result<()> {
+    let canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let Ok(text) = fs::read_to_string(trust_path()) else {
+        return Ok(());
+    };
+    let Ok(mut store) = serde_json::from_str::<TrustStore>(&text) else {
+        return Ok(());
+    };
+    let before = store.paths.len();
+    store.paths.retain(|p| Path::new(p) != canon);
+    if store.paths.len() == before {
+        return Ok(());
+    }
+    let dir = home_dir();
+    let tmp = dir.join("trusted.json.tmp");
+    let body = serde_json::to_vec_pretty(&store).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(&tmp, body).map_err(|e| Error::Config(e.to_string()))?;
+    fs::rename(tmp, trust_path()).map_err(|e| Error::Config(e.to_string()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

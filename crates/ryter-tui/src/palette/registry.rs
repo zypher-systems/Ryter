@@ -283,6 +283,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         |_, _| Action::ReviewNow,
     ),
     spec(
+        "benchmark",
+        &["bench"],
+        Category::Model,
+        "Run the bench's tasks on a model and see tasks solved per dollar",
+        None,
+        true,
+        None,
+        false,
+        |_, _| Action::OpenPanel(PanelId::Benchmark),
+    ),
+    spec(
         "changes",
         &["diff"],
         Category::Session,

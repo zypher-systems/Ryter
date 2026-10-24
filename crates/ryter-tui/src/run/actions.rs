@@ -28,6 +28,11 @@ pub struct Ctx {
     pub notice_tx: mpsc::Sender<Notice>,
     /// Shared cancel flag.
     pub cancel: Arc<ryter_core::Cancel>,
+    /// The `/benchmark` run going, to stop it.
+    pub bench: Option<ryter_bench::Cancel>,
+    /// Its thread, waited for before the TUI quits: a paid build hat is
+    /// never left running with nobody watching it.
+    pub bench_thread: Option<std::thread::JoinHandle<()>>,
     /// `~/.ryter`.
     pub home: PathBuf,
     /// Project root.
@@ -266,6 +271,19 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         }
         Action::Revert { base, path } => cx.send(Work::Revert { base, path }),
         Action::RevertHunk { base, path, hunk } => cx.send(Work::RevertHunk { base, path, hunk }),
+        Action::StartBench {
+            seats,
+            level,
+            budget_usd,
+            sandbox,
+        } => start_bench(view, cx, seats, level, budget_usd, sandbox),
+        Action::CancelBench => match &cx.bench {
+            Some(cancel) => {
+                cancel.cancel();
+                view.system("benchmark: stopping after the task in progress");
+            }
+            None => view.error("no benchmark run is going"),
+        },
 
         Action::DraftCommit(paths) => cx.send(Work::DraftCommit(paths)),
         Action::Commit { paths, message } => cx.send(Work::Commit { paths, message }),
@@ -488,7 +506,7 @@ fn open_panel(view: &mut View, cx: &mut Ctx, id: PanelId) {
     match id {
         // Every keyed connection's models: the All hats seat lists them
         // as a hat's does.
-        PanelId::Models => cx.send(Work::ListAllModels),
+        PanelId::Models | PanelId::Benchmark => cx.send(Work::ListAllModels),
         // The logs are the truth; replace the live running copy with them.
         PanelId::Spend | PanelId::SpendDrawer => {
             load_project_spend(view, &cx.home, &cx.workspace);
@@ -942,6 +960,111 @@ fn set_model(view: &mut View, cx: &mut Ctx, connection: Option<String>, model: S
         }
         Err(_) => perform(view, cx, Action::BeginSetKey(connection)),
     }
+}
+
+/// `/benchmark`: the bench's tasks on `model`, in a thread, as `ryter bench`
+/// runs them; each step comes back as a notice, the table lands under
+/// `~/.ryter/bench/`, and the headline in the chat.
+fn start_bench(
+    view: &mut View,
+    cx: &mut Ctx,
+    seats: Vec<ryter_bench::Seat>,
+    level: Option<ryter_bench::Level>,
+    budget_usd: f64,
+    sandbox: String,
+) {
+    if view.bench_running {
+        view.error("a benchmark run is already going; its result lands in the chat");
+        return;
+    }
+    if let Err(why) = ryter_bench::guard_available() {
+        view.error(format!("benchmark: {why}"));
+        return;
+    }
+    if view.busy {
+        view.error("wait for the turn to finish before a benchmark run");
+        return;
+    }
+    if seats.is_empty() {
+        view.error("pick a model to run the bench on");
+        return;
+    }
+    for seat in &seats {
+        if !cx.cfg.connections.contains_key(&seat.connection) {
+            view.error(format!("unknown connection {}", seat.connection));
+            return;
+        }
+        if !config::has_secret(&cx.cfg, &seat.connection) {
+            view.error(format!("connection {} has no API key", seat.connection));
+            return;
+        }
+    }
+    if !(ryter_bench::RESERVE_USD + 0.01..=50.0).contains(&budget_usd) {
+        view.error("the budget is dollars from 0.11 (the reserve and a cent) to 50");
+        return;
+    }
+    let tasks = ryter_bench::select(&[], level);
+    if tasks.is_empty() {
+        view.error("no task at that level");
+        return;
+    }
+    let binary = match ryter_bench::own_binary() {
+        Ok(b) => b,
+        Err(e) => {
+            view.error(format!("benchmark: {e}"));
+            return;
+        }
+    };
+    let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
+    let dir = match ryter_bench::fresh_dir(
+        &cx.home.join("bench"),
+        &ryter_bench::folder(&stamp, &seats),
+    ) {
+        Ok(dir) => dir,
+        Err(e) => {
+            view.error(format!("benchmark: could not make the run's folder: {e}"));
+            return;
+        }
+    };
+    let cancel = ryter_bench::Cancel::default();
+    let opts = ryter_bench::Options {
+        binary,
+        connection: seats[0].connection.clone(),
+        model: seats[0].model.clone(),
+        budget_usd,
+        timeout: std::time::Duration::from_secs(600),
+        sandbox,
+        dir,
+        cancel: cancel.clone(),
+        // A session's own commands run under this process too, so what a
+        // killed guard leaves behind cannot be told from them here.
+        adopts_orphans: false,
+    };
+    let on = match seats.as_slice() {
+        [one] => format!("{} ({})", one.model, one.connection),
+        _ => format!("{} models", seats.len()),
+    };
+    view.system(format!(
+        "benchmark: {} task{} on {on}, budget ${budget_usd:.2}{}, 600 s per task, sandbox {} · the run is in {}",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" },
+        if seats.len() > 1 { " per model" } else { "" },
+        opts.sandbox,
+        opts.dir.display()
+    ));
+    if let Some(note) = ryter_bench::guard_note(&opts.sandbox) {
+        view.system(format!("benchmark: {note}"));
+    }
+    view.bench_running = true;
+    cx.bench = Some(cancel);
+    let tx = cx.notice_tx.clone();
+    cx.bench_thread = Some(std::thread::spawn(move || {
+        let progress = tx.clone();
+        let comparison = ryter_bench::run_models(&tasks, &seats, &opts, |p| {
+            let _ = progress.send(Notice::Bench(p));
+        });
+        let _ = tx.send(Notice::BenchDone(Box::new(comparison)));
+    }));
 }
 
 /// One tiny request with a tool: catch a data policy, missing tools, or no

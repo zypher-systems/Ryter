@@ -4,14 +4,14 @@
   New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
   0.2.0-patch                                                           ┊
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ HATS
-     Commands                                               4 of 31     ┊ ● Plan   grok-4.6     $0
+     Commands                                               5 of 32     ┊ ● Plan   grok-4.6     $0
      mo                                                                 ┊ ┃ Build               $0
     ›/models         Choose models: one for every hat, or one e… ▸      ┊   grok-4.6
      /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊   asks first
-     /tools          Tool permission mode for this session       ▸      ┊ ● Audit  grok-4.6     $0
-     ↑↓ move  enter run  esc close                                      ┊ ● Scribe follows al…  $0
+     /benchmark      Run the bench's tasks on a model and see t… ▸      ┊ ● Audit  grok-4.6     $0
+     /tools          Tool permission mode for this session       ▸      ┊ ● Scribe follows al…  $0
+     ↑↓ move  enter run  esc close                                      ┊
    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘   ┊
-                                                                        ┊
     / commands                                                          ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
                                                                         ┊ Context
                                                                         ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
