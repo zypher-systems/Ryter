@@ -1358,10 +1358,16 @@ impl Agent {
             )));
         }
         let Some(io) = self.ctx.user_io.clone() else {
-            return Ok(ToolOutput::err(
+            // Headless: the plan hat answers with the plan; the build hat was
+            // asked for the change itself, and a plan nobody approves is not it.
+            return Ok(ToolOutput::err(if self.role == Role::Build {
+                "nobody can approve a plan here (headless), so nothing was saved. You wear \
+                 the build hat and were asked for the change: make it now, then say what \
+                 you did."
+            } else {
                 "nobody can approve a plan here (headless), so nothing was saved. Give the \
-                 plan as your answer instead.",
-            ));
+                 plan as your answer instead."
+            }));
         };
         let answer = io.present_plan(title, plan, &self.ctx.cancel);
         if self.ctx.cancel.is_cancelled() {
@@ -5761,6 +5767,41 @@ mod tests {
             .unwrap_or_default();
         let _ = _home;
         (cwd, agent, shown, result, events.try_iter().collect())
+    }
+
+    /// Headless in the build hat, the refusal sends the model on to the
+    /// change: a bench or `-p` build run wants the edit, not a plan.
+    #[tokio::test]
+    async fn a_headless_build_hat_is_told_to_make_the_change() {
+        let p = ReplayProvider::scripted(vec![
+            call(
+                "present_plan",
+                serde_json::json!({"title": "Say what this is", "plan": A_PLAN}),
+            ),
+            write("README.md", "built\n"),
+            say("done"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        agent.ctx.always_approve = true;
+        agent.turn("write the readme").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            result.contains("nobody can approve a plan here") && result.contains("make it now"),
+            "{result}"
+        );
+        assert!(plans_in(&cwd).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("README.md")).unwrap(),
+            "built\n"
+        );
     }
 
     fn plans_in(cwd: &TempDir) -> Vec<std::path::PathBuf> {

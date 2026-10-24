@@ -69,6 +69,18 @@ def rescore(report_path, output=None):
     return 0
 
 
+LEVELS = ['standard', 'hard']
+
+
+def select_tasks(root, names=(), level=None):
+    """The tasks under `root` as `(directory, spec)`, by name: those named in
+    `names` (all when empty), at `level` (any when None). A task's level is
+    `level` in its task.toml, `standard` when it says none."""
+    tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted(root.glob('*/task.toml'))]
+    return [(path, spec) for path, spec in tasks
+            if (not names or path.name in names) and (level is None or spec.get('level', 'standard') == level)]
+
+
 def commands(project, checks, env):
     rows = []
     for command in checks:
@@ -251,6 +263,7 @@ def main():
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ryter')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--task', action='append', default=[])
+    parser.add_argument('--level', choices=LEVELS, help='only the tasks at this level; every level when absent')
     parser.add_argument('--model', default='qwen/qwen3-coder-flash')
     parser.add_argument('--connection', default='openrouter')
     parser.add_argument('--budget', type=float)
@@ -271,8 +284,7 @@ def main():
     report = {'mode':args.mode, 'model':args.model if args.mode == 'live' else None,
               'budget_usd':args.budget, 'negative_control':args.simulate_broken_build, 'total_usd':0.0, 'tasks':{},
               'scoring_version':3, 'cost_kind':'recorded provider usage' if args.mode == 'live' else 'synthetic fixture accounting; no charge'}
-    tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted((ROOT / 'bench').glob('*/task.toml'))
-             if not args.task or p.parent.name in args.task]
+    tasks = select_tasks(ROOT / 'bench', args.task, args.level)
     if not tasks:
         parser.error('no matching task')
     # Validate every selected reference before any paid call.

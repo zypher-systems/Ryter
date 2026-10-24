@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from run import rescore, review_verdict, score
+from run import rescore, review_verdict, score, select_tasks
 
 
 class Scoring(unittest.TestCase):
@@ -54,6 +54,24 @@ class Scoring(unittest.TestCase):
         score(row)
         self.assertTrue(row['flow_completed'])
         self.assertFalse(row['false_review_pass'])
+
+
+
+class Selection(unittest.TestCase):
+    def test_tasks_are_picked_by_name_and_level(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, level in [('b-hard', 'hard'), ('a-plain', None), ('c-hard', 'hard')]:
+                (root / name).mkdir()
+                (root / name / 'task.toml').write_text(
+                    f'title = "{name}"\n' + (f'level = "{level}"\n' if level else ''))
+            names = lambda tasks: [path.name for path, _spec in tasks]
+            self.assertEqual(names(select_tasks(root)), ['a-plain', 'b-hard', 'c-hard'])
+            self.assertEqual(names(select_tasks(root, level='hard')), ['b-hard', 'c-hard'])
+            self.assertEqual(names(select_tasks(root, level='standard')), ['a-plain'])
+            self.assertEqual(names(select_tasks(root, ['c-hard', 'a-plain'])), ['a-plain', 'c-hard'])
+            self.assertEqual(names(select_tasks(root, ['a-plain'], 'hard')), [])
+            self.assertEqual(select_tasks(root, ['b-hard'])[0][1]['title'], 'b-hard')
 
 
 if __name__ == '__main__':

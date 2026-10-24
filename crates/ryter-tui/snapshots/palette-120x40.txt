@@ -6,14 +6,14 @@
   0.2.0-patch                                                                           ┊
                                                                                         ┊ HATS
       ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖      ┊ ● Plan   grok-4.6         $0
-        Commands                                                         4 of 31        ┊ ┃ Build                   $0
+        Commands                                                         5 of 32        ┊ ┃ Build                   $0
         mo                                                                              ┊   grok-4.6
        ›/models         Choose models: one for every hat, or one each for pl… ▸         ┊   asks first
     Wh  /permissions    Durable allow/ask/deny bash rules from the TUI        ▸         ┊ ● Audit  grok-4.6         $0
-        /tools          Tool permission mode for this session                 ▸         ┊ ● Scribe follows all ha…  $0
-    De  ↑↓ move  enter run  esc close                                                   ┊
-    le▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘      ┊
-                                                                                        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+        /benchmark      Run the bench's tasks on a model and see tasks solve… ▸         ┊ ● Scribe follows all ha…  $0
+    De  /tools          Tool permission mode for this session                 ▸         ┊
+    le  ↑↓ move  enter run  esc close                                                   ┊
+      ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘      ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
     / commands                                                                          ┊ Context
                                                                                         ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
                                                                                         ┊  ⢰⠋      ⠙⡆ 12k

@@ -1,0 +1,1 @@
+Work only in this project, the current directory. Do not install packages, use other projects, external services or the network, or change system or user configuration. Do not commit. Use the existing dependencies. This is a command-line project with no server to leave running. Implement the task below, run its checks, and stop when they pass or when you cannot make them pass.

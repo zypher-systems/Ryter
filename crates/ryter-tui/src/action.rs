@@ -52,6 +52,8 @@ pub enum PanelId {
     Doctor,
     /// `/changes`.
     Changes,
+    /// `/benchmark`.
+    Benchmark,
     /// `/commit`.
     Commit,
 }
@@ -195,6 +197,18 @@ pub enum Action {
     },
     /// `/changes` `x`: put one change of a file back as `base` had it,
     /// keeping the file's other changes.
+    /// `/benchmark`: run the bench's tasks on a model, under a budget.
+    StartBench {
+        /// The models to run, each on its connection; several are compared.
+        seats: Vec<ryter_bench::Seat>,
+        /// One level, or every task.
+        level: Option<ryter_bench::Level>,
+        budget_usd: f64,
+        /// The build hat's `--sandbox` for each copy.
+        sandbox: String,
+    },
+    /// Stop the benchmark run after the task in progress.
+    CancelBench,
     RevertHunk {
         /// Commit to restore from.
         base: String,

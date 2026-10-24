@@ -31,18 +31,15 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'bench'))
-from run import commands, isolated_env, overlay, passed, validate  # noqa: E402
+from run import LEVELS, commands, isolated_env, overlay, passed, select_tasks, validate  # noqa: E402
 
 TOOLS = ['ryter', 'claude', 'codex', 'opencode', 'kilo']
 RESERVE_USD = 0.10
 # A tool's cap is written with two decimals, and a cap of 0 means no cap to
 # Ryter; so a task starts only with a cent or more to spend.
 MIN_CAP_USD = 0.01
-SCOPE = ('Work only in this project, the current directory. Do not install packages, use other '
-         'projects, external services or the network, or change system or user configuration. '
-         'Do not commit. Use the existing dependencies. This is a command-line project with no '
-         'server to leave running. Implement the task below, run its checks, and stop when they '
-         'pass or when you cannot make them pass.\n\n')
+# The paragraph every tool gets before the brief; `ryter bench` embeds the same file.
+SCOPE = (ROOT / 'bench' / 'scope.txt').read_text().strip() + '\n\n'
 
 
 class Run:
@@ -353,7 +350,8 @@ def markdown(report):
              f'Ryter `{report["ryter"]}`; tools as installed: '
              + ', '.join(f'{k} ({v or "version unknown"})' for k, v in report['versions'].items()) + '.',
              f'Budget ${budget:.2f}, spent {usd(report["total_usd"])}; '
-             f'{report["timeout_seconds"]} s per task; one attempt per task.', '',
+             f'{report["timeout_seconds"]} s per task; one attempt per task'
+             + (f'; the {report["level"]} tasks only' if report.get('level') else '') + '.', '',
              '| Run | Solved | Cost | Cost per solved | Solved per $ | Median minutes | Timed out |',
              '|---|---|---|---|---|---|---|']
     summary = summarize(report)
@@ -396,6 +394,7 @@ def main(argv=None):
     parser.add_argument('--price', action='append', default=[],
                         help='model=input,cached,output dollars per million, for a tool that reports tokens only')
     parser.add_argument('--task', action='append', default=[])
+    parser.add_argument('--level', choices=LEVELS, help='only the tasks at this level; every level when absent')
     parser.add_argument('--budget', type=float, help='dollars for the whole run, all tools; required to run')
     parser.add_argument('--timeout', type=int, default=600, help='seconds per task per tool')
     parser.add_argument('--binary', type=Path, default=ROOT / 'target/debug/ryter')
@@ -437,8 +436,8 @@ def main(argv=None):
         parser.error(f'no ryter binary at {args.binary}')
     env = dict(os.environ, CARGO_NET_OFFLINE='true')
     if args.into:
-        if args.output or args.task or args.dry_run:
-            parser.error('--into takes the earlier report whole: no --output, no --task, no --dry-run')
+        if args.output or args.task or args.level or args.dry_run:
+            parser.error('--into takes the earlier report whole: no --output, no --task, no --level, no --dry-run')
         output = args.into.resolve()
         report = json.loads((output / 'report.json').read_text())
         tasks = [(ROOT / 'bench' / name, tomllib.loads((ROOT / 'bench' / name / 'task.toml').read_text()))
@@ -452,9 +451,8 @@ def main(argv=None):
                       ['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
                   'runs': [r.key for r in runs], 'versions': {r.tool: tool_version(r, args.binary) for r in runs},
                   'budget_usd': args.budget, 'timeout_seconds': args.timeout, 'prices': prices,
-                  'total_usd': 0.0, 'tasks': {}, 'command': sys.argv[1:]}
-        tasks = [(p.parent, tomllib.loads(p.read_text())) for p in sorted((ROOT / 'bench').glob('*/task.toml'))
-                 if not args.task or p.parent.name in args.task]
+                  'level': args.level, 'total_usd': 0.0, 'tasks': {}, 'command': sys.argv[1:]}
+        tasks = select_tasks(ROOT / 'bench', args.task, args.level)
         if not tasks:
             parser.error('no matching task')
     for task, spec in tasks:

@@ -1,0 +1,39 @@
+title = "Finish debounce, and add throttle on top of it"
+level = "hard"
+brief = """
+A small TypeScript library, run by Node itself (`node --test`; no build step and
+no packages). Imports name the `.ts` file. `src/timing.ts` has a `debounce`
+that only fires after the quiet period, on the real clock, and cannot be
+cancelled. Finish it, and add `throttle`:
+
+- `debounce(fn, wait, options?)` returns a function with the same arguments
+  that returns the last result `fn` produced (`undefined` before the first),
+  plus `cancel()`, `flush()` and `pending()`. Options:
+  - `trailing` (default `true`): `fn` runs once the calls have stopped for
+    `wait` ms, with the arguments of the last call.
+  - `leading` (default `false`): `fn` runs at once on the first call of a
+    burst. With `trailing` too, the trailing run happens only if the burst had
+    more than one call.
+  - `maxWait`: during a burst, `fn` runs at least once every `maxWait` ms,
+    with the latest arguments, counted from the start of the burst or the last
+    run, whichever is later. That is the gap between runs, not how long one
+    call may wait: after a run at 100 ms, a call at 150 ms in the same burst
+    (with `maxWait` 100) is run at 200 ms, not after a fresh `wait`.
+  - `clock`: a `Clock` (`now`, `setTimeout`, `clearTimeout`; see
+    `src/timing.ts`) to use instead of the global one. The tests pass a fake.
+- `cancel()` drops any waiting call; `flush()` runs a waiting call now and
+  returns its result (or the last result when nothing waits); `pending()` is
+  `true` only while a call will still run, not merely while a timer is armed:
+  with `leading` alone (no `trailing`, no `maxWait`) nothing is ever pending,
+  and with `leading` and `trailing` a single call leaves nothing pending until
+  a second call comes.
+- `throttle(fn, wait, options?)` is `debounce` with `leading` and `trailing`
+  defaulting to `true` and `maxWait` fixed at `wait`.
+
+Done when `node --test test/basic.test.ts` passes.
+"""
+files = ["src/timing.ts"]
+checks = ["node --test test/basic.test.ts"]
+accept = ["node --test test/hidden.test.ts"]
+# Whether this Node runs TypeScript as it is: one of the fixture's own modules.
+needs = ["node repo/src/timing.ts"]

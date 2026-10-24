@@ -46,7 +46,8 @@ impl Sort {
     }
 }
 
-fn price(v: Option<f64>) -> String {
+/// A catalog price per million tokens, as the picker shows it.
+pub(super) fn price(v: Option<f64>) -> String {
     match v {
         // OpenRouter lists its routers (openrouter/auto, …) at -1: "varies".
         // Shown raw it read "$-1000000" and sorted as the cheapest model.

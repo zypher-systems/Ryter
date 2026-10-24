@@ -465,6 +465,8 @@ Ryter snapshots first, so `/undo` brings a dropped change or a file back; with n
 
 Headless, `ryter -p` runs in build; `--hat plan|audit|scribe` picks another. Headless nobody can approve an edit, so pass `--always-approve` to let build change files.
 
+
+**`/benchmark`** runs the bench's tasks on a model of your choice and tells you tasks solved per dollar, the number the README quotes. It runs on Linux only: the model's build hat runs under a process guard that needs a Linux child subreaper, and on macOS the command says so instead of running. The form takes the connection and the models (the build hat's, to start; Enter on the models row lists the connection's models with context and prices as `/models` shows them, typing filters, Enter adds or removes one, `⌫` on the row unpicks the last; models from several connections can sit together), the tasks (`standard`, the ten a current model solves; `hard`, four that turn on rules a brief states and the visible tests leave alone; or `all`), a budget for the whole run, and the sandbox for the copies (`workspace`, or `off` where Landlock can't apply). Enter on `start the run` begins it. Each task runs in a fresh copy of its project under the build hat, as its own `ryter` process with its own session cap, asking nobody anything; its hidden tests are copied in only afterwards and run in a bare environment under the same sandbox, so nothing in your shell can pass or fail a task for the model and nothing the model wrote can reach past the copy while they run. The run leaves your default connection and last model as they were. The panel shows the tasks ticking through with a result, a cost and a time each; `c` closes it while the run goes on, `Esc` asks before stopping after the task in progress; quitting Ryter stops the run the same way first and waits for it, so no paid build hat is left running. When the run is done the chat says how many were solved for how much, and the table is in `~/.ryter/bench/<date-time>-<model>/RESULTS.md`, beside `report.json` and each task's logs. With several models picked they run in turn, each under the budget, and the finish is a comparison: a line per model, most solved first and then the cheapest, with what each did not solve, so the cheapest model with a clean sheet is the one to seat for that work; the folder is `<date-time>-compare/` with a folder per model inside and the task-by-task table in its `RESULTS.md`. The same run is `ryter bench --level hard --budget 5` from a shell, `-m` repeated to compare models (`-m openrouter=deepseek/deepseek-pro-latest` seats one on another connection; `ryter bench --list` names the tasks); Ctrl-C stops it after ending the task in progress, and the command exits 1 whenever the run did not go to its end: stopped, cancelled, or a report it could not write. The run spends real money on your key: the budget is the cap per model, with a $0.10 reserve kept back before each task. A task whose toolchain is missing on the machine (`cargo`, `node`) is skipped and says so. Comparing other tools on the same tasks is `bench/compare.py` in the repository, which needs them installed.
 ## Choosing models
 
 **Every model is chosen in `/models`.** The seats are on the left, each with the model it runs on now: *All hats*, then *Plan*, *Build*, *Audit* and *Scribe*. The models for the chosen seat are on the right.
@@ -517,7 +519,7 @@ The **budget** card on the right shows the cap, how much is used and left, or `o
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/spend` `/theme` `/tools` `/permissions` `/context` `/doctor` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/spend` `/theme` `/tools` `/permissions` `/context` `/doctor` `/benchmark` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
@@ -783,8 +785,8 @@ receipts. After building the CLI, `python3 scripts/acceptance.py` checks real CL
 processes against an isolated loopback provider, including spending, interrupted
 streams, recovery and permission refusals. These checks spend no provider credit.
 
-`python3 bench/run.py --mode simulated` exercises all ten retained benchmark
-fixtures. See [the benchmark guide](../bench/README.md) for reference validation,
+`python3 bench/run.py --mode simulated` exercises every benchmark
+fixture. See [the benchmark guide](../bench/README.md) for reference validation,
 false-pass controls, saved reports and explicitly budgeted live runs. A model's
 audit verdict is what it reported; it does not prove the hidden tests will pass.
 

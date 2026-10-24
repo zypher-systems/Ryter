@@ -1,0 +1,31 @@
+title = "Give the calculator precedence, unary minus, powers and error positions"
+level = "hard"
+brief = """
+`calc.py` evaluates arithmetic from left to right with no precedence, no
+unary minus and no powers, and its errors say nothing about where. Replace
+`evaluate(text)` with a real parser; keep `tokenize` if it helps, or not.
+
+- Operators, loosest first: `+ -`; then `* / %`; then unary minus; then `^`,
+  which is right-associative. So `1+2*3` is 7, `-2^2` is -4, `2^-1` is 0.5
+  (a unary minus may follow `^`), `2^3^2` is 512, `--3` is 3, `-(2+3)` is -5.
+- Parentheses nest. Whitespace may appear between tokens anywhere.
+- Numbers are integers (`42`) or decimals (`1.5`, `.5`). Arithmetic is Python's:
+  an integer result stays an `int`, `/` always gives a `float`, `%` is Python's
+  `%`, and `^` is Python's `**`.
+- Errors raise `CalcError(message, position)`, `position` being the 0-based
+  index into `text` of the offending character, or `len(text)` when the input
+  ended early. The messages, exactly:
+  - `unexpected end of input` (`1+`, `(`, an empty or blank input)
+  - `unexpected 'X'` where X is the character, when a token appears where an
+    operand or an operator was expected (`1 2` points at the 2, `2(3)` at the
+    `(`, `1+*2` at the `*`, `)` at the `)`, `1$` at the `$`)
+  - `expected ')'` when a group is not closed, pointing where the `)` should
+    be (`(1+2` points at the end, `(1+2 3` at the 3)
+  - `division by zero`, pointing at the `/` or `%`
+
+Done when `python3 -m unittest -q test_calc` passes.
+"""
+files = ["calc.py"]
+checks = ["python3 -m unittest -q test_calc"]
+accept = ["python3 -m unittest -q hidden_test_calc"]
+needs = ["python3 --version"]

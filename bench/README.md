@@ -72,22 +72,90 @@ Each task:
 `needs` lists commands that must succeed for the task to run on a machine, such
 as `cargo --version`.
 
-| Task | Language | What it asks for |
-|---|---|---|
-| `cli-limit-flag` | Python | a new flag on a small CLI |
-| `pager-off-by-one` | Python | a one-function bug fix |
-| `rename-across-files` | Python | a rename and its callers |
-| `slugify` | Python | a new function with edge cases |
-| `inventory-reorder` | Python | a feature across four modules, one of them new |
-| `settings-overrides` | Python | bugs in two modules that only show together |
-| `rust-durations` | Rust | a parser, its errors and a formatter, across three modules |
-| `ts-event-bus` | TypeScript | new behaviour in two modules, run by Node with no build |
-| `split-stats-report` | Python | work split into three steps, two of them independent |
-| `runner-script` | Python | a feature in a project whose tests run only through its own script |
+| Task | Level | Language | What it asks for |
+|---|---|---|---|
+| `cli-limit-flag` | standard | Python | a new flag on a small CLI |
+| `pager-off-by-one` | standard | Python | a one-function bug fix |
+| `rename-across-files` | standard | Python | a rename and its callers |
+| `slugify` | standard | Python | a new function with edge cases |
+| `inventory-reorder` | standard | Python | a feature across four modules, one of them new |
+| `settings-overrides` | standard | Python | bugs in two modules that only show together |
+| `rust-durations` | standard | Rust | a parser, its errors and a formatter, across three modules |
+| `ts-event-bus` | standard | TypeScript | new behaviour in two modules, run by Node with no build |
+| `split-stats-report` | standard | Python | work split into three steps, two of them independent |
+| `runner-script` | standard | Python | a feature in a project whose tests run only through its own script |
+| `expr-precedence` | hard | Python | a parser with four precedence levels, a right-associative power, unary minus and error positions |
+| `migrate-dependencies` | hard | Python | dependency order with a stable tie-break, cycle reporting, a run that survives a failure, atomic state |
+| `rust-csv-borrow` | hard | Rust | a quoted-field CSV reader whose fields borrow from the input unless they must not |
+| `ts-debounce` | hard | TypeScript | debounce with leading, trailing and maxWait against an injected clock, and throttle on it |
+
+A task's level is `level` in its `task.toml`; a task that says none is
+standard. `--level standard` or `--level hard` picks one level on either
+runner; without it every task runs. The standard tasks are the ones a current
+model solves; the hard ones each turn on a rule the brief states and the
+visible tests do not check, the kind of thing the published runs showed a
+model getting wrong (`ts-event-bus`, where every Mistral run broke `off` and
+emitted the wildcard twice): a parser's precedence and where an error points,
+an order that must be the same on every run and a run that must leave the
+state file consistent after a failure, a reader that must not copy, and the
+timing of leading, trailing and maxWait calls.
 
 Visible checks are deliberately weaker than the hidden tests. Work that passes
 the checks and its review but fails the hidden tests is a **false pass**: the
 number that says how far a review can be trusted.
+
+## Running the bench from the binary
+
+The fixtures (each task's `task.toml`, `repo/` and `hidden/`, never a solution)
+are embedded in `ryter` at build time (`crates/ryter-bench`), so a user runs the
+same tasks on their own model and key without a checkout:
+
+```sh
+ryter bench --list                               # the tasks and their levels
+ryter bench --level hard --budget 5              # the hard tasks on the default route
+ryter bench --task slugify --connection anthropic -m claude-sonnet-4-5 --budget 1
+```
+
+`/benchmark` in the TUI is the same run from a form: connection, models (picked
+from the connection's list, with context and prices), level, budget and
+sandbox, with the tasks ticking through in a panel and the headline in the chat.
+Several models (`-m` repeated from the shell, `-m connection=model` for one on
+another connection) run in turn under the same budget each and end in a
+comparison, a line per model, most solved first then cheapest, and the tasks
+against the models: the way to pick the cheapest model with a clean sheet for
+a job. Either way each task runs in a fresh copy under the build hat as
+its own `ryter` process (`--json --hat build --always-approve`, the user's
+environment for its login, a per-task cap in the copy's `.ryter/config.toml`,
+`--no-remember` so the run leaves the user's default connection and last model
+alone), and is scored by its hidden tests in the bare environment described
+below, under the same sandbox as the build hat had: the tests import and build
+what the model wrote. The hat runs under a leader process of Ryter's own
+(`ryter bench-lead`), a Linux child subreaper: a process of the hat's whose
+parent exits is reparented to the leader rather than to `init`, so the hat's
+tree is whole however a process detaches (`setsid`, a scrubbed environment, a
+daemon's double fork), and when the hat ends, or the runner ends it, the
+leader stops and kills everything under itself before it exits. A task whose
+tree could not be emptied is not scored, and a leader that did not come back
+to say so within its grace counts the same. macOS has no equivalent (its
+kernel refuses `kqueue`'s `NOTE_TRACK`, which would follow every fork), so a
+process the model detached could not be found with certainty there: the bench
+runs on Linux only, and `ryter bench` and `/benchmark` say so instead of
+running. The scoring is done on a copy of the model's tree made only then
+(build output and `.git` left out).
+The hidden tests travel in the binary deflated and
+masked, so the binary, which the sandbox lets a model read, does not show them
+to `grep`; a cover, not a secret. The run goes to
+`~/.ryter/bench/<date-time>-<model>/` (`-2`, `-3` when the minute's name is
+taken): `report.json`, `RESULTS.md`, and per task the prompt, the build hat's
+events and stderr; the project copies are removed once scored. The budget, the
+reserve and the per-task cap work as in the comparison runner; `--sandbox` is
+the build hat's (`workspace` on a Linux whose kernel has Landlock, else
+`off`). Ctrl-C, or quitting the TUI, ends the task in progress with
+everything it started and skips the rest; a task cut short, in the model's
+turn or in its scoring, is not scored, and what it cost still counts. The
+command exits 1 whenever the run did not go to its end. The tool comparison
+stays here in `bench/compare.py`, since it depends on which other tools are
+installed and how each reports its cost.
 
 ## Comparing with other tools: tasks solved per dollar
 
@@ -138,7 +206,8 @@ python3 bench/compare.py --run ryter=openai:gpt-5.2 --run codex=gpt-5.2 \
   Codex and OpenCode have none, so the per-task `--timeout` (600 s) is their
   only bound.
 - One attempt per task, tasks in order, every tool on a task before the next
-  task, so a stopped run compares the same tasks.
+  task, so a stopped run compares the same tasks. `--level hard` (or
+  `standard`) runs one level; `--task` names tasks.
 - The output directory holds `report.json`, `RESULTS.md` (the table), and per
   task and run (`<task>/<tool>-<model>`) the prompt, the tool's output, stderr
   and the project as it was left. `--into DIR` runs the given tools again

@@ -1,0 +1,50 @@
+
+ ●●● RYTER
+
+
+    New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+                                                                                                                    ┊ ┃ Build                               $0
+                 ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖               ┊   grok-4.6
+                   benchmark                                                               10 tasks                 ┊   asks first
+                  › connection     ‹ spacexsi ›                                                                     ┊ ● Audit  grok-4.6                     $0
+                    models         grok-4.6                                                                         ┊ ● Scribe follows all hats             $0
+                    tasks          ‹ standard ›                                                                     ┊
+                    budget usd     ‹ 5.00 ›                                                                         ┊
+                    sandbox        ‹ workspace ›                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                    start the run                                                                                   ┊ Context
+                                                                                                                    ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                   each task runs in a fresh copy under the build hat with its own session cap,                     ┊  ⢰⠋      ⠙⡆ 12k
+                   then its hidden tests score it; the cost is what the model charges. the sandbox                  ┊  ⢸   5%   ⡧ of 256k
+                   is the build hat's (Landlock, Linux only; off where it can't apply). the table                   ┊  ⠸⣄      ⣠⠇
+                   goes to ~/.ryter/bench/.                                                                         ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                                                                                                                    ┊
+                                                                                                                    ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                                                                    ┊ Spend · no cap
+                                                                                                                    ┊ $0
+                                                                                                                    ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                   ↑↓ move   ←→ change   enter pick/start   ⌫ unpick   esc close                                    ┊
+                 ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘               ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › what should change?                                                                               │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
+ tab hat  ⇧tab mode  / commands  f2 instruments

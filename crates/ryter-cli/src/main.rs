@@ -66,6 +66,11 @@ struct Cli {
     #[arg(long)]
     sandbox: Option<String>,
 
+    /// Don't remember this connection and model as the next run's route
+    /// (with `-p`; the bench runs its tasks this way).
+    #[arg(long)]
+    no_remember: bool,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -113,6 +118,54 @@ enum Command {
     Doctor,
     /// Trust this directory's `.ryter/` overlay (skills, hooks, project config).
     Trust,
+    /// Run the bench's tasks on a model and report tasks solved per dollar.
+    /// Each task runs in a fresh copy under the build hat, is scored by its
+    /// hidden tests, and costs what the model charges; the table goes to
+    /// `~/.ryter/bench/`.
+    Bench {
+        /// standard | hard; every task when absent.
+        #[arg(long)]
+        level: Option<String>,
+        /// One task by name; repeatable.
+        #[arg(long = "task")]
+        tasks: Vec<String>,
+        /// Dollars per model, from 0.11 to 50. Required to run.
+        #[arg(long)]
+        budget: Option<f64>,
+        /// Connection name (default: the last used, or the config's).
+        #[arg(long)]
+        connection: Option<String>,
+        /// Model id (default: the connection's); repeatable, to compare
+        /// models on the same tasks. `connection=model` names another
+        /// connection for that one.
+        #[arg(short = 'm', long = "model")]
+        models: Vec<String>,
+        /// Seconds per task.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        /// The build hat's sandbox: off, workspace (default on Linux), read-only.
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Where to write the run (default: a dated folder under `~/.ryter/bench/`).
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+        /// List the tasks and exit.
+        #[arg(long)]
+        list: bool,
+    },
+    /// The process a bench task's build hat runs under; `ryter bench` starts
+    /// it with the hat's command line. It ends the hat's whole tree when
+    /// the hat ends or its stdin closes, and exits with the hat's code.
+    #[command(hide = true, name = "bench-lead")]
+    BenchLead {
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            required = true,
+            num_args = 1..
+        )]
+        command: Vec<String>,
+    },
     /// List sessions for this directory.
     Sessions,
     /// Open the TUI on a saved session (`latest` if omitted).
@@ -340,6 +393,36 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Some(Command::Bench {
+            level,
+            tasks,
+            budget,
+            connection,
+            models,
+            timeout,
+            sandbox,
+            output,
+            list,
+        }) => match bench_cmd(BenchArgs {
+            level,
+            tasks,
+            budget,
+            connection,
+            models,
+            timeout,
+            sandbox,
+            output,
+            list,
+        }) {
+            Ok(ended_early) => ExitCode::from(u8::from(ended_early)),
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::BenchLead { command }) => {
+            ExitCode::from(u8::try_from(ryter_bench::lead(&command, io::stdin())).unwrap_or(1))
+        }
         Some(Command::Doctor) => match doctor_cmd() {
             Ok(ok) => {
                 if ok {
@@ -422,7 +505,9 @@ async fn run_prompt(
         .ok_or_else(|| Error::Config(format!("unknown connection {conn_name}")))?;
     let key = resolve_secret(&cfg, &ConnectionId::new(&conn_name))?;
     let provider = http_provider(conn, key);
-    let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
+    if !cli.no_remember {
+        let _ = config::save_last_route(&home, &config::LastRoute::new(&conn_name, &model));
+    }
     let trusted = config::is_trusted(&cwd);
     // The hat asked for, read before a session is made: a hat that can't
     // be worn must not leave an empty session behind.
@@ -673,6 +758,200 @@ fn models_cmd(connection: Option<&str>) -> ryter_core::Result<()> {
         println!("  {}{price}", m.id);
     }
     Ok(())
+}
+
+struct BenchArgs {
+    level: Option<String>,
+    tasks: Vec<String>,
+    budget: Option<f64>,
+    connection: Option<String>,
+    models: Vec<String>,
+    timeout: u64,
+    sandbox: Option<String>,
+    output: Option<std::path::PathBuf>,
+    list: bool,
+}
+
+/// `ryter bench`: the tasks on one model or several, the table on stdout
+/// and in a file.
+/// Returns whether the run stopped early.
+fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
+    use std::io::Write as _;
+    let level = args
+        .level
+        .as_deref()
+        .map(|l| l.parse::<ryter_bench::Level>().map_err(Error::Config))
+        .transpose()?;
+    let tasks = ryter_bench::select(&args.tasks, level);
+    if tasks.is_empty() {
+        return Err(Error::Config("no matching task".into()));
+    }
+    if args.list {
+        for t in &tasks {
+            println!("{:<22} {:<9} {}", t.name, t.level, t.title);
+        }
+        return Ok(false);
+    }
+    ryter_bench::guard_available().map_err(Error::Config)?;
+    let budget = args.budget.ok_or_else(|| {
+        Error::Config("--budget is required: dollars per model, from 0.11 to 50".into())
+    })?;
+    if !(ryter_bench::RESERVE_USD + 0.01..=50.0).contains(&budget) {
+        return Err(Error::Config(
+            "--budget is dollars from 0.11 (the reserve and a cent) to 50".into(),
+        ));
+    }
+    let home = config::home_dir();
+    let cfg = config::load(None, false)?;
+    let last = config::load_last_route(&home);
+    // The seats: each `-m`, on `--connection` unless it says `connection=`;
+    // none given, the route's own model.
+    if args.models.iter().any(|m| m.trim().is_empty()) {
+        return Err(Error::Config("-m needs a model id".into()));
+    }
+    let mut seats = Vec::new();
+    let given: Vec<(Option<String>, Option<String>)> = if args.models.is_empty() {
+        vec![(args.connection.clone(), None)]
+    } else {
+        args.models
+            .iter()
+            .map(|m| match m.split_once('=') {
+                Some((c, m)) if !c.is_empty() && !m.is_empty() => {
+                    (Some(c.to_string()), Some(m.to_string()))
+                }
+                _ => (args.connection.clone(), Some(m.clone())),
+            })
+            .collect()
+    };
+    for (connection, model) in given {
+        let (conn_name, model) = config::resolve_route(
+            &cfg,
+            last.as_ref(),
+            connection.as_deref(),
+            model.as_deref(),
+            |c| config::has_secret(&cfg, c),
+        );
+        if !cfg.connections.contains_key(&conn_name) {
+            return Err(Error::Config(format!("unknown connection {conn_name}")));
+        }
+        if !config::has_secret(&cfg, &conn_name) {
+            return Err(Error::Config(format!(
+                "connection {conn_name} has no API key"
+            )));
+        }
+        let seat = ryter_bench::Seat::new(conn_name, model);
+        if !seats.contains(&seat) {
+            seats.push(seat);
+        }
+    }
+    let sandbox = match args.sandbox {
+        Some(s) => s.parse::<SandboxProfile>()?.to_string(),
+        None => ryter_bench::default_sandbox().to_string(),
+    };
+    let binary = ryter_bench::own_binary().map_err(Error::Io)?;
+    let dir = match args.output {
+        Some(dir) => dir,
+        None => {
+            let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
+            ryter_bench::fresh_dir(&home.join("bench"), &ryter_bench::folder(&stamp, &seats))
+                .map_err(|e| Error::Io(format!("could not make the run's folder: {e}")))?
+        }
+    };
+    // Ctrl-C ends the run the way the panel's stop does: the task in
+    // progress is ended, with everything it started, and nothing more is
+    // paid for. The build hat runs in a group of its own, so the signal
+    // alone would end this process and leave it running.
+    let cancel = ryter_bench::Cancel::default();
+    {
+        let cancel = cancel.clone();
+        std::thread::spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            rt.block_on(async {
+                while tokio::signal::ctrl_c().await.is_ok() {
+                    eprintln!("\nryter bench: stopping after the task in progress is ended");
+                    cancel.cancel();
+                }
+            });
+        });
+    }
+    let opts = ryter_bench::Options {
+        binary,
+        connection: seats[0].connection.clone(),
+        model: seats[0].model.clone(),
+        budget_usd: budget,
+        timeout: std::time::Duration::from_secs(args.timeout),
+        sandbox,
+        dir,
+        cancel,
+    };
+    let on = match seats.as_slice() {
+        [one] => format!("{} ({})", one.model, one.connection),
+        _ => format!("{} models", seats.len()),
+    };
+    println!(
+        "ryter bench: {} task{} on {on}, budget ${budget:.2}{}, {} s per task; the run is in {}",
+        tasks.len(),
+        if tasks.len() == 1 { "" } else { "s" },
+        if seats.len() > 1 { " per model" } else { "" },
+        args.timeout,
+        opts.dir.display()
+    );
+    let mut out = io::stdout();
+    let report = ryter_bench::run_models(&tasks, &seats, &opts, |progress| {
+        use ryter_bench::Progress;
+        match progress {
+            Progress::Model {
+                connection,
+                model,
+                index,
+                total,
+            } if total > 1 => println!("— {model} ({connection}), {} of {total} —", index + 1),
+            Progress::Model { .. } => {}
+            Progress::Started {
+                name,
+                index,
+                total,
+                cap_usd,
+            } => {
+                print!(
+                    "[{}/{total}] {name}: running (cap ${cap_usd:.2}) ",
+                    index + 1
+                );
+            }
+            Progress::Spent { .. } | Progress::Activity { .. } => {}
+            Progress::Scoring { .. } => print!("scoring "),
+            Progress::Finished(r) => match (r.solved, &r.error) {
+                (Some(true), _) => {
+                    println!("✓ {} {:.0}s", ryter_bench::report::usd(r.usd), r.seconds)
+                }
+                (Some(false), _) => println!(
+                    "✗ {} {:.0}s{}",
+                    ryter_bench::report::usd(r.usd),
+                    r.seconds,
+                    if r.timed_out { " (timed out)" } else { "" }
+                ),
+                (None, Some(why)) => println!("skipped: {why}"),
+                (None, None) => println!("not run"),
+            },
+            Progress::Stopped { why } => println!("stopped: {why}"),
+        }
+        let _ = out.flush();
+    });
+    let path = report
+        .save(&opts.dir)
+        .map_err(|e| Error::Io(e.to_string()))?;
+    println!();
+    print!("{}", report.markdown());
+    println!("{}", path.display());
+    // 1 when anything did not go to its end: a model's run stopped (budget,
+    // an unpriced task, a hat that did not start), a cancel, or a report
+    // that could not be written. A script can tell a partial run from a whole one.
+    Ok(report.ended_early())
 }
 
 fn trust_cmd() -> ryter_core::Result<()> {

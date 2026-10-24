@@ -11,6 +11,7 @@ description = "Ratatui frontend for Ryter"
 [dependencies]
 base64.workspace = true
 ryter-core.workspace = true
+ryter-bench.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 tokio.workspace = true
