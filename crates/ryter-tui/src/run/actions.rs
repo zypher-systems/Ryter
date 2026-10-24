@@ -1036,6 +1036,9 @@ fn start_bench(
         sandbox,
         dir,
         cancel: cancel.clone(),
+        // A session's own commands run under this process too, so what a
+        // killed guard leaves behind cannot be told from them here.
+        adopts_orphans: false,
     };
     let on = match seats.as_slice() {
         [one] => format!("{} ({})", one.model, one.connection),
@@ -1049,6 +1052,9 @@ fn start_bench(
         opts.sandbox,
         opts.dir.display()
     ));
+    if let Some(note) = ryter_bench::guard_note(&opts.sandbox) {
+        view.system(format!("benchmark: {note}"));
+    }
     view.bench_running = true;
     cx.bench = Some(cancel);
     let tx = cx.notice_tx.clone();

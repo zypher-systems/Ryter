@@ -17,10 +17,10 @@ pub mod run;
 pub mod task;
 
 pub use compare::{Comparison, ModelRow, Seat, folder, model_folders, run_models, slug};
-pub use lead::{guard_available, lead};
+pub use lead::{adopt_orphans, end_orphans, guard_available, lead};
 pub use report::{Check, Report, Summary, TaskResult};
 pub use run::{
     Cancel, Options, Progress, RESERVE_USD, allowance, check_binary, default_sandbox, fresh_dir,
-    own_binary, run,
+    guard_note, own_binary, run,
 };
 pub use task::{File, Level, Task, select, tasks};

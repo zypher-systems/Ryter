@@ -98,6 +98,29 @@ pub struct Options {
     /// copies are removed once scored.
     pub dir: PathBuf,
     pub cancel: Cancel,
+    /// Whether this process is a subreaper with no children but the bench's
+    /// (`lead::adopt_orphans`), so that what a killed guard left behind can
+    /// be ended by `lead::end_orphans`.
+    pub adopts_orphans: bool,
+}
+
+/// What the start of a run should say about the guard: nothing when the
+/// hat's sandbox keeps it from signalling the guard, else how the guard
+/// can be lost and what then happens.
+pub fn guard_note(sandbox: &str) -> Option<String> {
+    if sandbox == "off" {
+        Some(
+            "the sandbox is off, so the model could end the guard that ends its processes; a run that loses it stops unscored"
+                .into(),
+        )
+    } else if !ryter_core::sandbox::signal_scoping() {
+        Some(
+            "this kernel's Landlock cannot keep the model from ending the guard that ends its processes (signal scoping needs Linux 6.12); a run that loses it stops unscored"
+                .into(),
+        )
+    } else {
+        None
+    }
 }
 
 /// A flag the caller raises to end the run at the next check.
@@ -174,6 +197,7 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
         stopped: None,
         directory: opts.dir.clone(),
         save_error: None,
+        guard_lost: false,
     };
     let _ = fs::create_dir_all(&opts.dir);
     let total = tasks.len();
@@ -224,6 +248,9 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
             break;
         }
         if broken {
+            // A lost guard stops the comparison too: what the model left
+            // behind would see the next model's tests.
+            report.guard_lost = report.results.last().is_some_and(|r| r.guard_lost);
             report.stopped = Some(format!("{}: {why}", task.name));
             break;
         }
@@ -404,12 +431,27 @@ fn execute(
         return result;
     }
     if outcome.status == Some(crate::lead::SURVIVORS) {
-        // The leader could not end the hat's tree, or did not come back to
-        // say it had: something of the model's may still run, so the tree
-        // is not scored. After a timeout as much as after a plain exit.
-        result.error = Some(
-            "processes the model started could not be ended, so the task is not scored".into(),
-        );
+        // The guard was lost: the leader could not end the hat's tree, was
+        // killed (the hat can, where its sandbox does not scope signals),
+        // or did not come back to say. Something of the model's may still
+        // run, so the tree is not scored, after a timeout as much as after
+        // a plain exit, and the run stops. `ryter bench` is a subreaper
+        // with nothing but the bench under it, so it ends what was left.
+        result.guard_lost = true;
+        let left = if opts.adopts_orphans {
+            match crate::lead::end_orphans() {
+                0 => "nothing of it was found running".to_string(),
+                n => format!(
+                    "{n} process{} it left behind ended",
+                    if n == 1 { "" } else { "es" }
+                ),
+            }
+        } else {
+            "what it left behind may still run; end it by hand".to_string()
+        };
+        result.error = Some(format!(
+            "the guard that ends the model's processes was lost (killed, or it could not end them), so the task is not scored; {left}"
+        ));
         return result;
     }
     if outcome.status == Some(crate::lead::UNGUARDED) {
@@ -884,14 +926,18 @@ fn spawn_and_wait(
         end_group(child);
         (ender == Ender::Leader).then_some(crate::lead::SURVIVORS)
     };
+    // A leader that did not exit with a code was ended by a signal, which
+    // the hat can send it (same user, and the leader is its parent): the
+    // tree is then nobody's and may run on, so that counts as survivors.
+    let no_code = (ender == Ender::Leader).then_some(crate::lead::SURVIVORS);
     let status = loop {
         for line in rx.try_iter() {
             each(line);
         }
         match child.try_wait() {
-            Ok(Some(status)) => break status.code(),
+            Ok(Some(status)) => break status.code().or(no_code),
             Ok(None) => {}
-            Err(_) => break None,
+            Err(_) => break no_code,
         }
         if cancel.is_cancelled() {
             cancelled = true;
@@ -1064,6 +1110,30 @@ mod tests {
         );
         assert!(outcome.timed_out);
         assert_eq!(outcome.status, Some(0));
+    }
+
+    /// A leader ended by a signal has no exit code; for a leader that means
+    /// its tree is nobody's, so it is read as survivors. A plain command
+    /// ended the same way is simply without a code.
+    #[cfg(unix)]
+    #[test]
+    fn a_leader_killed_by_a_signal_counts_as_survivors() {
+        for (ender, want) in [
+            (Ender::Leader, Some(crate::lead::SURVIVORS)),
+            (Ender::Group, None),
+        ] {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", "kill -9 $$"]);
+            let outcome = spawn_and_wait(
+                cmd,
+                Duration::from_secs(10),
+                &Cancel::default(),
+                ender,
+                |_| {},
+            );
+            assert!(!outcome.timed_out);
+            assert_eq!(outcome.status, want);
+        }
     }
 
     /// A command that leaves a child in a group of its own still ends with

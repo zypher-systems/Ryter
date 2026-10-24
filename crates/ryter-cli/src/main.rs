@@ -879,6 +879,9 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
             });
         });
     }
+    // This process has no children but the bench's, so what a killed guard
+    // leaves behind is reparented here and ended.
+    let adopts_orphans = ryter_bench::adopt_orphans().is_ok();
     let opts = ryter_bench::Options {
         binary,
         connection: seats[0].connection.clone(),
@@ -888,6 +891,7 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         sandbox,
         dir,
         cancel,
+        adopts_orphans,
     };
     let on = match seats.as_slice() {
         [one] => format!("{} ({})", one.model, one.connection),
@@ -901,6 +905,9 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         args.timeout,
         opts.dir.display()
     );
+    if let Some(note) = ryter_bench::guard_note(&opts.sandbox) {
+        println!("ryter bench: {note}");
+    }
     let mut out = io::stdout();
     let report = ryter_bench::run_models(&tasks, &seats, &opts, |progress| {
         use ryter_bench::Progress;

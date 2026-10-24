@@ -414,9 +414,19 @@ pub fn run_models(
             total,
         });
         let report = run(tasks, &own, &mut on);
+        let guard_lost = report.guard_lost;
         comparison.runs.push(report);
         if let Err(e) = comparison.save(&opts.dir) {
             comparison.save_error = Some(e.to_string());
+        }
+        if guard_lost {
+            // What that model left behind may run on and would see the
+            // next model's tests: no model after it is run.
+            comparison.stopped = Some(format!(
+                "{}: the guard that ends the model's processes was lost; the remaining models are skipped",
+                seat.model
+            ));
+            break;
         }
     }
     if let Some(why) = &comparison.stopped {
@@ -453,6 +463,7 @@ mod tests {
             changed: vec![],
             acceptance: vec![],
             error: None,
+            guard_lost: false,
         }
     }
 
@@ -471,6 +482,7 @@ mod tests {
             stopped: None,
             directory: PathBuf::from("/tmp/x"),
             save_error: None,
+            guard_lost: false,
         }
     }
 

@@ -41,6 +41,10 @@ pub struct TaskResult {
     pub acceptance: Vec<Check>,
     /// Why it was not run or not scored.
     pub error: Option<String>,
+    /// The guard that ends the model's processes was lost on this task:
+    /// not scored, and the run and the comparison stop.
+    #[serde(default)]
+    pub guard_lost: bool,
 }
 
 impl TaskResult {
@@ -63,6 +67,7 @@ impl TaskResult {
             changed: Vec::new(),
             acceptance: Vec::new(),
             error: Some(why),
+            guard_lost: false,
         }
     }
 }
@@ -88,6 +93,10 @@ pub struct Report {
     /// Why the report could not be written, when a save failed.
     #[serde(skip)]
     pub save_error: Option<String>,
+    /// A task's guard was lost: processes the model started may run on, so
+    /// no later model is run either.
+    #[serde(default)]
+    pub guard_lost: bool,
 }
 
 /// The numbers a run is read by.
@@ -270,6 +279,7 @@ mod tests {
             error: solved
                 .is_none()
                 .then(|| "needs: cargo --version".to_string()),
+            guard_lost: false,
         }
     }
 
@@ -301,6 +311,7 @@ mod tests {
             stopped: None,
             directory: PathBuf::from("/tmp/x"),
             save_error: None,
+            guard_lost: false,
         }
     }
 

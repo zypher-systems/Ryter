@@ -3964,6 +3964,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         error: solved
             .is_none()
             .then(|| "needs `cargo --version`".to_string()),
+        guard_lost: false,
     };
     let finished = |r: TaskResult| Notice::Bench(Progress::Finished(r));
     panel::on_notice(
@@ -4013,6 +4014,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         stopped: Some("cancelled before ts-debounce".into()),
         directory: PathBuf::from("/home/me/.ryter/bench/run"),
         save_error: None,
+        guard_lost: false,
     };
     let one = Comparison {
         date: "2026-10-23".into(),

@@ -162,51 +162,86 @@ impl Guard {
         Ok(())
     }
 
-    /// Stop, kill and reap everything under this process until nothing is
-    /// left, or `EMPTY_BY` has passed; whether the tree is empty. Stopped
-    /// first so that nothing forks between the listing and the kill; a
-    /// zombie is reaped when it is ours, and becomes ours when its parent in
-    /// the tree dies.
+    /// Everything under this process, ended; whether the tree is empty.
     fn end_tree(&mut self) -> bool {
-        use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
-        let root = std::process::id();
-        let deadline = Instant::now() + EMPTY_BY;
-        let mut stopped: Vec<u32> = Vec::new();
-        for _ in 0..5 {
-            let fresh: Vec<u32> = descendants(root)
-                .into_iter()
-                .filter(|p| !stopped.contains(p))
-                .collect();
-            if fresh.is_empty() {
-                break;
-            }
-            for pid in &fresh {
-                if let Some(pid) = Pid::from_raw(*pid as i32) {
-                    let _ = kill_process(pid, Signal::STOP);
-                }
-            }
-            stopped.extend(fresh);
+        end_under(std::process::id()).1
+    }
+}
+
+/// Stop, kill and reap everything under `root` until nothing is left, or
+/// `EMPTY_BY` has passed: how many processes were found, and whether the
+/// tree is empty. Stopped first so that nothing forks between the listing
+/// and the kill; a zombie is reaped when it is ours, and becomes ours when
+/// its parent in the tree dies.
+#[cfg(target_os = "linux")]
+fn end_under(root: u32) -> (usize, bool) {
+    use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
+    let deadline = Instant::now() + EMPTY_BY;
+    let mut stopped: Vec<u32> = Vec::new();
+    for _ in 0..5 {
+        let fresh: Vec<u32> = descendants(root)
+            .into_iter()
+            .filter(|p| !stopped.contains(p))
+            .collect();
+        if fresh.is_empty() {
+            break;
         }
-        loop {
-            let found = descendants(root);
-            if found.is_empty() {
-                return true;
+        for pid in &fresh {
+            if let Some(pid) = Pid::from_raw(*pid as i32) {
+                let _ = kill_process(pid, Signal::STOP);
             }
-            for pid in &found {
-                if let Some(pid) = Pid::from_raw(*pid as i32) {
-                    let _ = kill_process(pid, Signal::KILL);
-                }
-            }
-            for pid in &found {
-                if let Some(pid) = Pid::from_raw(*pid as i32) {
-                    let _ = waitpid(Some(pid), WaitOptions::NOHANG);
-                }
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(20));
         }
+        stopped.extend(fresh);
+    }
+    let found = stopped.len();
+    loop {
+        let left = descendants(root);
+        if left.is_empty() {
+            return (found, true);
+        }
+        for pid in &left {
+            if let Some(pid) = Pid::from_raw(*pid as i32) {
+                let _ = kill_process(pid, Signal::KILL);
+            }
+        }
+        for pid in &left {
+            if let Some(pid) = Pid::from_raw(*pid as i32) {
+                let _ = waitpid(Some(pid), WaitOptions::NOHANG);
+            }
+        }
+        if Instant::now() >= deadline {
+            return (found, false);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Make this process a child subreaper, so that what a killed leader leaves
+/// behind is reparented here rather than to `init`, where [`end_orphans`]
+/// can end it. For a process whose only children are the bench's: `ryter
+/// bench`, not the TUI, which has a session's own commands under it.
+pub fn adopt_orphans() -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
+            .map_err(|e| format!("no subreaper: {e}"))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(NO_GUARD.into())
+    }
+}
+
+/// End everything under this process (see [`adopt_orphans`]): how many
+/// processes were found.
+pub fn end_orphans() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        end_under(std::process::id()).0
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        0
     }
 }
 

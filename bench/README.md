@@ -136,7 +136,15 @@ tree is whole however a process detaches (`setsid`, a scrubbed environment, a
 daemon's double fork), and when the hat ends, or the runner ends it, the
 leader stops and kills everything under itself before it exits. A task whose
 tree could not be emptied is not scored, and a leader that did not come back
-to say so within its grace counts the same. macOS has no equivalent (its
+to say so within its grace counts the same. The leader is the hat's parent and
+runs as the same user, so a command of the model's could kill it; the hat's
+Landlock sandbox keeps it from signalling anything outside the sandbox (Linux
+6.12 and later), and where it cannot (the sandbox `off`, an older kernel) the
+run says so at its start. A guard lost that way is a task unscored, the run
+and the comparison stopped (what the model left behind would see the next
+model's tests), and `ryter bench`, which runs as a subreaper with nothing but
+the bench under it, ends what the dead guard left; the TUI cannot tell those
+from a session's own commands and says to end them by hand. macOS has no equivalent (its
 kernel refuses `kqueue`'s `NOTE_TRACK`, which would follow every fork), so a
 process the model detached could not be found with certainty there: the bench
 runs on Linux only, and `ryter bench` and `/benchmark` say so instead of
