@@ -216,16 +216,42 @@ fn parents() -> Vec<(u32, u32)> {
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn parents() -> Vec<(u32, u32)> {
-    let Ok(out) = Command::new("ps").args(["-eo", "pid=,ppid="]).output() else {
-        return Vec::new();
+    parents_by_ps()
+}
+
+/// `(pid, parent pid)` for every process but the `ps` that listed them:
+/// it is a child of this process while it runs, and listing it would keep
+/// a leader's tree from ever looking empty.
+#[cfg(all(unix, any(test, not(target_os = "linux"))))]
+fn parents_by_ps() -> Vec<(u32, u32)> {
+    let (ps, pairs) = ps_listing();
+    pairs.into_iter().filter(|(pid, _)| *pid != ps).collect()
+}
+
+/// The `ps` process's own pid, and every `(pid, parent pid)` it printed.
+#[cfg(all(unix, any(test, not(target_os = "linux"))))]
+fn ps_listing() -> (u32, Vec<(u32, u32)>) {
+    let Ok(child) = Command::new("ps")
+        .args(["-eo", "pid=,ppid="])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return (0, Vec::new());
     };
-    String::from_utf8_lossy(&out.stdout)
+    let ps = child.id();
+    let Ok(out) = child.wait_with_output() else {
+        return (ps, Vec::new());
+    };
+    let pairs = String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter_map(|l| {
             let mut it = l.split_whitespace();
             Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
         })
-        .collect()
+        .collect();
+    (ps, pairs)
 }
 
 /// Whether `pid` runs: a zombie, which runs no code, does not count.
@@ -277,5 +303,20 @@ mod tests {
         let _ = child.wait();
         // No parent walk starts from the sleep's grandparent's parent.
         assert!(!descendants(std::process::id()).contains(&child.id()));
+    }
+
+    /// `ps` lists itself under the process that ran it; the listing used
+    /// for a tree leaves it out, or a leader with nothing under it would
+    /// see a new child at every look.
+    #[test]
+    fn the_ps_listing_leaves_the_ps_itself_out() {
+        let me = std::process::id();
+        let (ps, raw) = ps_listing();
+        assert!(ps != 0, "ps ran");
+        assert!(raw.contains(&(ps, me)), "ps listed itself under us");
+        assert!(
+            !parents_by_ps().iter().any(|(pid, _)| *pid == ps),
+            "the ps is left out"
+        );
     }
 }
