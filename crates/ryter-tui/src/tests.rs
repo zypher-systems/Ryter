@@ -3951,7 +3951,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
         solved,
         usd,
         complete: true,
-        calls: 3,
+        calls: if solved.is_some() { 3 } else { 0 },
         input_tokens: 1,
         cached_tokens: 0,
         output_tokens: 1,

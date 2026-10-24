@@ -87,6 +87,20 @@ test("maxWait: a long burst still runs every maxWait ms", () => {
   assert.deepEqual(runs, [[250, 240], [500, 420]]);
 });
 
+test("maxWait shorter than wait runs at maxWait", () => {
+  const clock = new FakeClock();
+  const { runs, fn } = record(clock);
+  const d = debounce(fn, 100, { clock, maxWait: 50 });
+  d(1);
+  clock.tick(50);
+  assert.deepEqual(runs, [[50, 1]]);
+  d(2);
+  clock.tick(30);
+  d(3);
+  clock.tick(20);
+  assert.deepEqual(runs, [[50, 1], [100, 3]]);
+});
+
 test("maxWait with leading: the first call runs, then every maxWait, then the tail", () => {
   const clock = new FakeClock();
   const { runs, fn } = record(clock);

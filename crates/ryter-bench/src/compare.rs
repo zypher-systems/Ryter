@@ -70,6 +70,8 @@ pub struct ModelRow {
     /// The tasks it did not solve, scored or skipped.
     pub failed: Vec<String>,
     pub stopped: Option<String>,
+    /// Why the model's own report could not be written, when it could not.
+    pub save_error: Option<String>,
 }
 
 impl Comparison {
@@ -116,6 +118,7 @@ impl Comparison {
                     .map(|t| t.name.clone())
                     .collect(),
                 stopped: r.stopped.clone(),
+                save_error: r.save_error.clone(),
             })
             .collect()
     }
@@ -171,7 +174,12 @@ impl Comparison {
                 usd(s.usd_per_solved),
                 one(s.solved_per_usd),
                 one(s.median_minutes),
-                row.stopped.as_deref().unwrap_or("")
+                match (&row.stopped, &row.save_error) {
+                    (None, None) => String::new(),
+                    (Some(s), None) => s.clone(),
+                    (None, Some(e)) => format!("report not written: {e}"),
+                    (Some(s), Some(e)) => format!("{s}; report not written: {e}"),
+                }
             ));
         }
         let tasks = self.tasks();
@@ -251,6 +259,9 @@ impl Comparison {
                 if row.stopped.is_some() {
                     p.push_str(" (stopped)");
                 }
+                if let Some(e) = &row.save_error {
+                    p.push_str(&format!(" (its report could not be written: {e})"));
+                }
                 p
             })
             .collect();
@@ -323,11 +334,20 @@ pub fn folder(stamp: &str, seats: &[Seat]) -> String {
 /// connection's in front where two slugs meet (`a/b` and `a-b`, or one
 /// model on two connections); a number after where they still do.
 pub fn model_folders(seats: &[Seat]) -> Vec<String> {
-    let slugs: Vec<String> = seats.iter().map(|s| slug(&s.model)).collect();
+    // Lower case throughout: a folder is one folder on a file system that
+    // does not tell `Foo` from `foo`, as a Mac's does not.
+    let slugs: Vec<String> = seats
+        .iter()
+        .map(|s| slug(&s.model).to_ascii_lowercase())
+        .collect();
     let mut names: Vec<String> = (0..seats.len())
         .map(|i| {
             if slugs.iter().filter(|n| **n == slugs[i]).count() > 1 {
-                format!("{}-{}", slug(&seats[i].connection), slugs[i])
+                format!(
+                    "{}-{}",
+                    slug(&seats[i].connection).to_ascii_lowercase(),
+                    slugs[i]
+                )
             } else {
                 slugs[i].clone()
             }
@@ -578,6 +598,24 @@ mod tests {
     }
 
     #[test]
+    fn a_models_own_report_that_could_not_be_written_is_said() {
+        let mut c = two();
+        c.runs[1].save_error = Some("Permission denied".into());
+        assert!(c.ended_early());
+        let line = c.headline();
+        assert!(
+            line.contains("(its report could not be written: Permission denied)"),
+            "{line}"
+        );
+        assert!(
+            c.markdown()
+                .contains("| report not written: Permission denied |"),
+            "{}",
+            c.markdown()
+        );
+    }
+
+    #[test]
     fn model_folders_never_meet() {
         let seats = [
             Seat::new("openrouter", "a/b"),
@@ -585,6 +623,8 @@ mod tests {
             Seat::new("anthropic", "claude"),
             Seat::new("openrouter", "claude"),
             Seat::new("openrouter-", "a-b"),
+            Seat::new("x", "Foo"),
+            Seat::new("x", "foo"),
         ];
         let names = model_folders(&seats);
         assert_eq!(
@@ -594,7 +634,9 @@ mod tests {
                 "openrouter-a-b-2",
                 "anthropic-claude",
                 "openrouter-claude",
-                "openrouter-a-b-3"
+                "openrouter-a-b-3",
+                "x-foo",
+                "x-foo-2"
             ]
         );
         assert_eq!(model_folders(&seats[2..3]), ["claude"]);

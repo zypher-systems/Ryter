@@ -30,17 +30,24 @@ pub fn default_sandbox() -> &'static str {
     }
 }
 
-/// `parent/name`, or the first of `name-2`, `name-3`… that does not exist
-/// yet: two runs started in the same minute keep their own folders.
-pub fn fresh_dir(parent: &Path, name: &str) -> PathBuf {
-    let first = parent.join(name);
-    if !first.exists() {
-        return first;
+/// `parent/name`, or the first of `name-2`, `name-3`… that did not exist,
+/// created here and now so that two runs started together cannot pick the
+/// same one: the folder is taken by the `create_dir` that made it.
+pub fn fresh_dir(parent: &Path, name: &str) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(parent)?;
+    let mut n = 1;
+    loop {
+        let path = if n == 1 {
+            parent.join(name)
+        } else {
+            parent.join(format!("{name}-{n}"))
+        };
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
     }
-    (2..)
-        .map(|n| parent.join(format!("{name}-{n}")))
-        .find(|p| !p.exists())
-        .expect("an unused folder name")
 }
 
 /// The `ryter` to run the tasks with: this process's own binary, as long as
@@ -182,7 +189,7 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
         }
         let base = opts.dir.join(&task.name);
         let mut started = false;
-        let result = match needs_met(task, &base) {
+        let result = match needs_met(task, &base, &opts.cancel) {
             Err(why) => TaskResult::skipped(&task.name, &task.title, task.level, why),
             Ok(()) => {
                 started = true;
@@ -196,6 +203,7 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
             }
         };
         let _ = fs::remove_dir_all(base.join("project"));
+        let _ = fs::remove_dir_all(base.join("score"));
         let _ = fs::remove_dir_all(base.join("fixture"));
         let _ = fs::remove_dir_all(base.join("score-home"));
         if let Some(usd) = result.usd {
@@ -241,7 +249,7 @@ pub fn run(tasks: &[&Task], opts: &Options, mut on: impl FnMut(Progress)) -> Rep
 
 /// Whether the task's `needs` succeed here: run from a copy of the fixture,
 /// as the Python runner runs them, in the bare environment.
-fn needs_met(task: &Task, base: &Path) -> Result<(), String> {
+fn needs_met(task: &Task, base: &Path, cancel: &Cancel) -> Result<(), String> {
     if task.needs.is_empty() {
         return Ok(());
     }
@@ -252,7 +260,7 @@ fn needs_met(task: &Task, base: &Path) -> Result<(), String> {
     fs::create_dir_all(&home).map_err(|e| e.to_string())?;
     let env = isolated_env(&home);
     for need in &task.needs {
-        let check = sh(&fixture, need, &env, CHECK_TIMEOUT);
+        let check = sh(&fixture, need, &env, CHECK_TIMEOUT, cancel);
         if check.exit != Some(0) {
             let tail: String = check
                 .output
@@ -285,7 +293,7 @@ fn execute(
     let mut result = TaskResult::skipped(&task.name, &task.title, task.level, String::new());
     result.error = None;
     let project = base.join("project");
-    if let Err(why) = prepare(task, base, cap_usd).and_then(|()| {
+    if let Err(why) = prepare(task, base, cap_usd, &opts.cancel).and_then(|()| {
         ryter_core::config::trust(&project).map_err(|e| format!("could not trust the copy: {e}"))
     }) {
         result.error = Some(why);
@@ -295,6 +303,14 @@ fn execute(
     let env = isolated_env(&home);
     let prompt = task.prompt();
     let _ = fs::write(base.join("prompt.txt"), &prompt);
+    let token = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
     let mut cmd = Command::new(&opts.binary);
     cmd.args([
         "--json",
@@ -309,7 +325,11 @@ fn execute(
     .args(["-p", &prompt])
     .current_dir(&project)
     // Every tool runs in the copy; one of them reads `PWD` first.
-    .env("PWD", &project);
+    .env("PWD", &project)
+    // Everything the hat starts inherits this, and is found by it after:
+    // a process a tool left behind in a session of its own is nobody's
+    // child, but it is still marked.
+    .env(MARK, &token);
     let started = Instant::now();
     let mut out_log = fs::File::create(base.join("stdout.ndjson")).ok();
     let mut err_log = fs::File::create(base.join("stderr.txt")).ok();
@@ -373,6 +393,8 @@ fn execute(
     result.complete = usd_known;
     result.usd = (usd_known && result.calls > 0).then_some(usd);
     let _ = ryter_core::config::untrust(&project);
+    // However the hat ended, nothing it started lives on into the scoring.
+    reap_marked(&token);
     if let Some(why) = outcome.error {
         result.error = Some(why);
         return result;
@@ -396,10 +418,18 @@ fn execute(
         return result;
     }
     on(Progress::Scoring { name: name.clone() });
-    // The files the model left changed, then the hidden tests, copied in
-    // only now and run under the sandbox the build hat had: they import
-    // and build what the model wrote.
-    match score(task, &project, &home, &opts.sandbox, &env) {
+    // The files the model left changed; then the hidden tests, copied into
+    // a copy of the tree made only now and run there under the sandbox the
+    // build hat had: they import and build what the model wrote.
+    match score(
+        task,
+        &project,
+        base,
+        &home,
+        &opts.sandbox,
+        &env,
+        &opts.cancel,
+    ) {
         Ok((changed, acceptance)) => {
             result.changed = changed;
             result.acceptance = acceptance;
@@ -408,20 +438,121 @@ fn execute(
                     && result.acceptance.iter().all(|c| c.exit == Some(0)),
             );
         }
-        Err(why) => result.error = Some(why),
+        Err(why) => {
+            result.cancelled = why == CANCELLED;
+            result.error = Some(why);
+        }
     }
     result
 }
 
+/// The environment variable every process of a task's hat carries.
+const MARK: &str = "RYTER_BENCH_RUN";
+/// The error a scoring cut short by the user returns.
+const CANCELLED: &str = "cancelled";
+
+/// End every process still carrying the hat's mark: on Linux, by its
+/// environment in `/proc`, which finds a process that left the hat's tree
+/// (`setsid`, a daemon) as well as one still in it. Elsewhere nothing
+/// outside the tree can be found this way; the scoring on a copy of the
+/// tree is what stands between such a process and the hidden tests.
+fn reap_marked(token: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        let needle = format!("{MARK}={token}\0");
+        let me = std::process::id();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let mut found = Vec::new();
+            for entry in fs::read_dir("/proc").into_iter().flatten().flatten() {
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|n| n.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                if pid == me {
+                    continue;
+                }
+                let Ok(environ) = fs::read(entry.path().join("environ")) else {
+                    continue;
+                };
+                if environ
+                    .windows(needle.len())
+                    .any(|w| w == needle.as_bytes())
+                {
+                    found.push(pid);
+                }
+            }
+            if found.is_empty() || Instant::now() > deadline {
+                return;
+            }
+            for pid in found {
+                if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
+                    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
+                    let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = token;
+    }
+}
+
+/// `src` copied under `dst`, files and links as they are, build output
+/// (`target`, `node_modules`, `__pycache__`) and `.git` left out; `dst`
+/// is made here. A link met on the way is copied as a link, not followed.
+fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    const SKIP: &[&str] = &["target", "node_modules", "__pycache__", ".git"];
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if SKIP.iter().any(|s| name == *s) {
+            continue;
+        }
+        let from = entry.path();
+        let to = dst.join(&name);
+        let kind = fs::symlink_metadata(&from)?.file_type();
+        if kind.is_symlink() {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(fs::read_link(&from)?, &to)?;
+        } else if kind.is_dir() {
+            copy_tree(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)?;
+        }
+    }
+    Ok(())
+}
+
 /// The scoring, on a thread of its own so the sandbox binds it and what
-/// it starts, and nothing else: the files changed, then the hidden tests.
+/// it starts, and nothing else: the files the model changed, read in its
+/// tree; then its tree copied to `base/score`, the hidden tests written
+/// into the copy, and the acceptance run there. A process the model left
+/// behind has the tree it knows, not the copy. The project itself
+/// replaced by a link is a tampered tree, and the task is not scored.
 fn score(
     task: &Task,
     project: &Path,
+    base: &Path,
     home: &Path,
     sandbox: &str,
     env: &HashMap<String, String>,
+    cancel: &Cancel,
 ) -> Result<(Vec<String>, Vec<Check>), String> {
+    if !project
+        .symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_dir())
+    {
+        return Err("the project folder was replaced by a link or removed".into());
+    }
+    let copy = base.join("score");
+    let _ = fs::remove_dir_all(&copy);
     std::thread::scope(|s| {
         s.spawn(|| {
             if sandbox != "off" {
@@ -430,13 +561,22 @@ fn score(
                     .map_err(|e| format!("could not sandbox the scoring: {e}"))?;
                 ryter_core::sandbox::apply_with(
                     profile,
-                    project,
+                    base,
                     &ryter_core::config::home_dir(),
                     &[home.to_path_buf()],
                 )
                 .map_err(|e| format!("could not sandbox the scoring: {e}"))?;
             }
-            let status = sh(project, "git status --porcelain", env, CHECK_TIMEOUT);
+            let status = sh(
+                project,
+                "git status --porcelain",
+                env,
+                CHECK_TIMEOUT,
+                cancel,
+            );
+            if cancel.is_cancelled() {
+                return Err(CANCELLED.to_string());
+            }
             let changed = status
                 .output
                 .lines()
@@ -444,12 +584,19 @@ fn score(
                 .map(|l| l[3..].to_string())
                 .filter(|p| !p.starts_with(".ryter/") && !p.contains("__pycache__"))
                 .collect();
-            materialize_hidden(&task.hidden, project)?;
-            let acceptance = task
-                .accept
-                .iter()
-                .map(|c| sh(project, c, env, CHECK_TIMEOUT))
-                .collect();
+            copy_tree(project, &copy)
+                .map_err(|e| format!("could not copy the tree to score it: {e}"))?;
+            materialize_hidden(&task.hidden, &copy)?;
+            let mut acceptance = Vec::new();
+            for command in &task.accept {
+                if cancel.is_cancelled() {
+                    return Err(CANCELLED.to_string());
+                }
+                acceptance.push(sh(&copy, command, env, CHECK_TIMEOUT, cancel));
+            }
+            if cancel.is_cancelled() {
+                return Err(CANCELLED.to_string());
+            }
             Ok((changed, acceptance))
         })
         .join()
@@ -511,7 +658,7 @@ fn materialize_hidden(files: &[File], project: &Path) -> Result<(), String> {
 
 /// The fresh copy: the project, its baseline commit, the run file with the
 /// task's checks and the cap. The caller trusts the folder.
-fn prepare(task: &Task, base: &Path, cap_usd: f64) -> Result<(), String> {
+fn prepare(task: &Task, base: &Path, cap_usd: f64, cancel: &Cancel) -> Result<(), String> {
     let project = base.join("project");
     let _ = fs::remove_dir_all(&project);
     materialize(&task.repo, &project).map_err(|e| format!("could not copy the project: {e}"))?;
@@ -525,7 +672,7 @@ fn prepare(task: &Task, base: &Path, cap_usd: f64) -> Result<(), String> {
         "git config commit.gpgsign false",
         "git add -A && git commit -qm baseline",
     ] {
-        let check = sh(&project, step, &env, CHECK_TIMEOUT);
+        let check = sh(&project, step, &env, CHECK_TIMEOUT, cancel);
         if check.exit != Some(0) {
             return Err(format!(
                 "fixture git initialization failed at `{step}`: {}",
@@ -623,15 +770,22 @@ pub fn isolated_env(home: &Path) -> HashMap<String, String> {
     env
 }
 
-/// Run `sh -c command` in `dir` with `env`, for at most `timeout`.
-fn sh(dir: &Path, command: &str, env: &HashMap<String, String>, timeout: Duration) -> Check {
+/// Run `sh -c command` in `dir` with `env`, for at most `timeout`, or
+/// until the run is cancelled.
+fn sh(
+    dir: &Path,
+    command: &str,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    cancel: &Cancel,
+) -> Check {
     let mut cmd = Command::new("sh");
     cmd.args(["-c", command])
         .current_dir(dir)
         .env_clear()
         .envs(env);
     let mut output = String::new();
-    let outcome = spawn_and_wait(cmd, timeout, &Cancel::default(), |line| {
+    let outcome = spawn_and_wait(cmd, timeout, cancel, |line| {
         let (Line::Out(text) | Line::Err(text)) = line;
         output.push_str(&text);
         output.push('\n');
@@ -642,10 +796,13 @@ fn sh(dir: &Path, command: &str, env: &HashMap<String, String>, timeout: Duratio
     if outcome.timed_out {
         output.push_str("timed out\n");
     }
+    if outcome.cancelled {
+        output.push_str("cancelled\n");
+    }
     let tail = output.chars().count().saturating_sub(OUTPUT_TAIL);
     Check {
         command: command.to_string(),
-        exit: if outcome.timed_out {
+        exit: if outcome.timed_out || outcome.cancelled {
             None
         } else {
             outcome.status
@@ -739,12 +896,19 @@ fn spawn_and_wait(
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    for reader in readers {
-        let _ = reader.join();
+    // The readers end when the pipes close. A process the child left
+    // behind holding its stdout keeps them open, so they are not waited
+    // for: what arrives in the next moment is taken, and the rest is left.
+    let drain_until = Instant::now() + Duration::from_millis(500);
+    loop {
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => each(line),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() > drain_until => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
     }
-    for line in rx.try_iter() {
-        each(line);
-    }
+    drop(readers);
     Outcome {
         status,
         timed_out,
@@ -837,11 +1001,11 @@ mod tests {
     #[test]
     fn a_fresh_dir_is_numbered_past_one_that_exists() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(fresh_dir(dir.path(), "run"), dir.path().join("run"));
-        fs::create_dir(dir.path().join("run")).unwrap();
-        assert_eq!(fresh_dir(dir.path(), "run"), dir.path().join("run-2"));
-        fs::create_dir(dir.path().join("run-2")).unwrap();
-        assert_eq!(fresh_dir(dir.path(), "run"), dir.path().join("run-3"));
+        let parent = dir.path().join("bench");
+        assert_eq!(fresh_dir(&parent, "run").unwrap(), parent.join("run"));
+        assert!(parent.join("run").is_dir(), "taken as it is picked");
+        assert_eq!(fresh_dir(&parent, "run").unwrap(), parent.join("run-2"));
+        assert_eq!(fresh_dir(&parent, "run").unwrap(), parent.join("run-3"));
         assert!(["workspace", "off"].contains(&default_sandbox()));
     }
 
@@ -941,6 +1105,76 @@ mod tests {
         assert!(!alive(pid), "the sleep in its own session survived");
     }
 
+    /// A process a tool left behind in a session of its own, its parent
+    /// gone, is nobody's descendant; the mark in its environment finds it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_marked_process_whose_parent_is_gone_is_reaped() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("pid");
+        let token = format!("test-{}", std::process::id());
+        let detached = if Command::new("setsid")
+            .arg("true")
+            .status()
+            .is_ok_and(|s| s.success())
+        {
+            format!(
+                "setsid sh -c 'echo $$ > {}; sleep 300' >/dev/null 2>&1 &",
+                marker.display()
+            )
+        } else {
+            eprintln!("no setsid here; nothing to detach with");
+            return;
+        };
+        let status = Command::new("sh")
+            .args(["-c", &detached])
+            .env(MARK, &token)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && !marker.exists() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let pid: i32 = fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
+        let alive = |pid: i32| Path::new(&format!("/proc/{pid}")).exists();
+        assert!(alive(pid), "the detached sleep is up, its parent gone");
+        reap_marked(&token);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && alive(pid) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(pid), "the marked sleep survived the reap");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_tree_is_copied_without_build_output_and_links_stay_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir_all(src.join("a/target")).unwrap();
+        fs::create_dir_all(src.join(".git")).unwrap();
+        fs::write(src.join("a/f.txt"), "f").unwrap();
+        fs::write(src.join("a/target/big"), "x").unwrap();
+        fs::write(src.join(".git/HEAD"), "ref").unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", src.join("a/link")).unwrap();
+        let dst = dir.path().join("dst");
+        copy_tree(&src, &dst).unwrap();
+        assert_eq!(fs::read_to_string(dst.join("a/f.txt")).unwrap(), "f");
+        assert!(!dst.join("a/target").exists() && !dst.join(".git").exists());
+        assert!(
+            dst.join("a/link")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_link(dst.join("a/link")).unwrap(),
+            Path::new("/etc/passwd")
+        );
+    }
+
     #[test]
     fn the_allowance_is_whole_cents_past_the_reserve() {
         assert!((allowance(5.0, 0.0) - 4.9).abs() < 1e-9);
@@ -971,11 +1205,13 @@ mod tests {
     fn sh_captures_output_and_ends_a_command_that_runs_long() {
         let dir = tempfile::tempdir().unwrap();
         let env = isolated_env(dir.path());
+        let none = Cancel::default();
         let ok = sh(
             dir.path(),
             "echo one; echo two >&2; exit 3",
             &env,
             Duration::from_secs(5),
+            &none,
         );
         assert_eq!(ok.exit, Some(3));
         assert!(
@@ -984,12 +1220,51 @@ mod tests {
             ok.output
         );
         let started = Instant::now();
-        let slow = sh(dir.path(), "sleep 30", &env, Duration::from_millis(300));
+        let slow = sh(
+            dir.path(),
+            "sleep 30",
+            &env,
+            Duration::from_millis(300),
+            &none,
+        );
         assert_eq!(slow.exit, None);
         assert!(slow.output.contains("timed out"));
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "the group was ended"
+        );
+        // A cancel ends a check the same way, and says so.
+        let cancel = Cancel::default();
+        let c = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(200));
+            c.cancel();
+        });
+        let started = Instant::now();
+        let cut = sh(
+            dir.path(),
+            "sleep 30",
+            &env,
+            Duration::from_secs(30),
+            &cancel,
+        );
+        assert_eq!(cut.exit, None);
+        assert!(cut.output.contains("cancelled"), "{}", cut.output);
+        assert!(started.elapsed() < Duration::from_secs(10));
+        // A child that leaves a process holding its stdout does not hang the wait.
+        let started = Instant::now();
+        let held = sh(
+            dir.path(),
+            "sleep 30 & echo started",
+            &env,
+            Duration::from_secs(30),
+            &none,
+        );
+        assert_eq!(held.exit, Some(0));
+        assert!(held.output.contains("started"), "{}", held.output);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "waited on the inherited pipe"
         );
     }
 
@@ -1033,11 +1308,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut task = crate::task::select(&["slugify".into()], None)[0].clone();
         task.needs = vec!["false".into()];
-        let why = needs_met(&task, dir.path()).unwrap_err();
+        let none = Cancel::default();
+        let why = needs_met(&task, dir.path(), &none).unwrap_err();
         assert!(why.starts_with("needs `false`"), "{why}");
         task.needs = vec!["true".into()];
-        assert_eq!(needs_met(&task, dir.path()), Ok(()));
-        prepare(&task, dir.path(), 0.5).unwrap();
+        assert_eq!(needs_met(&task, dir.path(), &none), Ok(()));
+        prepare(&task, dir.path(), 0.5, &none).unwrap();
         let project = dir.path().join("project");
         assert!(project.join(".git").is_dir());
         assert_eq!(

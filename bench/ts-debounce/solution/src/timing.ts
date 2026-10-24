@@ -92,7 +92,8 @@ export function debounce<A extends unknown[], R>(
 
   const leadingEdge = (time: number): void => {
     lastInvokeTime = time;
-    timer = clock.setTimeout(timerExpired, wait);
+    // The first timer is the sooner of the wait and the maxWait deadline.
+    timer = clock.setTimeout(timerExpired, maxWait === undefined ? wait : Math.min(wait, maxWait));
     if (leading) invoke(time);
   };
 

@@ -829,10 +829,14 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
         None => ryter_bench::default_sandbox().to_string(),
     };
     let binary = ryter_bench::own_binary().map_err(Error::Io)?;
-    let dir = args.output.unwrap_or_else(|| {
-        let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
-        ryter_bench::fresh_dir(&home.join("bench"), &ryter_bench::folder(&stamp, &seats))
-    });
+    let dir = match args.output {
+        Some(dir) => dir,
+        None => {
+            let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
+            ryter_bench::fresh_dir(&home.join("bench"), &ryter_bench::folder(&stamp, &seats))
+                .map_err(|e| Error::Io(format!("could not make the run's folder: {e}")))?
+        }
+    };
     // Ctrl-C ends the run the way the panel's stop does: the task in
     // progress is ended, with everything it started, and nothing more is
     // paid for. The build hat runs in a group of its own, so the signal

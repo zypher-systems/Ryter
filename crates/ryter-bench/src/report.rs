@@ -96,7 +96,8 @@ pub struct Summary {
     /// Tasks that were scored.
     pub tasks: usize,
     pub solved: usize,
-    /// `None` when a scored task went unpriced.
+    /// Everything the run spent, scored tasks and one cut short alike;
+    /// `None` when a task that made calls went unpriced.
     pub usd: Option<f64>,
     pub usd_per_solved: Option<f64>,
     pub solved_per_usd: Option<f64>,
@@ -109,8 +110,11 @@ impl Report {
     pub fn summary(&self) -> Summary {
         let scored: Vec<&TaskResult> = self.results.iter().filter(|r| r.solved.is_some()).collect();
         let solved = scored.iter().filter(|r| r.solved == Some(true)).count();
-        let priced = !scored.is_empty() && scored.iter().all(|r| r.usd.is_some());
-        let usd = priced.then(|| scored.iter().map(|r| r.usd.unwrap_or(0.0)).sum::<f64>());
+        // The cost is what was paid, whether or not the task was scored: a
+        // task cut short after calls was paid for too.
+        let paid: Vec<&TaskResult> = self.results.iter().filter(|r| r.calls > 0).collect();
+        let priced = !paid.is_empty() && paid.iter().all(|r| r.usd.is_some());
+        let usd = priced.then(|| paid.iter().map(|r| r.usd.unwrap_or(0.0)).sum::<f64>());
         let mut seconds: Vec<f64> = scored.iter().map(|r| r.seconds).collect();
         seconds.sort_by(f64::total_cmp);
         let median = match seconds.len() {
@@ -253,7 +257,7 @@ mod tests {
             solved,
             usd,
             complete: true,
-            calls: 3,
+            calls: if solved.is_some() { 3 } else { 0 },
             input_tokens: 10,
             cached_tokens: 5,
             output_tokens: 2,
@@ -267,6 +271,14 @@ mod tests {
                 .is_none()
                 .then(|| "needs: cargo --version".to_string()),
         }
+    }
+
+    fn cut_short(name: &str, usd: f64) -> TaskResult {
+        let mut r = result(name, None, Some(usd), 30.0);
+        r.calls = 3;
+        r.cancelled = true;
+        r.error = Some("cancelled".into());
+        r
     }
 
     fn report() -> Report {
@@ -308,6 +320,21 @@ mod tests {
             (None, None, None)
         );
         assert_eq!(s.solved, 2);
+        // A task cut short after calls is paid for, and the cost says so.
+        let mut r = report();
+        r.results.push(cut_short("e", 0.2));
+        let s = r.summary();
+        assert!((s.usd.unwrap() - 0.5).abs() < 1e-9, "{:?}", s.usd);
+        assert!((s.usd_per_solved.unwrap() - 0.25).abs() < 1e-9);
+        assert_eq!((s.tasks, s.solved, s.skipped), (3, 2, 2));
+        let mut only = report();
+        only.results = vec![cut_short("a", 0.3)];
+        assert_eq!(only.summary().usd, Some(0.3));
+        assert!(
+            only.headline().starts_with("0/0 solved for $0.300"),
+            "{}",
+            only.headline()
+        );
     }
 
     #[test]

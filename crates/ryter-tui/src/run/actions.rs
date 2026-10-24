@@ -1012,6 +1012,16 @@ fn start_bench(
         }
     };
     let stamp = ryter_core::clock::stamp().replace([' ', ':'], "-");
+    let dir = match ryter_bench::fresh_dir(
+        &cx.home.join("bench"),
+        &ryter_bench::folder(&stamp, &seats),
+    ) {
+        Ok(dir) => dir,
+        Err(e) => {
+            view.error(format!("benchmark: could not make the run's folder: {e}"));
+            return;
+        }
+    };
     let cancel = ryter_bench::Cancel::default();
     let opts = ryter_bench::Options {
         binary,
@@ -1020,7 +1030,7 @@ fn start_bench(
         budget_usd,
         timeout: std::time::Duration::from_secs(600),
         sandbox,
-        dir: ryter_bench::fresh_dir(&cx.home.join("bench"), &ryter_bench::folder(&stamp, &seats)),
+        dir,
         cancel: cancel.clone(),
     };
     let on = match seats.as_slice() {

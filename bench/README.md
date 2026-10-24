@@ -129,7 +129,11 @@ environment for its login, a per-task cap in the copy's `.ryter/config.toml`,
 `--no-remember` so the run leaves the user's default connection and last model
 alone), and is scored by its hidden tests in the bare environment described
 below, under the same sandbox as the build hat had: the tests import and build
-what the model wrote. The hidden tests travel in the binary deflated and
+what the model wrote. The scoring is done on a copy of the model's tree made
+only then (build output and `.git` left out), after every process the hat
+started has been ended, those that left its tree included (on Linux they are
+found by a mark in their environment): a process the model left behind has the
+tree it knows, not the copy the hidden tests go into. The hidden tests travel in the binary deflated and
 masked, so the binary, which the sandbox lets a model read, does not show them
 to `grep`; a cover, not a secret. The run goes to
 `~/.ryter/bench/<date-time>-<model>/` (`-2`, `-3` when the minute's name is
@@ -138,7 +142,8 @@ events and stderr; the project copies are removed once scored. The budget, the
 reserve and the per-task cap work as in the comparison runner; `--sandbox` is
 the build hat's (`workspace` on a Linux whose kernel has Landlock, `off`
 elsewhere). Ctrl-C, or quitting the TUI, ends the task in progress with
-everything it started and skips the rest; a task cut short is not scored. The
+everything it started and skips the rest; a task cut short, in the model's
+turn or in its scoring, is not scored, and what it cost still counts. The
 command exits 1 whenever the run did not go to its end. The tool comparison
 stays here in `bench/compare.py`, since it depends on which other tools are
 installed and how each reports its cost.
