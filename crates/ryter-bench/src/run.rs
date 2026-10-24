@@ -20,6 +20,16 @@ use std::time::{Duration, Instant};
 use crate::report::{Check, Report, TaskResult};
 use crate::task::{File, Task};
 
+/// The sandbox a run defaults to: Landlock's `workspace` where it exists,
+/// `off` elsewhere.
+pub fn default_sandbox() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "workspace"
+    } else {
+        "off"
+    }
+}
+
 /// The `ryter` to run the tasks with: this process's own binary, as long as
 /// it is still there. A rebuild while ryter runs replaces the file, and the
 /// bench would otherwise fail every task with "No such file or directory".

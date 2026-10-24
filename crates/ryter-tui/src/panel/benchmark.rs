@@ -168,7 +168,7 @@ impl Benchmark {
                 "sandbox",
                 Kind::Select {
                     options: vec!["workspace".into(), "off".into()],
-                    idx: usize::from(!cfg!(target_os = "linux")),
+                    idx: usize::from(view.bench_sandbox != "workspace"),
                 },
             ),
             Field::new("start", "start the run", Kind::Action),

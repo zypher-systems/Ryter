@@ -196,6 +196,9 @@ pub struct View {
     pub busy: bool,
     /// A `/benchmark` run is going in its thread.
     pub bench_running: bool,
+    /// The sandbox `/benchmark` offers first: the platform's, set at start;
+    /// `workspace` until then, so a test sees one screen on every platform.
+    pub bench_sandbox: &'static str,
     /// Cancel requested.
     pub cancelling: bool,
     /// `Ctrl+O`: every edit's diff shown whole instead of folded.
@@ -512,6 +515,7 @@ impl View {
             tz_offset: 0,
             busy: false,
             bench_running: false,
+            bench_sandbox: "workspace",
             cancelling: false,
             diffs_expanded: false,
             cwd,

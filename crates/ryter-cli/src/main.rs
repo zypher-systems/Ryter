@@ -819,8 +819,7 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     }
     let sandbox = match args.sandbox {
         Some(s) => s.parse::<SandboxProfile>()?.to_string(),
-        None if cfg!(target_os = "linux") => "workspace".to_string(),
-        None => "off".to_string(),
+        None => ryter_bench::default_sandbox().to_string(),
     };
     let binary = ryter_bench::own_binary().map_err(Error::Io)?;
     let dir = args.output.unwrap_or_else(|| {

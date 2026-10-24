@@ -273,6 +273,7 @@ pub fn run(opts: TuiOpts) -> ryter_core::Result<()> {
 
     // -- view -----------------------------------------------------------------
     let mut view = View::new(conn_name.clone(), model.clone(), display_home_path(&cwd));
+    view.bench_sandbox = ryter_bench::default_sandbox();
     populate_view(
         &mut view,
         &cfg,
