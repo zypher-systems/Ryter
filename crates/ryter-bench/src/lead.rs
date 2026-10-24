@@ -34,6 +34,7 @@ pub const UNGUARDED: i32 = 122;
 /// How long the hat has to end after `TERM` before its tree is killed.
 const GRACE: Duration = Duration::from_secs(10);
 /// How long the tree under the leader has to empty once killed.
+#[cfg(target_os = "linux")]
 const EMPTY_BY: Duration = Duration::from_secs(10);
 
 /// Run `command` as the hat under this process and return the exit code to
