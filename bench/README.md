@@ -130,17 +130,19 @@ environment for its login, a per-task cap in the copy's `.ryter/config.toml`,
 alone), and is scored by its hidden tests in the bare environment described
 below, under the same sandbox as the build hat had: the tests import and build
 what the model wrote. The hat runs under a leader process of Ryter's own
-(`ryter bench-lead`), which on Linux is a child subreaper: a process of the
-hat's whose parent exits is reparented to the leader rather than to `init`, so
-the hat's tree is whole however a process detaches (`setsid`, a scrubbed
-environment, a daemon's double fork), and when the hat ends, or the runner
-ends it, the leader stops and kills everything under itself before it exits.
-A task whose tree could not be emptied is not scored. The scoring is done on
-a copy of the model's tree made only then (build output and `.git` left out).
-On macOS there is no subreaper: the leader ends what is still in the tree,
-and a process whose parent has already exited is not found; with the sandbox
-`off` (the default there) such a process could read the copy the hidden
-tests go into. The hidden tests travel in the binary deflated and
+(`ryter bench-lead`), which guards the hat's tree with what the kernel
+offers: on Linux it is a child subreaper, so a process of the hat's whose
+parent exits is reparented to the leader rather than to `init`; on macOS it
+is `kqueue` process tracking, so the kernel reports every fork in the hat's
+tree and follows the children, and the hat's own process has to be reported
+before it is let run. Either way the tree is whole however a process detaches
+(`setsid`, a scrubbed environment, a daemon's double fork), and when the hat
+ends, or the runner ends it, the leader stops and kills everything under the
+guard before it exits. A task whose tree could not be guarded is not run; one
+whose tree could not be emptied is not scored; a leader that did not come
+back to say so within its grace counts the same. The scoring is done on a
+copy of the model's tree made only then (build output and `.git` left out).
+The hidden tests travel in the binary deflated and
 masked, so the binary, which the sandbox lets a model read, does not show them
 to `grep`; a cover, not a secret. The run goes to
 `~/.ryter/bench/<date-time>-<model>/` (`-2`, `-3` when the minute's name is

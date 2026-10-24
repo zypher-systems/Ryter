@@ -404,11 +404,25 @@ fn execute(
         return result;
     }
     if outcome.status == Some(crate::lead::SURVIVORS) {
-        // The leader could not end the hat's tree: something of the
-        // model's may still run, so the tree is not scored.
+        // The leader could not end the hat's tree, or did not come back to
+        // say it had: something of the model's may still run, so the tree
+        // is not scored. After a timeout as much as after a plain exit.
         result.error = Some(
             "processes the model started could not be ended, so the task is not scored".into(),
         );
+        return result;
+    }
+    if outcome.status == Some(crate::lead::UNGUARDED) {
+        // The leader could not guard the hat's tree here and did not run
+        // the hat (or ended it as soon as that was known).
+        result.error = Some(format!(
+            "the hat's tree could not be guarded, so the task is not scored: {}",
+            if last_err.is_empty() {
+                "see the task's stderr".to_string()
+            } else {
+                last_err
+            }
+        ));
         return result;
     }
     if result.calls == 0 && outcome.status != Some(0) && !outcome.timed_out {
@@ -847,7 +861,11 @@ fn spawn_and_wait(
     let started = Instant::now();
     let mut timed_out = false;
     let mut cancelled = false;
-    let mut end = |child: &mut Child, each: &mut dyn FnMut(Line)| {
+    // Ends the child and gives its exit code, which for a leader says
+    // whether the hat's tree was emptied: a leader that did not exit on its
+    // own within the grace had to be ended as a group, and that counts as
+    // survivors, since nothing then says the tree was empty.
+    let mut end = |child: &mut Child, each: &mut dyn FnMut(Line)| -> Option<i32> {
         if ender == Ender::Leader {
             // The leader ends the hat and its tree on its own once its
             // stdin closes; its output keeps coming until then.
@@ -857,13 +875,14 @@ fn spawn_and_wait(
                 for line in rx.try_iter() {
                     each(line);
                 }
-                if let Ok(Some(_)) = child.try_wait() {
-                    return;
+                if let Ok(Some(status)) = child.try_wait() {
+                    return status.code().or(Some(crate::lead::SURVIVORS));
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
         end_group(child);
+        (ender == Ender::Leader).then_some(crate::lead::SURVIVORS)
     };
     let status = loop {
         for line in rx.try_iter() {
@@ -876,13 +895,11 @@ fn spawn_and_wait(
         }
         if cancel.is_cancelled() {
             cancelled = true;
-            end(&mut child, &mut each);
-            break None;
+            break end(&mut child, &mut each);
         }
         if started.elapsed() >= timeout {
             timed_out = true;
-            end(&mut child, &mut each);
-            break None;
+            break end(&mut child, &mut each);
         }
         std::thread::sleep(Duration::from_millis(50));
     };
@@ -1016,6 +1033,37 @@ mod tests {
         fs::create_dir(project.join("tests/hidden.rs")).unwrap();
         let why = materialize_hidden(&files, &project).unwrap_err();
         assert!(why.contains("is a folder"), "{why}");
+    }
+
+    /// A leader ended on a timeout still has its exit code read, since 121
+    /// there means the tree was not emptied; a stand-in leader exits 121
+    /// when its stdin closes.
+    #[cfg(unix)]
+    #[test]
+    fn a_leaders_exit_code_survives_the_timeout() {
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "read x; exit 121"]);
+        let outcome = spawn_and_wait(
+            cmd,
+            Duration::from_millis(300),
+            &Cancel::default(),
+            Ender::Leader,
+            |_| {},
+        );
+        assert!(outcome.timed_out);
+        assert_eq!(outcome.status, Some(crate::lead::SURVIVORS));
+        // And a leader that exits clean after the close says so.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "read x; exit 0"]);
+        let outcome = spawn_and_wait(
+            cmd,
+            Duration::from_millis(300),
+            &Cancel::default(),
+            Ender::Leader,
+            |_| {},
+        );
+        assert!(outcome.timed_out);
+        assert_eq!(outcome.status, Some(0));
     }
 
     /// A command that leaves a child in a group of its own still ends with

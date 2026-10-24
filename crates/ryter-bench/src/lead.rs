@@ -2,20 +2,25 @@
 //! runner and the hat, whose only children are the hat and whatever the
 //! hat's tree leaves behind.
 //!
-//! On Linux the leader is a child subreaper (`PR_SET_CHILD_SUBREAPER`): a
-//! process under it whose parent exits is reparented to the leader, not to
-//! `init`. So the hat's tree, walked by parent pid from the leader, is whole
-//! at every moment, whatever a process does with its session (`setsid`), its
-//! group, or its environment; nothing can leave it. When the hat ends, or the
-//! runner asks for the end (the leader's stdin closes, which also happens
-//! when the runner itself dies), the leader stops every process under
-//! itself, kills it, reaps it, and exits with the hat's exit code. On the
-//! other platforms there is no subreaper: the leader sees the tree while it
-//! stands, and a process whose parent has exited is lost to it; the docs say
-//! so.
+//! The leader guards the hat's tree with what the kernel offers. On Linux it
+//! is a child subreaper (`PR_SET_CHILD_SUBREAPER`): a process under it whose
+//! parent exits is reparented to the leader, not to `init`, so the tree
+//! walked by parent pid from the leader is whole at every moment, whatever a
+//! process does with its session (`setsid`), its group or its environment.
+//! On macOS it is `kqueue` process tracking (`EVFILT_PROC` with
+//! `NOTE_TRACK`): the kernel reports every fork in the leader's subtree and
+//! follows the children, so every process the hat's tree ever had is known
+//! by pid, orphaned or not, and the hat's own process has to show up there
+//! before the hat is let run. Nothing can leave either guard. When the hat
+//! ends, or the runner asks for the end (the leader's stdin closes, which
+//! also happens when the runner itself dies), the leader stops every process
+//! under the guard, kills it, waits for it to be gone, and exits with the
+//! hat's exit code. Where the tree cannot be guarded, the hat is not run;
+//! where it could not be emptied, the leader says so in its exit code, and
+//! the runner scores neither.
 
 use std::io::Read;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -23,6 +28,10 @@ use std::time::{Duration, Instant};
 /// The leader's exit code when processes under it could not be ended; the
 /// runner does not score such a task.
 pub const SURVIVORS: i32 = 121;
+/// The leader's exit code when the hat's tree could not be guarded here, so
+/// the hat was not run (or was ended as soon as that was known); the runner
+/// does not score such a task.
+pub const UNGUARDED: i32 = 122;
 
 /// How long the hat has to end after `TERM` before its tree is killed.
 const GRACE: Duration = Duration::from_secs(10);
@@ -31,14 +40,18 @@ const EMPTY_BY: Duration = Duration::from_secs(10);
 
 /// Run `command` as the hat under this process and return the exit code to
 /// leave with: the hat's own, 128 plus its signal when a signal ended it,
-/// 127 when it could not start, [`SURVIVORS`] when the tree could not be
-/// emptied after it. `control` is read on a thread; when it ends (EOF or a
-/// byte), the hat is ended: `TERM` to its group, `GRACE`, then the tree.
+/// 127 when it could not start, [`UNGUARDED`] when the tree could not be
+/// guarded, [`SURVIVORS`] when it could not be emptied after the hat.
+/// `control` is read on a thread; when it ends (EOF or a byte), the hat is
+/// ended: `TERM` to its group, `GRACE`, then the tree.
 pub fn lead(command: &[String], control: impl Read + Send + 'static) -> i32 {
-    #[cfg(target_os = "linux")]
-    if let Err(e) = rustix::process::set_child_subreaper(Some(rustix::process::getpid())) {
-        eprintln!("ryter bench-lead: no subreaper, the tree is walked instead: {e}");
-    }
+    let mut guard = match Guard::arm() {
+        Ok(guard) => guard,
+        Err(why) => {
+            eprintln!("ryter bench-lead: the hat's tree cannot be guarded here: {why}");
+            return UNGUARDED;
+        }
+    };
     let Some((program, args)) = command.split_first() else {
         eprintln!("ryter bench-lead: no command");
         return 127;
@@ -57,6 +70,16 @@ pub fn lead(command: &[String], control: impl Read + Send + 'static) -> i32 {
             return 127;
         }
     };
+    if let Err(why) = guard.saw(&hat) {
+        // The guard did not prove itself on the hat's own process: nothing
+        // it starts can be trusted to be seen, so it does not get to start.
+        eprintln!("ryter bench-lead: the hat's tree cannot be guarded here: {why}");
+        term_group(&hat);
+        let _ = guard.end_tree();
+        let _ = hat.kill();
+        let _ = hat.wait();
+        return UNGUARDED;
+    }
     let end = Arc::new(AtomicBool::new(false));
     {
         let end = end.clone();
@@ -73,11 +96,7 @@ pub fn lead(command: &[String], control: impl Read + Send + 'static) -> i32 {
             Err(_) => break 1,
         }
         if end.load(Ordering::SeqCst) {
-            #[cfg(unix)]
-            {
-                let group = rustix::process::Pid::from_child(&hat);
-                let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
-            }
+            term_group(&hat);
             let deadline = Instant::now() + GRACE;
             let status = loop {
                 if let Ok(Some(status)) = hat.try_wait() {
@@ -93,13 +112,23 @@ pub fn lead(command: &[String], control: impl Read + Send + 'static) -> i32 {
         std::thread::sleep(Duration::from_millis(50));
     };
     // However the hat ended, nothing of its tree lives on past here.
-    if !end_tree(std::process::id()) {
+    if !guard.end_tree() {
         eprintln!("ryter bench-lead: processes the hat started could not be ended");
         code = SURVIVORS;
     }
     let _ = hat.kill();
     let _ = hat.wait();
     code
+}
+
+fn term_group(hat: &Child) {
+    #[cfg(unix)]
+    {
+        let group = rustix::process::Pid::from_child(hat);
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
+    }
+    #[cfg(not(unix))]
+    let _ = hat;
 }
 
 fn exit_code(status: &std::process::ExitStatus) -> i32 {
@@ -116,55 +145,230 @@ fn exit_code(status: &std::process::ExitStatus) -> i32 {
     1
 }
 
-/// Stop, kill and reap everything under `root` until nothing is left, or
-/// `EMPTY_BY` has passed; whether the tree is empty. Stopped first so that
-/// nothing forks between the listing and the kill; a zombie is reaped when
-/// it is ours, and becomes ours when its parent in the tree dies.
-#[cfg(unix)]
-fn end_tree(root: u32) -> bool {
-    use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
-    let deadline = Instant::now() + EMPTY_BY;
-    let mut stopped: Vec<u32> = Vec::new();
-    for _ in 0..5 {
-        let fresh: Vec<u32> = descendants(root)
-            .into_iter()
-            .filter(|p| !stopped.contains(p))
-            .collect();
-        if fresh.is_empty() {
-            break;
-        }
-        for pid in &fresh {
-            if let Some(pid) = Pid::from_raw(*pid as i32) {
-                let _ = kill_process(pid, Signal::STOP);
-            }
-        }
-        stopped.extend(fresh);
+/// The subreaper: every process under this one, orphaned or not, is in the
+/// tree walked by parent pid from it.
+#[cfg(target_os = "linux")]
+struct Guard;
+
+#[cfg(target_os = "linux")]
+impl Guard {
+    fn arm() -> Result<Self, String> {
+        rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
+            .map_err(|e| format!("no subreaper: {e}"))?;
+        Ok(Guard)
     }
-    loop {
-        let found = descendants(root);
-        if found.is_empty() {
-            return true;
-        }
-        for pid in &found {
-            if let Some(pid) = Pid::from_raw(*pid as i32) {
-                let _ = kill_process(pid, Signal::KILL);
+
+    /// A subreaper needs no proof: a child is a child.
+    fn saw(&mut self, _hat: &Child) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Stop, kill and reap everything under this process until nothing is
+    /// left, or `EMPTY_BY` has passed; whether the tree is empty. Stopped
+    /// first so that nothing forks between the listing and the kill; a
+    /// zombie is reaped when it is ours, and becomes ours when its parent in
+    /// the tree dies.
+    fn end_tree(&mut self) -> bool {
+        use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
+        let root = std::process::id();
+        let deadline = Instant::now() + EMPTY_BY;
+        let mut stopped: Vec<u32> = Vec::new();
+        for _ in 0..5 {
+            let fresh: Vec<u32> = descendants(root)
+                .into_iter()
+                .filter(|p| !stopped.contains(p))
+                .collect();
+            if fresh.is_empty() {
+                break;
             }
-        }
-        for pid in &found {
-            if let Some(pid) = Pid::from_raw(*pid as i32) {
-                let _ = waitpid(Some(pid), WaitOptions::NOHANG);
+            for pid in &fresh {
+                if let Some(pid) = Pid::from_raw(*pid as i32) {
+                    let _ = kill_process(pid, Signal::STOP);
+                }
             }
+            stopped.extend(fresh);
         }
-        if Instant::now() >= deadline {
-            return false;
+        loop {
+            let found = descendants(root);
+            if found.is_empty() {
+                return true;
+            }
+            for pid in &found {
+                if let Some(pid) = Pid::from_raw(*pid as i32) {
+                    let _ = kill_process(pid, Signal::KILL);
+                }
+            }
+            for pid in &found {
+                if let Some(pid) = Pid::from_raw(*pid as i32) {
+                    let _ = waitpid(Some(pid), WaitOptions::NOHANG);
+                }
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
-#[cfg(not(unix))]
-fn end_tree(_root: u32) -> bool {
-    true
+/// `kqueue` process tracking: this process is registered with `NOTE_TRACK`,
+/// so the kernel registers every child it forks, and theirs, with
+/// `NOTE_CHILD`, and reports each one's exit. `tracked` is every process of
+/// the tree that has not exited; `broken` is set when the kernel could not
+/// follow a fork (`NOTE_TRACKERR`), after which the tree is not known.
+#[cfg(target_os = "macos")]
+struct Guard {
+    kq: std::os::fd::OwnedFd,
+    tracked: std::collections::HashSet<u32>,
+    broken: bool,
+}
+
+#[cfg(target_os = "macos")]
+impl Guard {
+    /// `NOTE_CHILD`, which rustix leaves unnamed: the event is the child's,
+    /// made by the kernel for a tracked parent's fork.
+    const NOTE_CHILD: u32 = 0x0000_0004;
+
+    fn arm() -> Result<Self, String> {
+        use rustix::event::kqueue::{
+            Event, EventFilter, EventFlags, ProcessEvents, kevent, kqueue,
+        };
+        let kq = kqueue().map_err(|e| format!("no kqueue: {e}"))?;
+        let me = Event::new(
+            EventFilter::Proc {
+                pid: rustix::process::getpid(),
+                flags: ProcessEvents::TRACK | ProcessEvents::EXIT,
+            },
+            EventFlags::ADD | EventFlags::ENABLE,
+            std::ptr::null_mut(),
+        );
+        let mut none: [std::mem::MaybeUninit<Event>; 1] = [std::mem::MaybeUninit::uninit()];
+        // SAFETY: a process filter refers to no file descriptor.
+        unsafe { kevent(&kq, &[me], &mut none[..], Some(Duration::ZERO)) }
+            .map_err(|e| format!("process tracking refused: {e}"))?;
+        Ok(Guard {
+            kq,
+            tracked: std::collections::HashSet::new(),
+            broken: false,
+        })
+    }
+
+    /// Take what the kernel has reported: the first wait is `timeout`, then
+    /// everything already there.
+    fn pump(&mut self, timeout: Duration) {
+        use rustix::event::kqueue::{Event, EventFilter, kevent};
+        let mut wait = timeout;
+        loop {
+            let mut storage: [std::mem::MaybeUninit<Event>; 64] =
+                std::array::from_fn(|_| std::mem::MaybeUninit::uninit());
+            // SAFETY: nothing is added; the process filter refers to no fd.
+            let Ok((events, _)) = (unsafe { kevent(&self.kq, &[], &mut storage[..], Some(wait)) })
+            else {
+                return;
+            };
+            if events.is_empty() {
+                return;
+            }
+            for event in events.iter() {
+                let EventFilter::Proc { pid, flags } = event.filter() else {
+                    continue;
+                };
+                let pid = pid.as_raw_nonzero().get() as u32;
+                let bits = flags.bits();
+                if bits & rustix::event::kqueue::ProcessEvents::TRACKERR.bits() != 0 {
+                    self.broken = true;
+                }
+                if bits & Self::NOTE_CHILD != 0 {
+                    self.tracked.insert(pid);
+                }
+                if bits & rustix::event::kqueue::ProcessEvents::EXIT.bits() != 0 {
+                    self.tracked.remove(&pid);
+                }
+            }
+            wait = Duration::ZERO;
+        }
+    }
+
+    /// The tracking proves itself on the hat: its own process has to be
+    /// reported as a child of ours within a moment, or nothing under it
+    /// would be either.
+    fn saw(&mut self, hat: &Child) -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            self.pump(Duration::from_millis(50));
+            if self.tracked.contains(&hat.id()) {
+                return Ok(());
+            }
+            if self.broken {
+                break;
+            }
+        }
+        Err("the hat's own process was not reported by the kernel's process tracking".into())
+    }
+
+    /// Stop and kill every tracked process until the kernel has reported
+    /// every one of them gone, or `EMPTY_BY` has passed; whether the tree
+    /// is empty and was known whole.
+    fn end_tree(&mut self) -> bool {
+        use rustix::process::{Pid, Signal, WaitOptions, kill_process, waitpid};
+        let deadline = Instant::now() + EMPTY_BY;
+        self.pump(Duration::ZERO);
+        let mut stopped: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for _ in 0..5 {
+            let fresh: Vec<u32> = self
+                .tracked
+                .iter()
+                .copied()
+                .filter(|p| !stopped.contains(p))
+                .collect();
+            if fresh.is_empty() {
+                break;
+            }
+            for pid in &fresh {
+                if let Some(pid) = Pid::from_raw(*pid as i32) {
+                    let _ = kill_process(pid, Signal::STOP);
+                }
+            }
+            stopped.extend(fresh);
+            self.pump(Duration::from_millis(20));
+        }
+        loop {
+            self.pump(Duration::ZERO);
+            if self.tracked.is_empty() {
+                return !self.broken;
+            }
+            for pid in self.tracked.clone() {
+                if let Some(pid) = Pid::from_raw(pid as i32) {
+                    let _ = kill_process(pid, Signal::KILL);
+                    let _ = waitpid(Some(pid), WaitOptions::NOHANG);
+                }
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            self.pump(Duration::from_millis(20));
+        }
+    }
+}
+
+/// No subreaper and no process tracking here: the tree cannot be guarded,
+/// so the hat is not run.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+struct Guard;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+impl Guard {
+    fn arm() -> Result<Self, String> {
+        Err("no subreaper or process tracking on this platform".into())
+    }
+
+    fn saw(&mut self, _hat: &Child) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn end_tree(&mut self) -> bool {
+        false
+    }
 }
 
 /// Every process under `root`, by parent pid: read from `/proc` on Linux

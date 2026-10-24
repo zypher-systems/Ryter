@@ -54,26 +54,41 @@ fn leader(script: &str) -> std::process::Child {
 
 /// A process the hat detached into a session of its own, its parent gone
 /// before the hat ended, with nothing of the hat's left in its environment:
-/// reparented to the leader, found there, and ended before the leader exits.
-#[cfg(target_os = "linux")]
+/// still under the guard (reparented to the subreaper on Linux, followed by
+/// the kernel's process tracking on macOS), and ended before the leader
+/// exits.
 #[test]
 fn a_detached_process_whose_parent_is_gone_is_ended_with_the_hat() {
-    if !Command::new("setsid")
-        .arg("true")
-        .status()
-        .is_ok_and(|s| s.success())
-    {
-        eprintln!("no setsid here; nothing to detach with");
-        return;
-    }
+    let has = |program: &str, arg: &str| {
+        Command::new(program)
+            .arg(arg)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
     let dir = tempfile::tempdir().unwrap();
     let marker = dir.path().join("pid");
     fs::write(&marker, "").unwrap();
-    // The hat backgrounds a detached sleeper with a scrubbed environment,
-    // waits until it has written its pid, and exits clean.
+    // The detached sleeper, with its environment emptied: `setsid` where it
+    // is (Linux), Python's `os.setsid` elsewhere (macOS has no `setsid`).
+    let detached = if has("setsid", "true") {
+        format!(
+            "env -i PATH=\"$PATH\" setsid sh -c 'echo $$ > {m}; exec sleep 300'",
+            m = marker.display()
+        )
+    } else if has("python3", "--version") {
+        format!(
+            "python3 -c 'import os, time; os.setsid(); os.environ.clear(); open({m:?}, \"w\").write(str(os.getpid())); time.sleep(300)'",
+            m = marker.display().to_string()
+        )
+    } else {
+        eprintln!("neither setsid nor python3 here; nothing to detach with");
+        return;
+    };
+    // The hat backgrounds it, waits until it has written its pid, exits clean.
     let script = format!(
-        "env -i PATH=\"$PATH\" setsid sh -c 'echo $$ > {m}; exec sleep 300' </dev/null >/dev/null 2>&1 & \
-         while [ ! -s {m} ]; do sleep 0.05; done; echo done",
+        "{detached} </dev/null >/dev/null 2>&1 & while [ ! -s {m} ]; do sleep 0.05; done; echo done",
         m = marker.display()
     );
     let mut child = leader(&script);
