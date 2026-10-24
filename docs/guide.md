@@ -786,7 +786,7 @@ processes against an isolated loopback provider, including spending, interrupted
 streams, recovery and permission refusals. These checks spend no provider credit.
 
 `python3 bench/run.py --mode simulated` exercises every benchmark
-fixtures. See [the benchmark guide](../bench/README.md) for reference validation,
+fixture. See [the benchmark guide](../bench/README.md) for reference validation,
 false-pass controls, saved reports and explicitly budgeted live runs. A model's
 audit verdict is what it reported; it does not prove the hidden tests will pass.
 

@@ -56,9 +56,6 @@ class Scoring(unittest.TestCase):
         self.assertFalse(row['false_review_pass'])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class Selection(unittest.TestCase):
     def test_tasks_are_picked_by_name_and_level(self):
@@ -76,3 +73,6 @@ class Selection(unittest.TestCase):
             self.assertEqual(names(select_tasks(root, ['a-plain'], 'hard')), [])
             self.assertEqual(select_tasks(root, ['b-hard'])[0][1]['title'], 'b-hard')
 
+
+if __name__ == '__main__':
+    unittest.main()

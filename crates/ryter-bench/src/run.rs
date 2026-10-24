@@ -303,33 +303,27 @@ fn execute(
     let env = isolated_env(&home);
     let prompt = task.prompt();
     let _ = fs::write(base.join("prompt.txt"), &prompt);
-    let token = format!(
-        "{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    );
+    // The hat runs under a leader (`ryter bench-lead`, our own binary):
+    // on Linux a subreaper, so every process of the hat's tree stays under
+    // it however it detaches, and the leader ends the whole tree before it
+    // exits. See `lead.rs`.
     let mut cmd = Command::new(&opts.binary);
-    cmd.args([
-        "--json",
-        "--hat",
-        "build",
-        "--always-approve",
-        "--no-remember",
-        "--sandbox",
-        &opts.sandbox,
-    ])
-    .args(["--connection", &opts.connection, "--model", &opts.model])
-    .args(["-p", &prompt])
-    .current_dir(&project)
-    // Every tool runs in the copy; one of them reads `PWD` first.
-    .env("PWD", &project)
-    // Everything the hat starts inherits this, and is found by it after:
-    // a process a tool left behind in a session of its own is nobody's
-    // child, but it is still marked.
-    .env(MARK, &token);
+    cmd.arg("bench-lead")
+        .arg(&opts.binary)
+        .args([
+            "--json",
+            "--hat",
+            "build",
+            "--always-approve",
+            "--no-remember",
+            "--sandbox",
+            &opts.sandbox,
+        ])
+        .args(["--connection", &opts.connection, "--model", &opts.model])
+        .args(["-p", &prompt])
+        .current_dir(&project)
+        // Every tool runs in the copy; one of them reads `PWD` first.
+        .env("PWD", &project);
     let started = Instant::now();
     let mut out_log = fs::File::create(base.join("stdout.ndjson")).ok();
     let mut err_log = fs::File::create(base.join("stderr.txt")).ok();
@@ -337,55 +331,61 @@ fn execute(
     let mut usd_known = true;
     let mut usd = 0.0;
     let mut last_err = String::new();
-    let outcome = spawn_and_wait(cmd, opts.timeout, &opts.cancel, |line| match line {
-        Line::Err(text) => {
-            if let Some(f) = err_log.as_mut() {
-                let _ = writeln!(f, "{text}");
+    let outcome = spawn_and_wait(
+        cmd,
+        opts.timeout,
+        &opts.cancel,
+        Ender::Leader,
+        |line| match line {
+            Line::Err(text) => {
+                if let Some(f) = err_log.as_mut() {
+                    let _ = writeln!(f, "{text}");
+                }
+                if !text.trim().is_empty() {
+                    last_err = text;
+                }
             }
-            if !text.trim().is_empty() {
-                last_err = text;
-            }
-        }
-        Line::Out(text) => {
-            if let Some(f) = out_log.as_mut() {
-                let _ = writeln!(f, "{text}");
-            }
-            let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) else {
-                return;
-            };
-            match event.get("kind").and_then(|k| k.as_str()) {
-                Some("spend") => {
-                    result.calls += 1;
-                    result.input_tokens += event["input_tokens"].as_u64().unwrap_or(0);
-                    result.cached_tokens += event["cached_tokens"].as_u64().unwrap_or(0);
-                    result.output_tokens += event["output_tokens"].as_u64().unwrap_or(0);
-                    match event["total_usd"].as_f64() {
-                        Some(v) if !event["incomplete"].as_bool().unwrap_or(false) => usd += v,
-                        _ => usd_known = false,
+            Line::Out(text) => {
+                if let Some(f) = out_log.as_mut() {
+                    let _ = writeln!(f, "{text}");
+                }
+                let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    return;
+                };
+                match event.get("kind").and_then(|k| k.as_str()) {
+                    Some("spend") => {
+                        result.calls += 1;
+                        result.input_tokens += event["input_tokens"].as_u64().unwrap_or(0);
+                        result.cached_tokens += event["cached_tokens"].as_u64().unwrap_or(0);
+                        result.output_tokens += event["output_tokens"].as_u64().unwrap_or(0);
+                        match event["total_usd"].as_f64() {
+                            Some(v) if !event["incomplete"].as_bool().unwrap_or(false) => usd += v,
+                            _ => usd_known = false,
+                        }
+                        if usd_known {
+                            on(Progress::Spent {
+                                name: name.clone(),
+                                usd,
+                            });
+                        }
                     }
-                    if usd_known {
-                        on(Progress::Spent {
+                    Some("tool_call") => {
+                        let what = event["summary"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| event["name"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        on(Progress::Activity {
                             name: name.clone(),
-                            usd,
+                            what,
                         });
                     }
+                    _ => {}
                 }
-                Some("tool_call") => {
-                    let what = event["summary"]
-                        .as_str()
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| event["name"].as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    on(Progress::Activity {
-                        name: name.clone(),
-                        what,
-                    });
-                }
-                _ => {}
             }
-        }
-    });
+        },
+    );
     result.seconds = started.elapsed().as_secs_f64();
     result.exit = outcome.status;
     result.timed_out = outcome.timed_out;
@@ -393,8 +393,6 @@ fn execute(
     result.complete = usd_known;
     result.usd = (usd_known && result.calls > 0).then_some(usd);
     let _ = ryter_core::config::untrust(&project);
-    // However the hat ended, nothing it started lives on into the scoring.
-    reap_marked(&token);
     if let Some(why) = outcome.error {
         result.error = Some(why);
         return result;
@@ -403,6 +401,14 @@ fn execute(
         // Cut short by the user: nothing to score, and no hidden test is
         // dropped into a tree a tool may still be writing.
         result.error = Some("cancelled".into());
+        return result;
+    }
+    if outcome.status == Some(crate::lead::SURVIVORS) {
+        // The leader could not end the hat's tree: something of the
+        // model's may still run, so the tree is not scored.
+        result.error = Some(
+            "processes the model started could not be ended, so the task is not scored".into(),
+        );
         return result;
     }
     if result.calls == 0 && outcome.status != Some(0) && !outcome.timed_out {
@@ -446,62 +452,8 @@ fn execute(
     result
 }
 
-/// The environment variable every process of a task's hat carries.
-const MARK: &str = "RYTER_BENCH_RUN";
 /// The error a scoring cut short by the user returns.
 const CANCELLED: &str = "cancelled";
-
-/// End every process still carrying the hat's mark: on Linux, by its
-/// environment in `/proc`, which finds a process that left the hat's tree
-/// (`setsid`, a daemon) as well as one still in it. Elsewhere nothing
-/// outside the tree can be found this way; the scoring on a copy of the
-/// tree is what stands between such a process and the hidden tests.
-fn reap_marked(token: &str) {
-    #[cfg(target_os = "linux")]
-    {
-        let needle = format!("{MARK}={token}\0");
-        let me = std::process::id();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            let mut found = Vec::new();
-            for entry in fs::read_dir("/proc").into_iter().flatten().flatten() {
-                let Some(pid) = entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|n| n.parse::<u32>().ok())
-                else {
-                    continue;
-                };
-                if pid == me {
-                    continue;
-                }
-                let Ok(environ) = fs::read(entry.path().join("environ")) else {
-                    continue;
-                };
-                if environ
-                    .windows(needle.len())
-                    .any(|w| w == needle.as_bytes())
-                {
-                    found.push(pid);
-                }
-            }
-            if found.is_empty() || Instant::now() > deadline {
-                return;
-            }
-            for pid in found {
-                if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
-                    let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
-                    let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
-                }
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        let _ = token;
-    }
-}
 
 /// `src` copied under `dst`, files and links as they are, build output
 /// (`target`, `node_modules`, `__pycache__`) and `.git` left out; `dst`
@@ -785,7 +737,7 @@ fn sh(
         .env_clear()
         .envs(env);
     let mut output = String::new();
-    let outcome = spawn_and_wait(cmd, timeout, cancel, |line| {
+    let outcome = spawn_and_wait(cmd, timeout, cancel, Ender::Group, |line| {
         let (Line::Out(text) | Line::Err(text)) = line;
         output.push_str(&text);
         output.push('\n');
@@ -823,18 +775,37 @@ struct Outcome {
     error: Option<String>,
 }
 
+/// How a child that ran out of time, or whose run was cancelled, is ended.
+#[derive(Clone, Copy, PartialEq)]
+enum Ender {
+    /// `TERM` to its group, a grace, then `KILL` to the group and every
+    /// descendant listed before.
+    Group,
+    /// The child is a `bench-lead`: its stdin is closed and it ends the hat
+    /// and the hat's whole tree itself, then exits; only if it has not
+    /// within [`LEADER_GRACE`] is it ended as a group.
+    Leader,
+}
+
+/// `lead.rs` gives the hat ten seconds after `TERM` and the tree ten more.
+const LEADER_GRACE: Duration = Duration::from_secs(25);
+
 /// Start `cmd` in its own process group, feed its output lines to `each`
-/// as they come, and end the whole group when it runs out of time or the
-/// run is cancelled.
+/// as they come, and end it the `ender`'s way when it runs out of time or
+/// the run is cancelled.
 fn spawn_and_wait(
     mut cmd: Command,
     timeout: Duration,
     cancel: &Cancel,
+    ender: Ender,
     mut each: impl FnMut(Line),
 ) -> Outcome {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(match ender {
+        Ender::Group => Stdio::null(),
+        Ender::Leader => Stdio::piped(),
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -872,9 +843,28 @@ fn spawn_and_wait(
             }
         }));
     }
+    let mut control = child.stdin.take();
     let started = Instant::now();
     let mut timed_out = false;
     let mut cancelled = false;
+    let mut end = |child: &mut Child, each: &mut dyn FnMut(Line)| {
+        if ender == Ender::Leader {
+            // The leader ends the hat and its tree on its own once its
+            // stdin closes; its output keeps coming until then.
+            drop(control.take());
+            let deadline = Instant::now() + LEADER_GRACE;
+            while Instant::now() < deadline {
+                for line in rx.try_iter() {
+                    each(line);
+                }
+                if let Ok(Some(_)) = child.try_wait() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        end_group(child);
+    };
     let status = loop {
         for line in rx.try_iter() {
             each(line);
@@ -886,16 +876,17 @@ fn spawn_and_wait(
         }
         if cancel.is_cancelled() {
             cancelled = true;
-            end_group(&mut child);
+            end(&mut child, &mut each);
             break None;
         }
         if started.elapsed() >= timeout {
             timed_out = true;
-            end_group(&mut child);
+            end(&mut child, &mut each);
             break None;
         }
         std::thread::sleep(Duration::from_millis(50));
     };
+    drop(control);
     // The readers end when the pipes close. A process the child left
     // behind holding its stdout keeps them open, so they are not waited
     // for: what arrives in the next moment is taken, and the rest is left.
@@ -925,7 +916,7 @@ fn end_group(child: &mut Child) {
     {
         // Listed before the hat dies: once it has, its children are
         // nobody's and the tree is gone.
-        let others = descendants(child.id());
+        let others = crate::lead::descendants(child.id());
         let group = rustix::process::Pid::from_child(child);
         let _ = rustix::process::kill_process_group(group, rustix::process::Signal::TERM);
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -940,7 +931,10 @@ fn end_group(child: &mut Child) {
         if !reaped {
             let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
         }
-        for pid in others.into_iter().chain(descendants(child.id())) {
+        for pid in others
+            .into_iter()
+            .chain(crate::lead::descendants(child.id()))
+        {
             if let Some(pid) = rustix::process::Pid::from_raw(pid as i32) {
                 let _ = rustix::process::kill_process_group(pid, rustix::process::Signal::KILL);
                 let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
@@ -949,34 +943,6 @@ fn end_group(child: &mut Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
-}
-
-/// Every process under `root`, by `ps`: the same on Linux and macOS.
-#[cfg(unix)]
-fn descendants(root: u32) -> Vec<u32> {
-    let Ok(out) = Command::new("ps").args(["-eo", "pid=,ppid="]).output() else {
-        return Vec::new();
-    };
-    let pairs: Vec<(u32, u32)> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| {
-            let mut it = l.split_whitespace();
-            Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
-        })
-        .collect();
-    let mut found = vec![root];
-    let mut i = 0;
-    while i < found.len() {
-        let parent = found[i];
-        for (pid, ppid) in &pairs {
-            if *ppid == parent && !found.contains(pid) {
-                found.push(*pid);
-            }
-        }
-        i += 1;
-    }
-    found.remove(0);
-    found
 }
 
 #[cfg(test)]
@@ -1084,7 +1050,13 @@ mod tests {
         cmd.args(["-c", &format!("{detached} & wait")])
             .env_clear()
             .env("PATH", std::env::var("PATH").unwrap_or_default());
-        let outcome = spawn_and_wait(cmd, Duration::from_millis(700), &Cancel::default(), |_| {});
+        let outcome = spawn_and_wait(
+            cmd,
+            Duration::from_millis(700),
+            &Cancel::default(),
+            Ender::Group,
+            |_| {},
+        );
         assert!(outcome.timed_out);
         let pid: i32 = fs::read_to_string(&marker)
             .unwrap_or_default()
@@ -1092,59 +1064,11 @@ mod tests {
             .parse()
             .expect("the grandchild wrote its pid");
         let deadline = Instant::now() + Duration::from_secs(5);
-        let alive = |pid: i32| {
-            Path::new(&format!("/proc/{pid}")).exists()
-                || Command::new("kill")
-                    .args(["-0", &pid.to_string()])
-                    .status()
-                    .is_ok_and(|s| s.success())
-        };
+        let alive = crate::lead::alive;
         while Instant::now() < deadline && alive(pid) {
             std::thread::sleep(Duration::from_millis(100));
         }
         assert!(!alive(pid), "the sleep in its own session survived");
-    }
-
-    /// A process a tool left behind in a session of its own, its parent
-    /// gone, is nobody's descendant; the mark in its environment finds it.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn a_marked_process_whose_parent_is_gone_is_reaped() {
-        let dir = tempfile::tempdir().unwrap();
-        let marker = dir.path().join("pid");
-        let token = format!("test-{}", std::process::id());
-        let detached = if Command::new("setsid")
-            .arg("true")
-            .status()
-            .is_ok_and(|s| s.success())
-        {
-            format!(
-                "setsid sh -c 'echo $$ > {}; sleep 300' >/dev/null 2>&1 &",
-                marker.display()
-            )
-        } else {
-            eprintln!("no setsid here; nothing to detach with");
-            return;
-        };
-        let status = Command::new("sh")
-            .args(["-c", &detached])
-            .env(MARK, &token)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline && !marker.exists() {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let pid: i32 = fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
-        let alive = |pid: i32| Path::new(&format!("/proc/{pid}")).exists();
-        assert!(alive(pid), "the detached sleep is up, its parent gone");
-        reap_marked(&token);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline && alive(pid) {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert!(!alive(pid), "the marked sleep survived the reap");
     }
 
     #[cfg(unix)]

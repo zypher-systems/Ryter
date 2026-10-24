@@ -153,6 +153,19 @@ enum Command {
         #[arg(long)]
         list: bool,
     },
+    /// The process a bench task's build hat runs under; `ryter bench` starts
+    /// it with the hat's command line. It ends the hat's whole tree when
+    /// the hat ends or its stdin closes, and exits with the hat's code.
+    #[command(hide = true, name = "bench-lead")]
+    BenchLead {
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = true,
+            required = true,
+            num_args = 1..
+        )]
+        command: Vec<String>,
+    },
     /// List sessions for this directory.
     Sessions,
     /// Open the TUI on a saved session (`latest` if omitted).
@@ -407,6 +420,9 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Some(Command::BenchLead { command }) => {
+            ExitCode::from(u8::try_from(ryter_bench::lead(&command, io::stdin())).unwrap_or(1))
+        }
         Some(Command::Doctor) => match doctor_cmd() {
             Ok(ok) => {
                 if ok {
@@ -789,6 +805,9 @@ fn bench_cmd(args: BenchArgs) -> ryter_core::Result<bool> {
     let last = config::load_last_route(&home);
     // The seats: each `-m`, on `--connection` unless it says `connection=`;
     // none given, the route's own model.
+    if args.models.iter().any(|m| m.trim().is_empty()) {
+        return Err(Error::Config("-m needs a model id".into()));
+    }
     let mut seats = Vec::new();
     let given: Vec<(Option<String>, Option<String>)> = if args.models.is_empty() {
         vec![(args.connection.clone(), None)]

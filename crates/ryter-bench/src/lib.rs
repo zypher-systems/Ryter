@@ -11,11 +11,13 @@ mod fixtures {
     include!(concat!(env!("OUT_DIR"), "/fixtures.rs"));
 }
 pub mod compare;
+pub mod lead;
 pub mod report;
 pub mod run;
 pub mod task;
 
 pub use compare::{Comparison, ModelRow, Seat, folder, model_folders, run_models, slug};
+pub use lead::lead;
 pub use report::{Check, Report, Summary, TaskResult};
 pub use run::{
     Cancel, Options, Progress, RESERVE_USD, allowance, check_binary, default_sandbox, fresh_dir,

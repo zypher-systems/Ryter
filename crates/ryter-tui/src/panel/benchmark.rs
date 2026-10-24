@@ -923,7 +923,12 @@ impl Panel for Benchmark {
                     Outcome::Stay
                 }
                 _ => {
-                    if super::edit_field(&mut view.composer, key) {
+                    // The highlight goes back to the first match only when
+                    // the filter's text changed: a key that moves within it
+                    // (→, home, end) leaves it where it was, as in /models.
+                    let before = view.composer.text().to_string();
+                    super::edit_field(&mut view.composer, key);
+                    if view.composer.text() != before {
                         self.picking = Some(0);
                     }
                     Outcome::Stay
