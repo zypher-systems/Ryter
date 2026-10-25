@@ -60,6 +60,9 @@ struct Dir {
     files: BTreeMap<String, Vec<String>>,
     /// Data files, counted.
     data: usize,
+    /// The root's data files by name (`README.md`, `Cargo.lock`): worth
+    /// naming there, and from the walk, so what `.gitignore` names stays out.
+    data_names: Vec<String>,
 }
 
 /// The map of the project at `root`, within `chars` characters; `None`
@@ -108,11 +111,21 @@ pub fn build(root: &Path, chars: usize) -> Option<String> {
             .and_then(|e| e.to_str())
             .map(str::to_ascii_lowercase)
             .unwrap_or_default();
+        // A path the gate holds secret (`credentials.py`, a `secrets/`
+        // folder, a key file) is not read for its signatures, and not named:
+        // the map goes to the provider at every session's start.
+        if crate::tools::secret_path(rel) {
+            continue;
+        }
         files += 1;
         *langs.entry(language(&ext)).or_default() += 1;
+        let at_root = parent.is_empty();
         let dir = dirs.entry(parent).or_default();
         if DATA.contains(&ext.as_str()) {
             dir.data += 1;
+            if at_root {
+                dir.data_names.push(name.to_string());
+            }
             continue;
         }
         let size = entry.metadata().map(|m| m.len()).unwrap_or(u64::MAX);
@@ -199,7 +212,9 @@ fn render(
             .collect();
         let more = named.len().saturating_sub(NAMED) + top.data;
         named.truncate(NAMED);
-        let top_data = root_data_names(root);
+        let mut top_data = top.data_names.clone();
+        top_data.sort();
+        top_data.truncate(NAMED);
         let more = more.saturating_sub(top_data.len());
         named.extend(top_data.iter().map(String::as_str));
         if more > 0 {
@@ -243,29 +258,6 @@ fn render(
         ));
     }
     out.trim_end().to_string()
-}
-
-/// The root's data files by name (`README.md`, `Cargo.lock`): the walk
-/// counted them, and the root's are worth naming.
-fn root_data_names(root: &Path) -> Vec<String> {
-    let Ok(rd) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = rd
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
-        .filter(|n| {
-            !n.starts_with('.')
-                && Path::new(n)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| DATA.contains(&e.to_ascii_lowercase().as_str()))
-        })
-        .collect();
-    names.sort();
-    names.truncate(NAMED);
-    names
 }
 
 fn dir_block(key: &str, dir: &Dir) -> String {
@@ -384,6 +376,73 @@ fn head_from(line: &str, from: usize, stops: &[&str]) -> String {
     s
 }
 
+/// `sig` with each default value inside its parentheses replaced by `…`:
+/// `def connect(password="secret", retries=3)` becomes
+/// `def connect(password=…, retries=…)`. A default is a value, and a value
+/// in a signature may be a secret that goes into every session's prompt.
+fn without_defaults(sig: &str) -> String {
+    let mut out = String::with_capacity(sig.len());
+    let mut depth = 0i32;
+    let mut skipping = false;
+    let mut quote: Option<char> = None;
+    let mut inner = 0i32;
+    let chars: Vec<char> = sig.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if skipping {
+            // To the end of the value: a top-level `,` or the closing `)`.
+            match quote {
+                Some(q) => {
+                    if c == q && chars.get(i - 1) != Some(&'\\') {
+                        quote = None;
+                    }
+                }
+                None => match c {
+                    '"' | '\'' => quote = Some(c),
+                    '(' | '[' | '{' => inner += 1,
+                    ')' | ']' | '}' if inner > 0 => inner -= 1,
+                    ',' if inner == 0 => {
+                        skipping = false;
+                        out.push(c);
+                    }
+                    ')' => {
+                        skipping = false;
+                        depth -= 1;
+                        out.push(c);
+                    }
+                    _ => {}
+                },
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '=' if depth > 0
+                && chars.get(i + 1) != Some(&'=')
+                && chars.get(i + 1) != Some(&'>')
+                && !matches!(
+                    chars.get(i.wrapping_sub(1)),
+                    Some('=' | '!' | '<' | '>' | ':')
+                ) =>
+            {
+                out.push('=');
+                out.push('…');
+                skipping = true;
+                inner = 0;
+                i += 1;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
 /// Rust: public items and `impl` blocks, with `fn main`.
 fn rust(text: &str) -> Vec<String> {
     const ITEMS: &[&str] = &[
@@ -450,7 +509,7 @@ fn python(text: &str) -> Vec<String> {
                 out.push(head(t.trim_end_matches(':'), &[]));
                 class = Some(name);
             } else if t.starts_with("def ") || t.starts_with("async def ") {
-                let mut sig = head(t.trim_end_matches(':'), &[]);
+                let mut sig = head(&without_defaults(t.trim_end_matches(':')), &[]);
                 if !sig.contains(')') {
                     sig.push_str("…)");
                 }
@@ -526,7 +585,7 @@ fn typescript(text: &str) -> Vec<String> {
         } else {
             &[" {", "{", ";"]
         };
-        out.push(head(t, stops));
+        out.push(head(&without_defaults(t), stops));
     }
     out
 }
@@ -613,7 +672,7 @@ mod tests {
             "  lib.rs: pub struct Agent · impl Agent · pub fn new(x: u32) -> Self · pub async fn turn(&mut self, text: &str) -> Result<TurnResult, Error> · impl std::fmt::Display for Agent · pub(crate) const CAP: usize · pub enum Mode",
             "  blob.rs",
             "tools/ · 1 file",
-            "  app.py: class Runner(Base) · Runner.__init__ · Runner.run · def main(argv=None) · async def fetch(url,…)",
+            "  app.py: class Runner(Base) · Runner.__init__ · Runner.run · def main(argv=…) · async def fetch(url,…)",
             "web/ · 3 files",
             "  index.ts: export function debounce<T>(fn: T, wait: number): T · export const limit · export interface Options · export default class Timer · function helper() · export type Id",
             "  styles.css",
@@ -690,6 +749,75 @@ mod tests {
         assert_eq!(build(&d.path().join("missing"), DEFAULT_CHARS), None);
         put(d.path(), "a.rs", "pub fn a() {}\n");
         assert_eq!(build(d.path(), 0), None);
+    }
+
+    /// A default value is a value: it is not copied into the prompt. A path
+    /// the gate holds secret is not mapped, and a data file `.gitignore`
+    /// names is not named at the root.
+    #[test]
+    fn defaults_are_redacted_and_secret_paths_and_ignored_files_stay_out() {
+        assert_eq!(
+            without_defaults("def connect(host, password=\"s3cret\", retries=3, opts={'a': 1}):"),
+            "def connect(host, password=…, retries=…, opts=…):"
+        );
+        assert_eq!(
+            without_defaults(
+                "export function connect(password = \"x\", n: number = f(1, 2)): void"
+            ),
+            "export function connect(password =…, n: number =…): void"
+        );
+        assert_eq!(
+            without_defaults("def f(a: int, b: str) -> dict[str, int]:"),
+            "def f(a: int, b: str) -> dict[str, int]:"
+        );
+        assert_eq!(
+            without_defaults("function g(cb = () => 1, x = a == b)"),
+            "function g(cb =…, x =…)"
+        );
+        let d = TempDir::new().unwrap();
+        put(
+            d.path(),
+            "app.py",
+            "def connect(password=\"s3cret\"):\n    pass\n",
+        );
+        put(
+            d.path(),
+            "web/x.ts",
+            "export function connect(token = 'abc', n: number = 3) {}\n",
+        );
+        put(
+            d.path(),
+            "credentials.py",
+            "KEY = 'x'\ndef load(key=\"hidden\"):\n    pass\n",
+        );
+        put(
+            d.path(),
+            "certs/server.key",
+            "-----BEGIN PRIVATE KEY-----\nabc\n",
+        );
+        put(d.path(), ".env", "TOKEN=x\n");
+        put(d.path(), ".gitignore", "secrets.yaml\n");
+        put(d.path(), "secrets.yaml", "k: v\n");
+        put(d.path(), "README.md", "# x\n");
+        let map = build(d.path(), DEFAULT_CHARS).unwrap();
+        assert!(map.contains("app.py: def connect(password=…)"), "{map}");
+        assert!(
+            map.contains("x.ts: export function connect(token =…, n: number =…)"),
+            "{map}"
+        );
+        for absent in [
+            "s3cret",
+            "abc",
+            "hidden",
+            "credentials",
+            "server.key",
+            "certs",
+            "TOKEN",
+            "secrets.yaml",
+        ] {
+            assert!(!map.contains(absent), "{absent:?} in:\n{map}");
+        }
+        assert!(map.lines().nth(1).unwrap().contains("README.md"), "{map}");
     }
 
     #[test]

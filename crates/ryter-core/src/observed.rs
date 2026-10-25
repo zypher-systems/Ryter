@@ -124,33 +124,52 @@ fn carries_a_secret(cmd: &str) -> bool {
                 }
             }
             "-h" | "--header" => {
-                let rest = cmd.to_ascii_lowercase();
-                if rest.contains("authorization")
-                    || rest.contains("bearer ")
-                    || rest.contains("basic ")
-                    || rest.contains("cookie")
-                    || rest.contains("api-key")
-                    || rest.contains("token")
+                // The header is what follows the option, to the end of the
+                // quoted value or the line.
+                let rest: String = words[i + 1..].join(" ").to_ascii_lowercase();
+                let header = rest.split(['\'', '"']).nth(1).unwrap_or(&rest);
+                if header.contains("authorization")
+                    || header.contains("bearer ")
+                    || header.contains("basic ")
+                    || header.contains("cookie")
+                    || header.contains("api-key")
+                    || header.contains("token")
                 {
                     return true;
                 }
             }
             _ => {}
         }
-        let bare = low.trim_matches(|c: char| c == '"' || c == '\'');
-        if bare.starts_with("sk-")
-            || bare.starts_with("ghp_")
-            || bare.starts_with("gho_")
-            || bare.starts_with("github_pat_")
-            || bare.starts_with("xoxb-")
-            || bare.starts_with("xoxp-")
-            || bare.starts_with("akia")
-            || (bare.starts_with("eyj") && bare.len() > 40)
+        // A key by its shape, wherever it sits in the word: on its own,
+        // after `=`, or inside a URL (`https://user:ghp_…@host`).
+        if low
+            .split(['"', '\'', '=', ':', '@', '/', ',', ';'])
+            .any(key_shaped)
         {
             return true;
         }
+        // Credentials in a URL: `scheme://user:pass@host`.
+        if let Some((_, after)) = low.split_once("://") {
+            if let Some((creds, _)) = after.split_once('@') {
+                if creds.contains(':') && !creds.contains('/') {
+                    return true;
+                }
+            }
+        }
     }
     false
+}
+
+/// A token by its shape: a provider's prefix, or a JWT.
+fn key_shaped(word: &str) -> bool {
+    word.starts_with("sk-")
+        || word.starts_with("ghp_")
+        || word.starts_with("gho_")
+        || word.starts_with("github_pat_")
+        || word.starts_with("xoxb-")
+        || word.starts_with("xoxp-")
+        || word.starts_with("akia")
+        || (word.starts_with("eyj") && word.len() > 40)
 }
 
 /// One command, over its runs here.
@@ -663,6 +682,9 @@ mod tests {
             "./deploy --password=pw",
             "psql --password pw -c 'select 1'",
             "echo sk-abcdefghijklmnop | wc -c",
+            "git push https://user:ghp_abcdef0123@github.com/x/y.git main",
+            "curl https://me:pw@host.example/health",
+            "curl -s https://host/x?key=sk-abcdefghijklmnop",
         ] {
             note_command(
                 home.path(),
@@ -681,6 +703,9 @@ mod tests {
             "curl -s https://x/health",
             "git -c user.name=me commit -m x",
             "python3 -m pytest -p no:cacheprovider",
+            "./tool --help | grep -i token",
+            "curl -H 'Accept: application/json' https://host/x",
+            "git clone https://github.com/x/y.git",
         ] {
             assert!(!carries_a_secret(cmd), "{cmd}");
         }

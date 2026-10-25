@@ -82,7 +82,6 @@ fn edit_text(path: &std::path::Path) -> Result<Option<String>> {
 pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let path = require_path(args, ctx)?;
     let file = open_for_read(&path, ctx).map_err(|e| Error::Config(e.to_string()))?;
-    note_seen(ctx, &path);
     let mut reader = BufReader::new(file);
     let offset = args
         .get("offset")
@@ -136,11 +135,16 @@ pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         }
     }
     if number <= offset && number > 0 {
-        out = format!(
+        // None of the file came back: not a read, for the rewrite guard.
+        return Ok(ToolOutput::err(format!(
             "offset {} is past the end of the file ({number} lines)",
             offset.saturating_add(1)
-        );
-    } else if !reader
+        )));
+    }
+    // Seen as it is now, once some of it has been returned (a file with no
+    // lines included); a read that erred or was cancelled has returned.
+    note_seen(ctx, &path);
+    if !reader
         .fill_buf()
         .map_err(|e| Error::Config(e.to_string()))?
         .is_empty()

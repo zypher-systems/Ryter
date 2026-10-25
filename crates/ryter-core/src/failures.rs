@@ -141,13 +141,60 @@ fn tidy(detail: Vec<String>) -> Vec<String> {
     out
 }
 
-fn found(runner: &'static str, failures: Vec<Failure>, mut totals: Vec<String>) -> Option<Digest> {
-    totals.truncate(MAX_TOTALS);
+fn found(runner: &'static str, failures: Vec<Failure>, totals: Vec<String>) -> Option<Digest> {
+    let totals = kept_totals(totals);
     (!failures.is_empty() || !totals.is_empty()).then_some(Digest {
         runner,
         failures,
         totals,
     })
+}
+
+/// The totals a report carries when a run printed more than fit: the ones
+/// that say a failure first, then the last ones, in the runner's order. The
+/// row reads the last line, so a `FAILED` past the cap must not be dropped
+/// for an earlier `ok`.
+fn kept_totals(totals: Vec<String>) -> Vec<String> {
+    if totals.len() <= MAX_TOTALS {
+        return totals;
+    }
+    // `test result: FAILED`, go's `FAIL\tpkg`, `2 failed`, `1 error`; not
+    // cargo's `0 failed` on a passing binary.
+    let says_failed = |t: &str| {
+        let low = t.to_ascii_lowercase();
+        let count_before = |word: &str| {
+            low.find(word).is_some_and(|i| {
+                let digits: String = low[..i]
+                    .chars()
+                    .rev()
+                    .take_while(char::is_ascii_digit)
+                    .collect();
+                !digits.is_empty() && digits.chars().any(|d| d != '0')
+            })
+        };
+        t.contains("FAILED")
+            || t.starts_with("FAIL")
+            || count_before(" failed")
+            || count_before(" error")
+            || count_before(" failing")
+    };
+    let mut keep: Vec<usize> = totals
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| says_failed(t))
+        .map(|(i, _)| i)
+        .take(MAX_TOTALS)
+        .collect();
+    for i in (0..totals.len()).rev() {
+        if keep.len() >= MAX_TOTALS {
+            break;
+        }
+        if !keep.contains(&i) {
+            keep.push(i);
+        }
+    }
+    keep.sort_unstable();
+    keep.into_iter().map(|i| totals[i].clone()).collect()
 }
 
 /// Whether a line is a code frame's (`  3 |   foo();`, `    |      ^`,
@@ -169,6 +216,21 @@ fn cargo(lines: &[&str]) -> Option<Digest> {
             .and_then(|r| r.strip_suffix(" stdout ----"))
             .map(str::to_string)
     };
+    // The closing `failures:` list names the tests that failed. Under
+    // `--show-output` a passing test gets a `---- name stdout ----` block
+    // too, so a block is a failure only when the list names it; with no
+    // list (the output cut short), a block with a panic in it.
+    let listed: Vec<String> = lines
+        .iter()
+        .rposition(|l| l.trim() == "failures:")
+        .map(|at| {
+            lines[at + 1..]
+                .iter()
+                .take_while(|l| l.starts_with(' ') || l.starts_with('\t'))
+                .map(|l| l.trim().to_string())
+                .collect()
+        })
+        .unwrap_or_default();
     let mut failures = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -195,9 +257,18 @@ fn cargo(lines: &[&str]) -> Option<Digest> {
             }
             i += 1;
         }
+        let panicked = detail.iter().position(|l| l.contains("panicked at"));
+        let failed = if listed.is_empty() {
+            panicked.is_some()
+        } else {
+            listed.contains(&name)
+        };
+        if !failed {
+            continue;
+        }
         // What the test printed before it panicked is its own; the panic
         // and the assertion under it are the failure.
-        if let Some(p) = detail.iter().position(|l| l.contains("panicked at")) {
+        if let Some(p) = panicked {
             detail.drain(..p);
         }
         failures.push(Failure {
@@ -809,6 +880,54 @@ test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; 
             ]
         );
         assert_eq!(d.totals, vec!["1 passing (10ms)", "1 failing"]);
+    }
+
+    /// `cargo test -- --show-output` prints a block for every test, passing
+    /// ones included: only those the closing list names are failures. More
+    /// totals than fit keep the failing ones and the last ones.
+    #[test]
+    fn show_output_blocks_of_passing_tests_are_not_failures_and_failed_totals_are_kept() {
+        let out = "running 2 tests\ntest passes ... ok\ntest fails ... FAILED\n\nsuccesses:\n\n---- passes stdout ----\nhello from pass\n\n\nsuccesses:\n    passes\n\nfailures:\n\n---- fails stdout ----\nthread 'fails' panicked at src/lib.rs:9:5:\nassertion failed: false\n\n\nfailures:\n    fails\n\ntest result: FAILED. 1 passed; 1 failed; 0 ignored\n";
+        let d = digest(out).unwrap();
+        assert_eq!(d.failures.len(), 1, "{:?}", d.failures);
+        assert_eq!(d.failures[0].name, "fails");
+        assert_eq!(
+            d.failures[0].detail[0],
+            "thread 'fails' panicked at src/lib.rs:9:5:"
+        );
+        // A block without the list and without a panic is a print, not a failure.
+        let cut = "---- passes stdout ----\nhello\n\n---- fails stdout ----\nthread 'fails' panicked at src/lib.rs:9:5:\nno\n";
+        let d = digest(cut).unwrap();
+        assert_eq!(
+            d.failures
+                .iter()
+                .map(|f| f.name.as_str())
+                .collect::<Vec<_>>(),
+            ["fails"]
+        );
+        // Ten binaries, the third failed: its totals line is kept, and last
+        // lines fill the rest, in order.
+        let mut many = String::new();
+        for i in 0..10 {
+            many.push_str(&format!(
+                "test result: {}. 1 passed; {} failed; 0 ignored\n",
+                if i == 2 { "FAILED" } else { "ok" },
+                if i == 2 { 1 } else { 0 }
+            ));
+        }
+        let d = digest(&many).unwrap();
+        assert_eq!(d.totals.len(), MAX_TOTALS);
+        assert_eq!(
+            d.totals[0],
+            "test result: FAILED. 1 passed; 1 failed; 0 ignored"
+        );
+        assert!(
+            d.totals[1..]
+                .iter()
+                .all(|t| t.starts_with("test result: ok."))
+        );
+        let kept = kept_totals(vec!["ok  \ta".into(), "FAIL\tb".into()]);
+        assert_eq!(kept.len(), 2);
     }
 
     #[test]

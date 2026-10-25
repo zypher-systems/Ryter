@@ -9,6 +9,8 @@ pub(crate) use policy::resolve as resolve_path;
 mod packages;
 mod policy;
 mod secret;
+/// Whether a project path is one the gate holds secret, for the map.
+pub(crate) use secret::is_secret as secret_path;
 pub(crate) mod shell;
 mod web;
 
@@ -1188,6 +1190,20 @@ mod tests {
         .unwrap();
         assert!(!out.is_error, "{}", out.text);
         let out = execute("write", &rewrite("after the edit\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        // A read that returned none of the file is not a read.
+        std::fs::write(root.join("c.txt"), "one\ntwo\n").unwrap();
+        let out = execute("read_file", &json!({"path": "c.txt", "offset": 9}), &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("past the end"),
+            "{}",
+            out.text
+        );
+        let out = execute("write", &json!({"path": "c.txt", "content": "x\n"}), &c).unwrap();
+        assert!(out.is_error, "{}", out.text);
+        let out = execute("read_file", &json!({"path": "c.txt", "offset": 2}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &json!({"path": "c.txt", "content": "x\n"}), &c).unwrap();
         assert!(!out.is_error, "{}", out.text);
         // A new file needs no read, and a second write of it is its own.
         let out = execute("write", &json!({"path": "b.txt", "content": "b\n"}), &c).unwrap();
