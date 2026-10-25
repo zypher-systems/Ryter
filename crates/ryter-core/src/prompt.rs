@@ -110,6 +110,22 @@ pub fn system(home: &Path, project_root: Option<&Path>, trusted: bool) -> String
             s.push('\n');
         }
     }
+    // The decisions made in this project, in the prompt rather than a file
+    // to go and read: a model told to read one may skip it, and a decision
+    // it did not know of is one it redoes.
+    if let Some(decided) =
+        project_root.and_then(|root| crate::decisions::shown(root, crate::decisions::SHOWN_CHARS))
+    {
+        s.push_str(&format!(
+            "\n## Decisions in this project\nFrom `{}`: where the work differed from an \
+             approved plan, and the choices made in the work, each with its reason. A \
+             decision recorded here was decided: build on it, and don't redo it unasked. \
+             When the user changes one, record the new decision.\n\n",
+            crate::decisions::FILE
+        ));
+        s.push_str(&decided);
+        s.push('\n');
+    }
     // Listed, not loaded: the model reads one with `load_skill` when a task
     // needs it. The list changes only when skills do, so the cache holds.
     let catalog = crate::skill::load_catalog(home, project_root, trusted);

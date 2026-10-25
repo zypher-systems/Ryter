@@ -277,7 +277,7 @@ stop  = "docker compose down"
 
 An `Enter` in the first half-second after the panel opens is ignored, as on every card, since it may have been meant to send a message. The panel waits as long as you take to read. A headless run (`ryter -p`) has nobody to approve a plan, so nothing is saved and the plan comes back as the answer.
 
-**When the work differs from the plan.** An approved plan is not edited afterwards. Where the work comes to differ from it, the difference and its reason are recorded in `.ryter/decisions.md` in the project, under the plan they belong to:
+**When the work differs from the plan, and the choices made in it.** An approved plan is not edited afterwards. Where the work comes to differ from it, the difference and its reason are recorded in `.ryter/decisions.md` in the project, under the plan they belong to. The choices made in the work go in the same file under `## work`: a library, a data model, a structure, a workaround, picked among others, and what you decided when the model asked, each with its reason (`- Chose: better-sqlite3 over an ORM` / `- Why: one file, synchronous, nothing to configure`). Every hat is shown the file's entries at the start of a session (the newest 6,000 characters when it has grown past that), so a later session or another hat builds on what was decided instead of deciding it again, and the audit reads them as it reads the plan's differences:
 
 ```
 ## plan: 2026-10-01-cms.md
@@ -293,7 +293,7 @@ An `Enter` in the first half-second after the panel opens is ignored, as on ever
 - **You see each one.** The chat says "decision recorded: No export button in this pass". Nothing stops and nothing is asked.
 - **An audit reads them.** A difference recorded there was decided, so the auditor doesn't report it as a defect. A difference with no entry is still a finding.
 - **The file is yours.** Remove an entry you don't agree with, or add your own under the plan's heading. Whether to commit it is yours to decide, as with the plans.
-- **Limits:** a decision needs a plan approved in this session, and only the plan and build hats record one. An auditor can't.
+- **Limits:** a difference from the plan needs a plan approved in this session; a choice in the work needs none. Only the plan and build hats record one. An auditor can't.
 
 **Audit before you commit.** The audit hat is the check on work before it is committed; it was the review hat until 0.16, and `/review` still runs one. Give it its own model in `/models` and it is a second opinion: a different model from the one that built the work. There is one auditor, and it is this hat.
 

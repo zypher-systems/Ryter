@@ -1472,16 +1472,23 @@ impl Agent {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
         };
-        let (Some(title), Some(plan_said), Some(built_instead), Some(why)) = (
-            text("title"),
-            text("plan_said"),
-            text("built_instead"),
-            text("why"),
-        ) else {
+        let (Some(title), Some(why)) = (text("title"), text("why")) else {
             return Ok(ToolOutput::err(
-                "record_decision needs `title`, `plan_said`, `built_instead` and `why`, \
-                 each a short line",
+                "record_decision needs `title` and `why`, each a short line, with either \
+                 `plan_said` and `built_instead` (a difference from the plan) or `chose` \
+                 (a choice made in the work)",
             ));
+        };
+        let kind = match (text("plan_said"), text("built_instead"), text("chose")) {
+            (Some(plan_said), Some(built_instead), None) => Ok((plan_said, built_instead)),
+            (None, None, Some(chose)) => Err(chose),
+            _ => {
+                return Ok(ToolOutput::err(
+                    "record_decision takes either `plan_said` and `built_instead` (a \
+                     difference from the plan) or `chose` (a choice made in the work), not \
+                     both and not one of the pair alone",
+                ));
+            }
         };
         let by = match text("decided_by") {
             Some("user") => "you".to_string(),
@@ -1510,16 +1517,46 @@ impl Agent {
                 self.role
             )));
         }
-        let Some(plan_file) = self.session.meta.plan_file.clone() else {
-            return Ok(ToolOutput::err(
-                "no plan has been approved in this session, so there is no plan for the \
-                 work to differ from. Nothing was recorded.",
-            ));
-        };
         let root = self
             .project_root
             .clone()
             .unwrap_or_else(|| self.ctx.workspace.clone());
+        let (plan_said, built_instead) = match kind {
+            Ok(pair) => pair,
+            Err(chose) => {
+                let choice = crate::decisions::Choice {
+                    title: title.to_string(),
+                    chose: chose.to_string(),
+                    why: why.to_string(),
+                    by,
+                };
+                if let Err(e) = crate::decisions::record_choice(&root, &choice) {
+                    return Ok(ToolOutput::err(format!(
+                        "the decision could not be recorded ({e}). Tell the user what you \
+                         chose, and why."
+                    )));
+                }
+                self.emit(AgentEvent::Notice {
+                    message: format!(
+                        "decision recorded: {}",
+                        title.split_whitespace().collect::<Vec<_>>().join(" ")
+                    ),
+                })?;
+                return Ok(ToolOutput::ok(format!(
+                    "Recorded in `{}` under `{}`. Every hat reads it at the start of a \
+                     session, and an audit reads it.",
+                    crate::decisions::FILE,
+                    crate::decisions::WORK
+                )));
+            }
+        };
+        let Some(plan_file) = self.session.meta.plan_file.clone() else {
+            return Ok(ToolOutput::err(
+                "no plan has been approved in this session, so there is no plan for the \
+                 work to differ from. Nothing was recorded. A choice made in the work is \
+                 recorded with `chose` instead.",
+            ));
+        };
         let entry = crate::decisions::Entry {
             title: title.to_string(),
             plan_said: plan_said.to_string(),
@@ -6133,6 +6170,120 @@ mod tests {
         let (file, result, _) = decision_recorded(Role::Build, Some(CMS_PLAN), "me").await;
         assert_eq!(file, None);
         assert!(result.contains("needs `decided_by`"), "{result}");
+    }
+
+    /// A choice made in the work needs no plan: it goes under `## work`,
+    /// the chat says so, and the next turn's prompt carries it, so the next
+    /// session and the next hat build on it. An auditor still records
+    /// nothing, and a half of the plan pair is refused.
+    #[tokio::test]
+    async fn a_choice_in_the_work_is_recorded_without_a_plan_and_shown_to_every_hat() {
+        let choice = |extra: serde_json::Value| {
+            let mut args = serde_json::json!({
+                "title": "SQLite through better-sqlite3",
+                "chose": "better-sqlite3 over an ORM",
+                "why": "one file, synchronous, nothing to configure",
+                "decided_by": "model",
+            });
+            for (k, v) in extra.as_object().into_iter().flatten() {
+                args[k] = v.clone();
+            }
+            call("record_decision", args)
+        };
+        let p = ReplayProvider::scripted(vec![
+            choice(serde_json::json!({})),
+            say("done"),
+            say("done again"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        assert!(
+            !agent
+                .system_prompt()
+                .unwrap()
+                .contains("## Decisions in this project")
+        );
+        agent.turn("set up the database").await.unwrap();
+        let file = std::fs::read_to_string(cwd.path().join(crate::decisions::FILE)).unwrap();
+        assert!(
+            file.contains(
+                "## work\n\n\
+                 ### SQLite through better-sqlite3\n\
+                 - Chose: better-sqlite3 over an ORM\n\
+                 - Why: one file, synchronous, nothing to configure\n\
+                 - Decided by: build hat (grok-4.6) · 20"
+            ),
+            "{file}"
+        );
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            result.starts_with("Recorded in `.ryter/decisions.md` under `## work`."),
+            "{result}"
+        );
+        let notices: Vec<String> = events
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            ["decision recorded: SQLite through better-sqlite3"]
+        );
+        // The next turn's prompt carries it, for every hat.
+        let prompt = agent.system_prompt().unwrap();
+        let i = prompt
+            .find("## Decisions in this project")
+            .expect("the section");
+        assert!(
+            prompt[i..].contains("- Chose: better-sqlite3 over an ORM"),
+            "{prompt}"
+        );
+        agent.put_on(Role::Plan).unwrap();
+        assert!(
+            agent
+                .system_prompt()
+                .unwrap()
+                .contains("better-sqlite3 over an ORM")
+        );
+        // A difference from the plan still needs the plan; half a pair is refused.
+        let p = ReplayProvider::scripted(vec![
+            choice(serde_json::json!({"plan_said": "step 4"})),
+            say("done"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        agent.turn("go").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            result.contains("not both and not one of the pair alone"),
+            "{result}"
+        );
+        assert!(!cwd.path().join(crate::decisions::FILE).exists());
+        // An auditor records no choice either.
+        let p = ReplayProvider::scripted(vec![choice(serde_json::json!({})), say("done")]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Audit;
+        agent.ctx.role = Role::Audit;
+        agent.turn("audit").await.unwrap();
+        assert!(!cwd.path().join(crate::decisions::FILE).exists());
     }
 
     /// With nobody to show it to, a plan is not approved by default, and a

@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-24 — The choices made in the work are recorded beside the plan, and every hat is shown them
+
+The prompt has long told the model to say what it chose and why at the moment it chooses ("Using better-sqlite3 rather than an ORM: one file, synchronous, nothing to configure"). That sentence went into the chat and nowhere else. The next session, or the audit hat on another model, or the build hat after a compaction, did not know it: it asked the question again, chose differently, or undid the choice as a mistake. The user's own decisions, given when the model asked, went the same way. `.ryter/decisions.md` existed for one kind of decision only, a difference from an approved plan, and was read only by the audit.
+
+Now `record_decision` takes a second kind, a choice (`chose`, `why`, `decided_by`), filed under `## work` in the same file, beside the plan's own sections, with no plan needed; the plan pair (`plan_said`, `built_instead`) still needs its plan, and a call with half the pair or with both kinds is refused and told which. The plan and build hats record; the audit still cannot, for the reason given on 2026-10-01 (a reviewer that could record a decision could explain away what it was asked to find). The file's entries go into the system prompt of every hat under "Decisions in this project", whole when under 6,000 characters and the newest entries otherwise, with the rule stated: a decision recorded was decided, build on it, don't redo it unasked, and when the user changes one, record the new decision. In the prompt rather than a file to go and read, for the reason RYTER.md is: a model told to read a file may skip it. The audit's brief points at the work's choices as it points at the plan's differences, with or without a plan. The user's existing rights hold: the file is theirs to edit, the chat says "decision recorded" each time, nothing is asked.
+
+Set aside: recording a decision for the model when the user answers an `ask_user` question (the model is told to record what the user decided; a recorded answer would need a judgment of which answers are decisions); a decisions panel in the TUI (the file is a Markdown file in the project, and `/changes` shows it when it changes). Third of the "fewer redos" pieces.
+
 ### 2026-10-24 — The project map: where things are, before the model asks
 
 A model new to a project spends its first rounds finding out where things are: `list_dir` on the root, `list_dir` on `src`, `grep` for a name, `read_file` on three candidates, then the one it wanted. Every round is a request, and every file it read to find one function stays in its context for the rest of the session. The scout was built so the looking hats could send that reading away; the build hat does it itself, and a hard bench task showed it doing so for a quarter of its rounds.

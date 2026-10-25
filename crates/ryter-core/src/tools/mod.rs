@@ -446,20 +446,25 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["title","plan"]}),
         ),
         "record_decision" => (
-            "Record one place where the work differs from the plan the user approved, and \
-             why. Call it when the user tells you to leave out, add or change something the \
-             plan says, and when the plan can't be followed as written and you take another \
-             way to the same goal. One call for each difference, when it is decided, before \
-             you build it. The entry goes in `.ryter/decisions.md` in the project, and a \
-             review reads it: a difference recorded there is not held against the work. \
-             Don't record work that follows the plan, or things the plan doesn't speak to.",
+            "Record a decision in `.ryter/decisions.md`, so that no later session or hat \
+             redoes it. Two kinds. A difference from the plan the user approved (`plan_said`, \
+             `built_instead`): when the user tells you to leave out, add or change something \
+             the plan says, and when the plan can't be followed as written and you take \
+             another way to the same goal. A choice made in the work (`chose`): a library, a \
+             data model, a structure, a workaround, picked among others, and anything the \
+             user decided when you asked. One call per decision, when it is decided, before \
+             you build on it. Every hat reads the file at the start of a session, and an \
+             audit reads it: a difference or a choice recorded there is not held against the \
+             work. Don't record work that follows the plan, or routine steps nobody would \
+             decide otherwise.",
             json!({"type":"object","properties":{
                 "title":{"type":"string","description":"a few words: what was decided"},
-                "plan_said":{"type":"string","description":"what the plan says, with its step"},
-                "built_instead":{"type":"string","description":"what is built instead"},
+                "plan_said":{"type":"string","description":"a difference from the plan: what the plan says, with its step"},
+                "built_instead":{"type":"string","description":"a difference from the plan: what is built instead"},
+                "chose":{"type":"string","description":"a choice in the work: what was chosen, and over what"},
                 "why":{"type":"string","description":"the reason, in a sentence; the user's own words when they decided"},
                 "decided_by":{"type":"string","enum":["user","model"],"description":"`user` when they told you to; `model` when you chose"}
-            },"required":["title","plan_said","built_instead","why","decided_by"]}),
+            },"required":["title","why","decided_by"]}),
         ),
         "propose_run" => (
             "Propose how this project runs, for the user to approve: the command that \
