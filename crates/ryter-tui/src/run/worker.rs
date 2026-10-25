@@ -1129,6 +1129,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,
+        project_map: None,
     }
 }
 

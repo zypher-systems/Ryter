@@ -613,6 +613,7 @@ async fn run_prompt(
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,
+        project_map: None,
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -1201,6 +1202,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens: None,
+        project_map: None,
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -1335,6 +1337,7 @@ fn serve_host_from_config(
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens: None,
+        project_map: None,
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))

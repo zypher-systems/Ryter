@@ -20,6 +20,7 @@ pub mod git;
 pub mod hooks;
 pub mod ids;
 pub mod llm;
+pub mod map;
 pub mod mcp;
 pub mod memory;
 mod outside;

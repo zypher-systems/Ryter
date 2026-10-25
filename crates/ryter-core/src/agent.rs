@@ -118,6 +118,12 @@ pub struct Agent {
     /// gauge. Cleared when compaction rewrites the transcript, so the gauge
     /// does not keep a pre-compact count.
     pub last_input_tokens: Option<u64>,
+    /// The project map ([`crate::map`]) as the session's first turn found
+    /// it, `Some("")` when there is none to show; `None` until it is made.
+    /// Held for the session so the prompt's prefix, and the provider's
+    /// cache of it, survive the model's own edits; remade when the
+    /// conversation is compacted, which breaks the cache anyway.
+    pub project_map: Option<String>,
 }
 
 /// Output ceiling per round of the conversation.
@@ -531,6 +537,7 @@ impl Agent {
         // DECISIONS.md, which this same turn edits: rebuilding it every round
         // changed the prompt's prefix and threw away the provider's cache for
         // the whole conversation, every time memory was touched.
+        self.ensure_project_map();
         let mut system = self.system_prompt()?;
         // The model that has read this conversation so far. A hat on another
         // model reads it all again, uncached: the user is told what that is.
@@ -3211,6 +3218,11 @@ impl Agent {
 
     /// Deterministic compact. Emits [`AgentEvent::Compacted`] with measured size.
     pub fn compact_now(&mut self) -> Result<crate::compact::ContextReport> {
+        // The map is remade with the conversation: the cache it was held
+        // for goes with the transcript, and the model's edits since the
+        // session began are in the files now.
+        self.project_map = None;
+        self.ensure_project_map();
         let sys = self.system_prompt()?;
         let (_, model, connection) = self.hat_stack();
         let before = self.report_for(&sys, &model, &connection);
@@ -3462,7 +3474,15 @@ impl Agent {
             model,
             connection,
             window,
-            system: crate::prompt::scout(self.project_root.as_deref()),
+            system: {
+                // The scout is sent to find things: the map says where.
+                let mut s = crate::prompt::scout(self.project_root.as_deref());
+                if let Some(map) = self.project_map.as_deref().filter(|m| !m.is_empty()) {
+                    s.push_str("\n\n");
+                    s.push_str(&crate::map::section(map));
+                }
+                s
+            },
             tools: crate::tools::scout_specs(),
             cfg,
         };
@@ -3683,7 +3703,28 @@ impl Agent {
         let mut system =
             crate::prompt::system(&self.home, self.project_root.as_deref(), self.trusted);
         system.push_str(&self.machine);
+        if let Some(map) = self.project_map.as_deref().filter(|m| !m.is_empty()) {
+            system.push('\n');
+            system.push_str(&crate::map::section(map));
+        }
         Ok(system)
+    }
+
+    /// Make the project map if this session has none yet: at its first
+    /// turn, and again after compaction. `[map] chars = 0` leaves it out.
+    fn ensure_project_map(&mut self) {
+        if self.project_map.is_some() {
+            return;
+        }
+        let chars = self
+            .cfg
+            .as_ref()
+            .map_or(crate::map::DEFAULT_CHARS, |c| c.map.chars);
+        let map = self
+            .project_root
+            .as_deref()
+            .and_then(|root| crate::map::build(root, chars));
+        self.project_map = Some(map.unwrap_or_default());
     }
 
     async fn finish_cancelled(&mut self, text: String) -> Result<TurnResult> {
@@ -4013,6 +4054,7 @@ mod tests {
             last_audit_verdict: None,
             turn: 0,
             last_input_tokens: None,
+            project_map: None,
         };
         (home, cwd, agent)
     }
@@ -6942,6 +6984,46 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// The project map is made when the session's first turn begins and
+    /// held: the model's own edits do not change the prompt's prefix.
+    /// Compaction remakes it, and `[map] chars = 0` leaves it out.
+    #[tokio::test]
+    async fn the_project_map_is_made_at_the_first_turn_held_and_remade_on_compaction() {
+        let (_home, cwd, mut agent) = build_agent(vec![say("ok"), say("ok again")]);
+        std::fs::create_dir_all(cwd.path().join("src")).unwrap();
+        std::fs::write(
+            cwd.path().join("src/lib.rs"),
+            "pub fn mapped_fn(a: u32) -> u32 { a }\n",
+        )
+        .unwrap();
+        assert!(!agent.system_prompt().unwrap().contains("## Project map"));
+        agent.turn("hello").await.unwrap();
+        let prompt = agent.system_prompt().unwrap();
+        assert!(prompt.contains("## Project map"), "{prompt}");
+        assert!(
+            prompt.contains("src/ · 1 file\n  lib.rs: pub fn mapped_fn(a: u32) -> u32"),
+            "{prompt}"
+        );
+        // A file made after the first turn is not in the held map.
+        std::fs::write(cwd.path().join("src/later.rs"), "pub fn later() {}\n").unwrap();
+        agent.turn("again").await.unwrap();
+        assert!(!agent.system_prompt().unwrap().contains("later.rs"));
+        agent.compact_now().unwrap();
+        assert!(
+            agent
+                .system_prompt()
+                .unwrap()
+                .contains("later.rs: pub fn later()")
+        );
+        // Switched off in the config.
+        let mut cfg = crate::config::Config::default();
+        cfg.map.chars = 0;
+        agent.cfg = Some(cfg);
+        agent.project_map = None;
+        agent.ensure_project_map();
+        assert!(!agent.system_prompt().unwrap().contains("## Project map"));
     }
 
     /// A `run_project test` hands the model the tests that failed, each
