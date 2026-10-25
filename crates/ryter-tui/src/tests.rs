@@ -3979,7 +3979,7 @@ fn the_benchmark_panel_starts_a_run_and_follows_it() {
     panel::on_notice(&mut v, &finished(result("rust-csv-borrow", None, None)));
     let shown = render_to_string(&v, 120, 40);
     assert!(
-        shown.contains("3 of 4 done · 1 solved · spent $0.080"),
+        shown.contains("3 of 10 done · 1 solved · spent $0.080"),
         "{shown}"
     );
     assert!(

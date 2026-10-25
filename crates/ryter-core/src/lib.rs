@@ -47,6 +47,7 @@ pub mod tools;
 pub mod trace;
 pub mod update;
 pub mod user_io;
+pub mod verbs;
 
 pub use agent::{Agent, StopReason, TurnResult, tool_summary};
 pub use cancel::Cancel;

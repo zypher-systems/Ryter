@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn the_binary_carries_every_task_with_its_files_and_no_solution() {
         let all = tasks();
-        assert!(all.len() >= 14, "{}", all.len());
+        assert!(all.len() >= 20, "{}", all.len());
         let hard: Vec<_> = select(&[], Some(Level::Hard))
             .iter()
             .map(|t| t.name.as_str())
@@ -216,13 +216,19 @@ mod tests {
         assert_eq!(
             hard,
             [
+                "config-interpolation",
                 "expr-precedence",
                 "migrate-dependencies",
+                "rate-limiter",
                 "rust-csv-borrow",
-                "ts-debounce"
+                "rust-glob",
+                "rust-lru-ttl",
+                "ts-cron",
+                "ts-debounce",
+                "ts-json-patch"
             ]
         );
-        assert_eq!(select(&[], Some(Level::Standard)).len(), all.len() - 4);
+        assert_eq!(select(&[], Some(Level::Standard)).len(), all.len() - 10);
         let t = select(&["ts-debounce".into()], None)[0];
         assert!(t.repo.iter().any(|f| f.path == "src/timing.ts"));
         let hidden = t

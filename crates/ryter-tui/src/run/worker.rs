@@ -1130,6 +1130,8 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         project_map: None,
         observed: None,
         session_edits: Vec::new(),
+        last_formatted: Vec::new(),
+        last_command_took: std::time::Duration::ZERO,
         last_check: None,
         session_turns: 0,
     }

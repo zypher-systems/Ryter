@@ -1,0 +1,32 @@
+title = "Resolve references in config values, with scope, escapes and cycle reports"
+level = "hard"
+brief = """
+`conf.py` reads a small INI-like format (`[section]` headers, `key = value`
+lines, `#`/`;` comments, keys before any header in `[default]`). `Config.get`
+returns a value as written. Make it resolve references:
+
+- `${name}` is the key `name` in the same section as the value being
+  resolved, or failing that in `[default]`. `${section.name}` is that key in
+  that section exactly (the text before the first `.` is the section).
+- A referenced value is resolved in turn, and its own bare references are
+  looked up in *its* section, not the asking one. A value may hold several
+  references, next to text.
+- `$$` is a literal `$`. Any other `$` not followed by `{` is a literal `$`.
+- `raw(section, key)` keeps returning the text as written; `get` resolves on
+  every call. A missing key still raises `KeyError`, as it does now.
+- Errors raise `ConfigError` with these messages, exactly:
+  - `unterminated reference in a.x`: a `${` with no `}` in the value of `a.x`
+    (the key whose value holds it, wherever the lookup started).
+  - `unknown key b.y referenced from a.x`: `${b.y}` in `a.x` names nothing.
+    For a bare `${y}` found in neither section the message names it as
+    written: `unknown key y referenced from a.x`.
+  - `cycle: a.x -> b.y -> a.x`: the chain of keys from the first one that
+    repeats, around to itself, whichever key `get` was asked for. A value
+    that references itself is `cycle: a.x -> a.x`.
+
+Done when `python3 -m unittest -q test_conf` passes.
+"""
+files = ["conf.py"]
+checks = ["python3 -m unittest -q test_conf"]
+accept = ["python3 -m unittest -q hidden_test_conf"]
+needs = ["python3 --version"]

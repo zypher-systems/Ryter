@@ -761,11 +761,15 @@ fn fill_chat(view: &mut View, messages: &[ryter_core::Message], model: &str) {
                                 name: c.name.clone(),
                                 // The project's command isn't in the call,
                                 // and the run file may have changed since.
-                                summary: Some(if c.name == "run_project" {
-                                    String::new()
-                                } else {
-                                    ryter_core::tool_summary(&c.name, &args)
-                                }),
+                                summary: Some(
+                                    if ryter_core::tools::is_project_verb(&c.name)
+                                        && c.name != "test"
+                                    {
+                                        String::new()
+                                    } else {
+                                        ryter_core::tool_summary(&c.name, &args)
+                                    },
+                                ),
                                 args,
                                 role: view.mode,
                             },

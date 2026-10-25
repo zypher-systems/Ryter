@@ -647,7 +647,7 @@ fn on_tool_result(
         } else if !body.is_empty() {
             // Live bash lines were only for the screen while it ran; the
             // finished output replaces them. An edit keeps its preview.
-            if tool == "bash" || tool == "run_project" {
+            if tool == "bash" || ryter_core::tools::is_project_verb(&tool) {
                 m.set_body(body);
             } else {
                 let joined = if m.body.is_empty() {
@@ -657,7 +657,7 @@ fn on_tool_result(
                 };
                 m.set_body(joined);
             }
-        } else if tool == "bash" || tool == "run_project" {
+        } else if tool == "bash" || ryter_core::tools::is_project_verb(&tool) {
             // A quiet success: drop the live tail so the row is the header.
             m.set_body(String::new());
         } else {

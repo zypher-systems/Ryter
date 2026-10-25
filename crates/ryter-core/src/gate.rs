@@ -327,7 +327,7 @@ impl Agent {
         format!(
             "[Ryter] Audit the uncommitted changes before they are committed: {} file{}, \
              +{} −{}. {plan} Start from `git status --short` and `git diff HEAD`. Run \
-             everything the project has: its tests through run_project, its end-to-end \
+             everything the project has: its tests through `test`, its end-to-end \
              checks, and use the product at its address when there is one. Change nothing; \
              file your findings with file_audit as your last call.",
             job.files,

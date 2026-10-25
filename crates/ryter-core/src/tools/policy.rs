@@ -75,7 +75,9 @@ pub fn decide(name: &str, args: &Value, ctx: &ToolContext) -> Decision {
         "record_decision" => Decision::Allow,
         // The run file is the user's to approve, and Ryter runs only what
         // they approved.
-        "propose_run" | "run_project" => Decision::Allow,
+        "propose_run" | "run_project" | "test" | "build" | "check" | "lint" | "format" => {
+            Decision::Allow
+        }
         // The web is for the hats that look, as the registries are; and
         // only with `[features] web` on.
         "web_fetch" | "web_search" => {

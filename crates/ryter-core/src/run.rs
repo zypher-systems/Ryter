@@ -42,6 +42,9 @@ pub struct RunFile {
     /// An address that answers once the product is up.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ready: Option<String>,
+    /// Builds the product (`cargo build`, `npm run build`, `go build ./...`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
     /// The project's tests and checks, in order.
     #[serde(
         default,
@@ -54,6 +57,13 @@ pub struct RunFile {
     /// files, and gives the model the errors of.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
+    /// The project's linter (`cargo clippy`, `eslint .`, `ruff check .`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lint: Option<String>,
+    /// The project's formatter, applied (`cargo fmt`, `prettier -w .`,
+    /// `ruff format .`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
     /// Stops what `start` started.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop: Option<String>,
@@ -90,8 +100,11 @@ impl RunFile {
         };
         self.start = self.start.and_then(one);
         self.ready = self.ready.and_then(one);
+        self.build = self.build.and_then(one);
         self.stop = self.stop.and_then(one);
         self.check = self.check.and_then(one);
+        self.lint = self.lint.and_then(one);
+        self.format = self.format.and_then(one);
         self.test = self.test.into_iter().filter_map(one).collect();
         self
     }
@@ -100,8 +113,11 @@ impl RunFile {
     pub fn is_empty(&self) -> bool {
         self.start.is_none()
             && self.ready.is_none()
+            && self.build.is_none()
             && self.test.is_empty()
             && self.check.is_none()
+            && self.lint.is_none()
+            && self.format.is_none()
             && self.stop.is_none()
     }
 
@@ -109,15 +125,19 @@ impl RunFile {
     pub fn commands(&self) -> Vec<&str> {
         self.start
             .iter()
+            .chain(self.build.iter())
             .chain(self.test.iter())
             .chain(self.check.iter())
+            .chain(self.lint.iter())
+            .chain(self.format.iter())
             .chain(self.stop.iter())
             .map(String::as_str)
             .collect()
     }
 
-    /// The rows a person reads: `start`, `ready`, `test` (one row a
-    /// command, the label on the first), `stop`.
+    /// The rows a person reads: `start`, `ready`, `build`, `test` (one row
+    /// a command, the label on the first), `check`, `lint`, `format`,
+    /// `stop`.
     pub fn rows(&self) -> Vec<(&'static str, String)> {
         let mut rows = Vec::new();
         if let Some(s) = &self.start {
@@ -126,11 +146,20 @@ impl RunFile {
         if let Some(s) = &self.ready {
             rows.push(("ready", s.clone()));
         }
+        if let Some(s) = &self.build {
+            rows.push(("build", s.clone()));
+        }
         for (i, t) in self.test.iter().enumerate() {
             rows.push((if i == 0 { "test" } else { "" }, t.clone()));
         }
         if let Some(s) = &self.check {
             rows.push(("check", s.clone()));
+        }
+        if let Some(s) = &self.lint {
+            rows.push(("lint", s.clone()));
+        }
+        if let Some(s) = &self.format {
+            rows.push(("format", s.clone()));
         }
         if let Some(s) = &self.stop {
             rows.push(("stop", s.clone()));
@@ -143,14 +172,18 @@ impl RunFile {
         let mut s = String::from(
             "# How this project runs. Ryter starts it, waits for `ready` to answer,\n\
              # runs `test`, and stops it with `stop`; `check` is the fast check it runs\n\
-             # itself after the build hat's edits. Change it here or ask the build\n\
-             # hat to propose a new one; Ryter asks you to approve it again.\n",
+             # itself after the build hat's edits; `build`, `lint` and `format` are the\n\
+             # model's verbs for those. Change it here or ask the build hat to propose\n\
+             # a new one; Ryter asks you to approve it again.\n",
         );
         if let Some(v) = &self.start {
             s.push_str(&format!("start = {}\n", quoted(v)));
         }
         if let Some(v) = &self.ready {
             s.push_str(&format!("ready = {}\n", quoted(v)));
+        }
+        if let Some(v) = &self.build {
+            s.push_str(&format!("build = {}\n", quoted(v)));
         }
         match self.test.as_slice() {
             [] => {}
@@ -165,6 +198,12 @@ impl RunFile {
         }
         if let Some(v) = &self.check {
             s.push_str(&format!("check = {}\n", quoted(v)));
+        }
+        if let Some(v) = &self.lint {
+            s.push_str(&format!("lint  = {}\n", quoted(v)));
+        }
+        if let Some(v) = &self.format {
+            s.push_str(&format!("format = {}\n", quoted(v)));
         }
         if let Some(v) = &self.stop {
             s.push_str(&format!("stop  = {}\n", quoted(v)));
@@ -893,6 +932,7 @@ mod tests {
             ],
             check: None,
             stop: Some("docker compose down".into()),
+            ..RunFile::default()
         }
     }
 
@@ -999,6 +1039,7 @@ mod tests {
             stop: Some("   ".into()),
             ready: None,
             check: None,
+            ..RunFile::default()
         }
         .tidy();
         assert_eq!(messy.start.as_deref(), Some("npm run\n dev"));
@@ -1030,6 +1071,42 @@ mod tests {
             ]
         );
         assert_eq!(run.commands(), ["cargo test", "cargo check"]);
+        // The verbs' commands keep their places in the file, the rows and
+        // the order they would run.
+        let all = RunFile {
+            build: Some("cargo build".into()),
+            lint: Some("cargo clippy".into()),
+            format: Some("cargo fmt".into()),
+            ..run.clone()
+        };
+        let text = all.text();
+        assert!(
+            text.ends_with(
+                "build = \"cargo build\"\ntest  = [\"cargo test\"]\ncheck = \"cargo check\"\nlint  = \"cargo clippy\"\nformat = \"cargo fmt\"\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(toml::from_str::<RunFile>(&text).unwrap(), all);
+        assert_eq!(
+            all.rows(),
+            [
+                ("build", "cargo build".to_string()),
+                ("test", "cargo test".to_string()),
+                ("check", "cargo check".to_string()),
+                ("lint", "cargo clippy".to_string()),
+                ("format", "cargo fmt".to_string()),
+            ]
+        );
+        assert_eq!(
+            all.commands(),
+            [
+                "cargo build",
+                "cargo test",
+                "cargo check",
+                "cargo clippy",
+                "cargo fmt"
+            ]
+        );
         let only = RunFile {
             check: Some(" tsc --noEmit ".into()),
             ..RunFile::default()
