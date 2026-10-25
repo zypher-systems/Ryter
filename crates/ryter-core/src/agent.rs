@@ -133,6 +133,8 @@ pub struct Agent {
     /// The files the last `format` call changed, until the loop counts
     /// them as that round's edits.
     pub last_formatted: Vec<String>,
+    /// How long the last test command took (`run_one_test`).
+    pub last_command_took: std::time::Duration,
     /// How the last check or test run this session came out.
     pub last_check: Option<bool>,
     /// Turns run in this session, for its note.
@@ -1799,8 +1801,26 @@ impl Agent {
             Some("test") => tests_summary(&run, None, &[], &self.root()),
             Some("check") => run.check.unwrap_or_default(),
             // The `test` tool: the commands as narrowed to its filter and
-            // files, as they will run.
-            None => tests_summary(&run, test_filter(args), &test_files(args), &self.root()),
+            // files, as they will run; a bare call in the build hat with
+            // edits this session names the edits' own run first.
+            None => {
+                let filter = test_filter(args);
+                let files = test_files(args);
+                let whole = tests_summary(&run, filter, &files, &self.root());
+                if filter.is_some()
+                    || !files.is_empty()
+                    || self.role != Role::Build
+                    || self.session_edits.is_empty()
+                {
+                    return whole;
+                }
+                let first = tests_summary(&run, None, &self.session_edits, &self.root());
+                if first.is_empty() || first == whole {
+                    whole
+                } else {
+                    format!("{first}, then {whole}")
+                }
+            }
             _ => String::new(),
         }
     }
@@ -1825,9 +1845,7 @@ impl Agent {
         filter: Option<&str>,
         files: &[String],
     ) -> Result<crate::tools::ToolOutput> {
-        use crate::run::COMMAND_TIMEOUT;
         use crate::tools::ToolOutput;
-        use crate::tools::shell::Run;
         use crate::verbs::Scope;
         let run = match self.approved_run()? {
             Ok(run) => run,
@@ -1858,36 +1876,45 @@ impl Agent {
             )));
         }
         let mut text = String::new();
+        // Asked for the whole suite in the build hat, with files edited
+        // this session: their own tests first, and the whole suite only
+        // once those pass. A failure shows up in seconds, under the names
+        // the model just touched, instead of at the end of a long run.
+        if !narrowed && self.role == Role::Build && !self.session_edits.is_empty() {
+            let edits = self.session_edits.clone();
+            let firsts: Vec<crate::verbs::Narrowed> = run
+                .test
+                .iter()
+                .filter_map(|cmd| match crate::verbs::narrow(cmd, None, &edits, &root) {
+                    Scope::Narrowed(n) if n.cmd != *cmd => Some(n),
+                    _ => None,
+                })
+                .collect();
+            let mut failed = 0;
+            for n in &firsts {
+                let (body, ok, _) = self.run_one_test(&n.cmd, &root)?;
+                if !ok {
+                    failed += 1;
+                }
+                text.push_str(&format!(
+                    "$ {}\n{}\n",
+                    n.cmd,
+                    crate::failures::report(&body, ok, 60)
+                ));
+            }
+            if failed > 0 {
+                text.push_str(
+                    "[the tests for the files you edited, run first; the whole suite has \
+                     not run]\n",
+                );
+                self.last_check = Some(false);
+                return Ok(ToolOutput::err(text));
+            }
+        }
         let mut failed = 0;
         for n in &to_run {
             let cmd = n.cmd.as_str();
-            // A test command the audit starts used the product: whatever
-            // it wrote to the product's own data stays
-            // (`AuditLive::used_product`). A run file that is missing,
-            // unapproved or without tests ran nothing.
-            if let Some(live) = self.audit_live.as_mut() {
-                live.used_product = true;
-            }
-            let began = std::time::Instant::now();
-            let out = self.ctx.sandboxed(|| {
-                crate::tools::shell::run_command_live(
-                    cmd,
-                    &root,
-                    COMMAND_TIMEOUT,
-                    &self.ctx.cancel,
-                    self.ctx.live.as_ref(),
-                )
-            })?;
-            let timed_out = matches!(out, Run::TimedOut);
-            let (body, ok) = match out {
-                Run::Ok(o) => (o, true),
-                Run::Failed(o) => (o, false),
-                Run::TimedOut => (
-                    format!("[did not finish in {}s]", COMMAND_TIMEOUT.as_secs()),
-                    false,
-                ),
-                Run::Cancelled => return Err(Error::Cancelled),
-            };
+            let (body, ok, timed_out) = self.run_one_test(cmd, &root)?;
             if !ok {
                 failed += 1;
             }
@@ -1897,7 +1924,7 @@ impl Agent {
                 self.observe_command(
                     cmd,
                     crate::observed::Outcome::of(ok, timed_out, &body),
-                    began.elapsed(),
+                    self.last_command_took,
                     true,
                 );
             }
@@ -1934,6 +1961,42 @@ impl Agent {
             ToolOutput::ok(text)
         } else {
             ToolOutput::err(text)
+        })
+    }
+
+    /// One test command, run live under the test timeout: what it printed
+    /// (a timeout's note in its place), whether it passed, and whether it
+    /// timed out. How long it took is left in `last_command_took`.
+    fn run_one_test(&mut self, cmd: &str, root: &std::path::Path) -> Result<(String, bool, bool)> {
+        use crate::run::COMMAND_TIMEOUT;
+        use crate::tools::shell::Run;
+        // A test command the audit starts used the product: whatever it
+        // wrote to the product's own data stays (`AuditLive::used_product`).
+        // A run file that is missing, unapproved or without tests ran
+        // nothing.
+        if let Some(live) = self.audit_live.as_mut() {
+            live.used_product = true;
+        }
+        let began = std::time::Instant::now();
+        let out = self.ctx.sandboxed(|| {
+            crate::tools::shell::run_command_live(
+                cmd,
+                root,
+                COMMAND_TIMEOUT,
+                &self.ctx.cancel,
+                self.ctx.live.as_ref(),
+            )
+        })?;
+        self.last_command_took = began.elapsed();
+        Ok(match out {
+            Run::Ok(o) => (o, true, false),
+            Run::Failed(o) => (o, false, false),
+            Run::TimedOut => (
+                format!("[did not finish in {}s]", COMMAND_TIMEOUT.as_secs()),
+                false,
+                true,
+            ),
+            Run::Cancelled => return Err(Error::Cancelled),
         })
     }
 
@@ -4530,6 +4593,7 @@ mod tests {
             observed: None,
             session_edits: Vec::new(),
             last_formatted: Vec::new(),
+            last_command_took: std::time::Duration::ZERO,
             last_check: None,
             session_turns: 0,
         }
@@ -5982,6 +6046,73 @@ mod tests {
             "{}",
             out.text
         );
+    }
+
+    /// A bare `test` in the build hat, with files edited this session, runs
+    /// their tests first and the whole suite only once those pass; a
+    /// failure among them ends the call with the whole suite not run. The
+    /// audit hat, and a session with no edits, run the whole suite as
+    /// before.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_edited_files_tests_run_first() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        fake_pytest(cwd.path());
+        std::fs::write(cwd.path().join("tests/test_ghost.py"), "").unwrap();
+        let run = crate::run::RunFile {
+            test: vec!["bin/pytest -q".into()],
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+
+        // Edits whose tests pass: both runs, the whole one last and counted.
+        agent.session_edits = vec!["pkg/mod.py".into(), "docs/none.md".into()];
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "$ bin/pytest -q tests/test_mod.py\n1 passed in 0.01s\n$ bin/pytest -q\n1 passed in 0.01s\n"
+        );
+        assert_eq!(agent.last_check, Some(true));
+
+        // Edits whose tests fail: the whole suite is not run.
+        agent.last_check = None;
+        agent.session_edits = vec!["tests/test_ghost.py".into()];
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert!(out.is_error, "{out:?}");
+        assert!(
+            out.text
+                .starts_with("$ bin/pytest -q tests/test_ghost.py\n"),
+            "{}",
+            out.text
+        );
+        assert!(
+            out.text.ends_with(
+                "[the tests for the files you edited, run first; the whole suite has not run]\n"
+            ),
+            "{}",
+            out.text
+        );
+        assert!(!out.text.contains("$ bin/pytest -q\n"), "{}", out.text);
+        assert_eq!(agent.last_check, Some(false));
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("args")).unwrap(),
+            "-q tests/test_ghost.py\n"
+        );
+
+        // Edits with no test of their own: the whole suite, as before.
+        agent.session_edits = vec!["docs/none.md".into()];
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert_eq!(out.text, "$ bin/pytest -q\n1 passed in 0.01s\n");
+
+        // The audit hat runs the whole suite whatever was edited.
+        agent.role = Role::Audit;
+        agent.ctx.role = Role::Audit;
+        agent.session_edits = vec!["tests/test_ghost.py".into()];
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert_eq!(out.text, "$ bin/pytest -q\n1 passed in 0.01s\n");
     }
 
     /// A test command Ryter can't narrow is not run whole under the name of

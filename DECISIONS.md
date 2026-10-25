@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-25 — The edited files' tests run first
+
+A bare `test` call in the build hat, with files edited this session, now runs those files' own tests first (the same narrowing `files` does) and the whole suite only once they pass. A failure among them comes back in seconds, under the names the model just touched, and the whole suite is not run: the call says so in its last line. If they pass, the whole run follows in the same call and is the one that counts, so a green result still means the suite is green and done-means-checked reads it as before.
+
+Why in the tool and not as a run after edits like the check: a test suite is not fast, and a run Ryter starts on its own after every round would make a slow suite a tax on every edit. The model already decides when to test; what it gets is the quicker answer when the answer is no. The audit hat runs the whole suite whatever was edited, since the edits are not its own and it checks the work as a whole. When no edited file has a test of its own, or the runner can't be narrowed, the whole suite runs as before, with nothing said: the first run exists to be faster, not to be noticed.
+
 ### 2026-10-25 — `build`, `check`, `lint` and `format` as verbs, from the run file
 
 With `test` in place the other verbs were the same shape and cheap: the run file gains `build`, `lint` and `format` beside `check`, proposed and approved like the rest, and each is a tool of that name. `build`, `check` and `lint` come back as the check's report, which already knows compilers' and linters' `path:line:col` blocks; a clean run says `built`, `passed` or `clean`, since "passed" under a build read wrong. `run_project check` stays and runs the same code.
