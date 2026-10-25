@@ -674,6 +674,157 @@ fn is_script_test(rel: &Path) -> bool {
         })
 }
 
+/// What a project's manifest says its verbs are: a run file with the
+/// commands it implies, and the file it was read from. `None` when nothing
+/// at the root says how the project builds or tests. The product's own
+/// `start`, `ready` and `stop` are never guessed: a server is the model's
+/// to read and propose.
+pub fn detect(root: &Path) -> Option<(crate::run::RunFile, &'static str)> {
+    use crate::run::RunFile;
+    let has = |name: &str| root.join(name).exists();
+    let read = |name: &str| std::fs::read_to_string(root.join(name)).unwrap_or_default();
+    if has("Cargo.toml") {
+        let manifest = read("Cargo.toml");
+        let workspace = manifest
+            .parse::<toml::Value>()
+            .ok()
+            .is_some_and(|v| v.get("workspace").is_some());
+        let scope = if workspace { " --workspace" } else { "" };
+        let run = RunFile {
+            build: Some(format!("cargo build{scope}")),
+            test: vec![format!("cargo test{scope}")],
+            check: Some(format!("cargo check{scope}")),
+            lint: Some(format!("cargo clippy{scope} --all-targets")),
+            format: Some(if workspace {
+                "cargo fmt --all".to_string()
+            } else {
+                "cargo fmt".to_string()
+            }),
+            ..RunFile::default()
+        };
+        return Some((run, "Cargo.toml"));
+    }
+    if has("package.json") {
+        let json: serde_json::Value = serde_json::from_str(&read("package.json")).ok()?;
+        let scripts = json.get("scripts").and_then(|s| s.as_object());
+        let script = |name: &str| scripts.is_some_and(|s| s.contains_key(name));
+        let runner = if has("pnpm-lock.yaml") {
+            "pnpm"
+        } else if has("yarn.lock") {
+            "yarn"
+        } else if has("bun.lockb") || has("bun.lock") {
+            "bun"
+        } else {
+            "npm"
+        };
+        let run_script = |name: &str| {
+            if name == "test" && runner != "bun" {
+                format!("{runner} test")
+            } else {
+                format!("{runner} run {name}")
+            }
+        };
+        let first = |names: &[&str]| names.iter().find(|n| script(n)).map(|n| run_script(n));
+        let run = RunFile {
+            build: first(&["build"]),
+            test: first(&["test"]).into_iter().collect(),
+            check: first(&["typecheck", "check"]).or_else(|| {
+                has("tsconfig.json").then(|| format!("{} tsc --noEmit", exec_of(runner)))
+            }),
+            lint: first(&["lint"]),
+            format: first(&["format", "fmt"]),
+            ..RunFile::default()
+        };
+        return (!run.is_empty()).then_some((run, "package.json"));
+    }
+    if has("go.mod") {
+        let run = RunFile {
+            build: Some("go build ./...".into()),
+            test: vec!["go test ./...".into()],
+            check: Some("go vet ./...".into()),
+            format: Some("gofmt -l -w .".into()),
+            ..RunFile::default()
+        };
+        return Some((run, "go.mod"));
+    }
+    if has("pyproject.toml") || has("setup.py") || has("pytest.ini") || has("setup.cfg") {
+        let pyproject = read("pyproject.toml");
+        let table = pyproject.parse::<toml::Value>().ok();
+        let tool = |name: &str| {
+            table
+                .as_ref()
+                .and_then(|t| t.get("tool"))
+                .and_then(|t| t.get(name))
+                .is_some()
+        };
+        let prefix = if has("uv.lock") {
+            "uv run "
+        } else if has("poetry.lock") {
+            "poetry run "
+        } else {
+            ""
+        };
+        let pytest =
+            tool("pytest") || has("pytest.ini") || has("conftest.py") || has("tests/conftest.py");
+        let run = RunFile {
+            test: vec![if pytest {
+                format!("{prefix}pytest")
+            } else {
+                format!("{prefix}python3 -m unittest")
+            }],
+            check: if tool("pyright") || has("pyrightconfig.json") {
+                Some(format!("{prefix}pyright"))
+            } else if tool("mypy") || has("mypy.ini") {
+                Some(format!("{prefix}mypy ."))
+            } else {
+                None
+            },
+            lint: (tool("ruff") || has("ruff.toml")).then(|| format!("{prefix}ruff check .")),
+            format: (tool("ruff") || has("ruff.toml")).then(|| format!("{prefix}ruff format .")),
+            ..RunFile::default()
+        };
+        let source = if has("pyproject.toml") {
+            "pyproject.toml"
+        } else if has("setup.py") {
+            "setup.py"
+        } else if has("pytest.ini") {
+            "pytest.ini"
+        } else {
+            "setup.cfg"
+        };
+        return Some((run, source));
+    }
+    if has("Makefile") {
+        let makefile = read("Makefile");
+        let target = |name: &str| {
+            makefile
+                .lines()
+                .any(|l| l.starts_with(&format!("{name}:")) && !l.starts_with(&format!("{name}:=")))
+                .then(|| format!("make {name}"))
+        };
+        let run = RunFile {
+            build: target("build"),
+            test: target("test").into_iter().collect(),
+            check: target("check"),
+            lint: target("lint"),
+            format: target("format").or_else(|| target("fmt")),
+            ..RunFile::default()
+        };
+        return (!run.is_empty()).then_some((run, "Makefile"));
+    }
+    None
+}
+
+/// How a package manager runs a program from the project's dependencies.
+fn exec_of(runner: &str) -> &'static str {
+    match runner {
+        "pnpm" => "pnpm exec",
+        "yarn" => "yarn",
+        "bun" => "bunx",
+        _ => "npx",
+    }
+}
+
 /// The project's files as they stand, by path: a digest of each one's
 /// content. Taken before and after `format` runs, to say which files it
 /// changed; a formatter that rewrites a file as it was changed nothing.
@@ -1053,6 +1204,106 @@ mod tests {
         assert_eq!(quote("a b"), "'a b'");
         assert_eq!(quote("it's"), "'it'\\''s'");
         assert_eq!(quote("$(x)"), "'$(x)'");
+    }
+
+    #[test]
+    fn verbs_are_read_from_the_manifest_at_the_root() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(detect(root.path()), None);
+        // Cargo, a single package.
+        files(root.path(), &[("Cargo.toml", "[package]\nname = \"x\"\n")]);
+        let (run, from) = detect(root.path()).unwrap();
+        assert_eq!(from, "Cargo.toml");
+        assert_eq!(run.test, ["cargo test"]);
+        assert_eq!(run.build.as_deref(), Some("cargo build"));
+        assert_eq!(run.check.as_deref(), Some("cargo check"));
+        assert_eq!(run.lint.as_deref(), Some("cargo clippy --all-targets"));
+        assert_eq!(run.format.as_deref(), Some("cargo fmt"));
+        assert_eq!((run.start, run.ready, run.stop), (None, None, None));
+        // A workspace.
+        files(
+            root.path(),
+            &[("Cargo.toml", "[workspace]\nmembers = [\"a\"]\n")],
+        );
+        let (run, _) = detect(root.path()).unwrap();
+        assert_eq!(run.test, ["cargo test --workspace"]);
+        assert_eq!(run.format.as_deref(), Some("cargo fmt --all"));
+    }
+
+    #[test]
+    fn node_verbs_follow_the_scripts_and_the_lockfile() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[(
+                "package.json",
+                r#"{"scripts":{"test":"vitest run","build":"tsc -p .","lint":"eslint .","fmt":"prettier -w ."}}"#,
+            )],
+        );
+        let (run, from) = detect(root.path()).unwrap();
+        assert_eq!(from, "package.json");
+        assert_eq!(run.test, ["npm test"]);
+        assert_eq!(run.build.as_deref(), Some("npm run build"));
+        assert_eq!(run.lint.as_deref(), Some("npm run lint"));
+        assert_eq!(run.format.as_deref(), Some("npm run fmt"));
+        assert_eq!(run.check, None);
+        files(
+            root.path(),
+            &[("pnpm-lock.yaml", ""), ("tsconfig.json", "{}")],
+        );
+        let (run, _) = detect(root.path()).unwrap();
+        assert_eq!(run.test, ["pnpm test"]);
+        assert_eq!(run.check.as_deref(), Some("pnpm exec tsc --noEmit"));
+        // No scripts at all: nothing to approve.
+        let empty = tempfile::tempdir().unwrap();
+        files(empty.path(), &[("package.json", r#"{"name":"x"}"#)]);
+        assert_eq!(detect(empty.path()), None);
+    }
+
+    #[test]
+    fn python_go_and_make_verbs() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                (
+                    "pyproject.toml",
+                    "[tool.pytest.ini_options]\n[tool.ruff]\n[tool.pyright]\n",
+                ),
+                ("uv.lock", ""),
+            ],
+        );
+        let (run, from) = detect(root.path()).unwrap();
+        assert_eq!(from, "pyproject.toml");
+        assert_eq!(run.test, ["uv run pytest"]);
+        assert_eq!(run.check.as_deref(), Some("uv run pyright"));
+        assert_eq!(run.lint.as_deref(), Some("uv run ruff check ."));
+        assert_eq!(run.format.as_deref(), Some("uv run ruff format ."));
+        let plain = tempfile::tempdir().unwrap();
+        files(plain.path(), &[("setup.py", "")]);
+        let (run, _) = detect(plain.path()).unwrap();
+        assert_eq!(run.test, ["python3 -m unittest"]);
+        assert_eq!(run.lint, None);
+        let go = tempfile::tempdir().unwrap();
+        files(go.path(), &[("go.mod", "module x\n")]);
+        let (run, from) = detect(go.path()).unwrap();
+        assert_eq!(from, "go.mod");
+        assert_eq!(run.test, ["go test ./..."]);
+        assert_eq!(run.check.as_deref(), Some("go vet ./..."));
+        let make = tempfile::tempdir().unwrap();
+        files(
+            make.path(),
+            &[(
+                "Makefile",
+                "build:\n\tcc x.c\n\ntest: build\n\t./t\n\nfmt:\n\tclang-format -i *.c\n",
+            )],
+        );
+        let (run, from) = detect(make.path()).unwrap();
+        assert_eq!(from, "Makefile");
+        assert_eq!(run.build.as_deref(), Some("make build"));
+        assert_eq!(run.test, ["make test"]);
+        assert_eq!(run.format.as_deref(), Some("make fmt"));
+        assert_eq!(run.lint, None);
     }
 
     #[test]

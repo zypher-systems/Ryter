@@ -530,8 +530,10 @@ fn spec(name: &str) -> Option<ToolSpec> {
              for a quick round. A narrowed run says nothing about the rest: run `test` \
              with no arguments before you finish. A command Ryter can't narrow (make \
              test, several commands in one) is listed as not run. With no run file yet, \
-             propose one with propose_run. The build and audit hats run tests; the plan \
-             hat starts nothing.",
+             Ryter reads the project's manifest (Cargo.toml, package.json, pyproject.toml, \
+             go.mod, Makefile) and asks the user to approve what it found; only when that \
+             finds nothing, propose one with propose_run. The build and audit hats run \
+             tests; the plan hat starts nothing.",
             json!({"type":"object","properties":{
                 "filter":{"type":"string","description":"a test name or pattern, as the runner matches it, without its flag"},
                 "files":{"type":"array","items":{"type":"string"},"description":"paths under the project whose tests should run, e.g. the files you edited"}
@@ -539,8 +541,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
         ),
         "build" => (
             "Build the product with the project's own build command from the approved \
-             `.ryter/run.toml`, and get back the compiler's errors, capped, or that it \
-             built. For the build and audit hats.",
+             `.ryter/run.toml` (with no run file yet, Ryter reads the manifest and asks the \
+             user to approve what it found), and get back the compiler's errors, capped, or \
+             that it built. For the build and audit hats.",
             json!({"type":"object","properties":{}}),
         ),
         "check" => (

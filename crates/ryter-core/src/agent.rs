@@ -1825,6 +1825,47 @@ impl Agent {
         }
     }
 
+    /// The approved run file for a verb, or, with none yet, what the
+    /// project's manifest says, put to the user to approve: a yes saves it
+    /// as the run file and the verb goes on; otherwise the model is told as
+    /// before. A verb is the model asking for the project's own command,
+    /// and the manifest already names it: reading and proposing it was a
+    /// round spent on what Ryter could see.
+    fn approved_run_or_detected(
+        &mut self,
+    ) -> Result<std::result::Result<crate::run::RunFile, crate::tools::ToolOutput>> {
+        let root = self.root();
+        if crate::run::find(&root, &self.home) != crate::run::Found::None
+            || self.ctx.user_io.is_none()
+        {
+            return self.approved_run();
+        }
+        let Some((detected, from)) = crate::verbs::detect(&root) else {
+            return self.approved_run();
+        };
+        if let Some(why) = self.run_refused(&detected) {
+            crate::trace::log(&self.home, &format!("detected run file refused: {why}"));
+            return self.approved_run();
+        }
+        let note = format!("no run file yet: this is what {from} says, for you to approve");
+        if let Some(reply) = self.ask_run(&detected, Some(note))? {
+            return Ok(Err(reply));
+        }
+        if let Err(e) = crate::run::save_approved(&root, &self.home, &detected) {
+            return Ok(Err(crate::tools::ToolOutput::err(format!(
+                "the user approved how the project runs, but it could not be saved ({e}), \
+                 so nothing ran. Tell them."
+            ))));
+        }
+        self.emit(AgentEvent::Notice {
+            message: format!(
+                "run file · read from {from}, approved and saved to {}",
+                crate::run::FILE
+            ),
+        })?;
+        Ok(Ok(detected))
+    }
+
     /// `test`: the project's tests, narrowed to a name or to files when
     /// asked. The build and audit hats' tool.
     fn test_verb(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
@@ -1847,7 +1888,7 @@ impl Agent {
     ) -> Result<crate::tools::ToolOutput> {
         use crate::tools::ToolOutput;
         use crate::verbs::Scope;
-        let run = match self.approved_run()? {
+        let run = match self.approved_run_or_detected()? {
             Ok(run) => run,
             Err(reply) => return Ok(reply),
         };
@@ -2052,7 +2093,7 @@ impl Agent {
                  is a finding.",
             ));
         }
-        let run = match self.approved_run()? {
+        let run = match self.approved_run_or_detected()? {
             Ok(run) => run,
             Err(reply) => return Ok(reply),
         };
@@ -6113,6 +6154,87 @@ mod tests {
         agent.session_edits = vec!["tests/test_ghost.py".into()];
         let out = agent.test_verb(&serde_json::json!({})).unwrap();
         assert_eq!(out.text, "$ bin/pytest -q\n1 passed in 0.01s\n");
+    }
+
+    /// With no run file, a verb reads the project's manifest and puts what
+    /// it found to the user: a yes saves it as the run file and the verb
+    /// runs; a no leaves the model told as before. Headless, nothing is
+    /// read: the model proposes.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_verb_without_a_run_file_reads_the_manifest_for_the_user_to_approve() {
+        use crate::user_io::PlanAnswer;
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::write(
+            cwd.path().join("package.json"),
+            r#"{"scripts":{"test":"echo 2 passed","build":"echo built"}}"#,
+        )
+        .unwrap();
+        // Rejected: nothing saved, the model told.
+        let (shown, results, _) = build_turn(
+            &mut agent,
+            vec![call("test", serde_json::json!({}))],
+            vec![PlanAnswer::Reject],
+        )
+        .await;
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert_eq!(
+            shown[0].1.as_deref(),
+            Some("no run file yet: this is what package.json says, for you to approve")
+        );
+        assert_eq!(
+            shown[0].0,
+            [
+                ("build".to_string(), "npm run build".to_string()),
+                ("test".to_string(), "npm test".to_string()),
+            ]
+        );
+        assert!(
+            results[0].starts_with("the user rejected it"),
+            "{results:?}"
+        );
+        assert_eq!(
+            crate::run::find(cwd.path(), &agent.home),
+            crate::run::Found::None
+        );
+        // Approved: saved, and the verb runs without another word.
+        let (shown, results, events) = build_turn(
+            &mut agent,
+            vec![call("build", serde_json::json!({}))],
+            vec![PlanAnswer::Approve],
+        )
+        .await;
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert_eq!(results[0], "$ npm run build\nbuilt", "{results:?}");
+        assert!(matches!(
+            crate::run::find(cwd.path(), &agent.home),
+            crate::run::Found::Approved(_)
+        ));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message.starts_with("run file · read from package.json")
+        )));
+        // Approved once, not asked again.
+        let (shown, results, _) = build_turn(
+            &mut agent,
+            vec![call("test", serde_json::json!({}))],
+            Vec::new(),
+        )
+        .await;
+        assert!(shown.is_empty());
+        assert!(results[0].starts_with("$ npm test\n"), "{results:?}");
+        // Headless: no reading, the old message.
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        std::fs::write(cwd.path().join("go.mod"), "module x\n").unwrap();
+        let out = agent.run_verb("build").unwrap();
+        assert!(out.is_error);
+        assert!(
+            out.text.contains("propose it with propose_run"),
+            "{}",
+            out.text
+        );
     }
 
     /// A test command Ryter can't narrow is not run whole under the name of
