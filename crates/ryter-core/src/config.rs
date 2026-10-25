@@ -494,11 +494,19 @@ pub struct LimitsConfig {
     /// Model rounds one message may use (a round is one reply, with its
     /// tool calls). `0` lifts the cap.
     pub rounds: u32,
+    /// Done means checked: rounds a build turn may go on for after the
+    /// model says it is done while the project's check still fails, each
+    /// with the failures put back to it. `0` ends the turn on the model's
+    /// word, as before.
+    pub check_rounds: u32,
 }
 
 impl Default for LimitsConfig {
     fn default() -> Self {
-        Self { rounds: 150 }
+        Self {
+            rounds: 150,
+            check_rounds: 3,
+        }
     }
 }
 

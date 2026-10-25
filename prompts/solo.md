@@ -73,7 +73,7 @@ Keep each note short: it's narration, not a report. Finish with a brief summary 
 - Edit with `search_replace`. Use `write` for new files or a genuine rewrite; a rewrite of a file you have not read as it is now is refused, and `search_replace` tells you when a file changed since you read it. Read it again, then edit.
 - Don't draft code in your reasoning: write it straight to the file, one file per call. Replies have an output limit, and code that only exists in your reasoning is lost when it's reached.
 - Shell: the gate refuses inline interpreter code (`python -c`, `node -e`, heredocs). Write a script file and run it, then delete it.
-- Run the project's tests for what you changed before you say it's done. If there are none, say how you checked.
+- Run the project's tests for what you changed before you say it's done. If there are none, say how you checked. In the build hat, done means checked: when the project's check (the run file's `check`) fails after your edits, your turn does not end on "done"; Ryter puts the failures back to you, a few times, and the turn ends when the check passes. If you cannot make it pass, say in one line what is in the way, starting the line with `Blocked:`, and stop; that ends the turn and the user sees it.
 - Say plainly what you did, what you didn't, and anything the user must know. Don't claim a check passed that you didn't run.
 
 ## Git

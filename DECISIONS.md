@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-25 — Done means checked: a build turn does not end on "done" while the project's check fails
+
+The check after edits (0.37.0) ran the project's fast check after every build round that edited files and handed the model the errors. The turn still ended on the model's word: "done" with the check red was the end, the row showed a cross, and the user was the one who noticed. The hard bench logs show this as the commonest way a task is lost: a confident summary one round before the fix.
+
+The check is now the stop condition for the build hat. When the model ends a round with no tool calls and the last check after edits failed, Ryter does not end the turn: it emits "not done: `cmd` still fails · round N of M", puts the failures back as the next message ("[Ryter] Not done: … Fix it before you finish. If you cannot, say in one line what is in the way, starting the line with `Blocked:`, and stop.") and the model goes on. The turn ends when the check passes, when the model's reply has a `Blocked:` line (the chat says so with the line), after `[limits] check_rounds` continuations (3; the chat says the check still fails and the turn ends on the model's last word; `0` turns the loop off), on the round cap, the budget, or Esc. Agreed with the user on 2026-10-25, to these lines: on by default only where an approved run file has a `check`; bounded; an exit for the model; the fast check alone, not the test suite; a check whose program is not on this machine (`Outcome::NotFound`) is not held against the model; the gate untouched, every ask still asks, and this is not yolo. Headless runs and the bench get the same loop, which is what makes it measurable there.
+
+A reply cut off at the output limit is not "done" and is not looped on; the existing truncation path keeps it. The `Blocked:` contract follows the audit's `VERDICT:` one: a line the runtime reads, stated to the model in the prompt. Sixth of the "fewer redos" pieces, and the one expected to move solve rate most.
+
 ### 2026-10-24 — A rewrite needs a read: `write` over a file the model has not seen as it is now is refused
 
 `search_replace` cannot clobber: it replaces the quoted lines or fails. `write` can: a model that rewrites a file from its memory of it loses what it has not seen, the user's edit made in their editor between turns, a formatter's pass, a file it never opened because it "knew" what was in it. The prompt has said read before you edit since the start; the tool did not hold the model to it, and the loss was silent until the user noticed their line gone.

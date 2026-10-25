@@ -136,6 +136,30 @@ pub struct Agent {
     pub session_turns: u32,
 }
 
+/// What the check after a round's edits came to, for the turn's end.
+struct CheckOutcome {
+    /// The check command, as the run file has it.
+    cmd: String,
+    /// Whether it passed.
+    ok: bool,
+    /// Whether it could run at all: a program not on this machine is not
+    /// a failing check.
+    could_run: bool,
+    /// The failures as the model was told them (`check::report`).
+    report: String,
+}
+
+/// The line by which the model says it cannot make the check pass
+/// (`Blocked: the fixture needs a database`), which ends the turn.
+fn blocked_line(text: &str) -> Option<&str> {
+    text.lines().find_map(|l| {
+        let t = l.trim_start().trim_start_matches(['*', '_', '#', ' ']);
+        t.strip_prefix("Blocked:")
+            .or_else(|| t.strip_prefix("BLOCKED:"))
+            .map(|r| r.trim_start_matches(['*', '_', ' ']).trim())
+    })
+}
+
 /// Output ceiling per round of the conversation.
 const CONVERSATION_MAX_OUTPUT: u32 = 32_768;
 /// How long the project's fast check may take when Ryter runs it after a
@@ -557,6 +581,10 @@ impl Agent {
         // A review's own limit: the session's spend when the review hat
         // took over, and whether it has been told to write up.
         let mut reviewing: Option<(f64, bool)> = None;
+        // Done means checked: what the last check after edits came to this
+        // turn, and how many times the turn has gone on past "done".
+        let mut last_check: Option<CheckOutcome> = None;
+        let mut continued = 0u32;
         for _round in 0..self.max_turns {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
@@ -806,6 +834,56 @@ impl Agent {
                 if self.ctx.cancel.is_cancelled() {
                     return self.finish_cancelled(last_text).await;
                 }
+                // Done means checked. The build hat's "done" with the
+                // project's check failing is not the end of the turn: the
+                // failures go back to it, a bounded number of times, unless
+                // it says what is in the way. A check that could not run is
+                // not held against it, and the gate is unchanged: every ask
+                // still asks.
+                if !truncated && self.role == Role::Build {
+                    if let Some(check) = last_check.as_ref().filter(|c| !c.ok && c.could_run) {
+                        let cap = self.check_rounds();
+                        if let Some(why) = blocked_line(&last_text) {
+                            self.emit(AgentEvent::Notice {
+                                message: format!(
+                                    "the model says it is blocked, with `{}` still failing: {why}",
+                                    check.cmd
+                                ),
+                            })?;
+                        } else if continued < cap {
+                            continued += 1;
+                            self.emit(AgentEvent::Notice {
+                                message: format!(
+                                    "not done: `{}` still fails · round {continued} of {cap}",
+                                    check.cmd
+                                ),
+                            })?;
+                            self.session.push_message(Message {
+                                role: "user".into(),
+                                content: format!(
+                                    "[Ryter] Not done: `{}` still fails.\n\n{}\n\nFix it before \
+                                     you finish. If you cannot, say in one line what is in the \
+                                     way, starting the line with `Blocked:`, and stop.",
+                                    check.cmd, check.report
+                                ),
+                                tool_call_id: None,
+                                tool_calls: None,
+                                messages_blocks: None,
+                            })?;
+                            continue;
+                        } else if cap > 0 {
+                            self.emit(AgentEvent::Notice {
+                                message: format!(
+                                    "stopped: `{}` still fails after {cap} more round{}. Fix it, or \
+                                     tell the model what is in the way ([limits] check_rounds in \
+                                     config.toml sets how far it goes on).",
+                                    check.cmd,
+                                    if cap == 1 { "" } else { "s" }
+                                ),
+                            })?;
+                        }
+                    }
+                }
                 // "No tool calls" used to mean success even when the provider
                 // had cut the answer off at `max_tokens`.
                 return Ok(TurnResult {
@@ -1008,7 +1086,7 @@ impl Agent {
             }
             if self.role == Role::Build && !edited.is_empty() {
                 match self.check_after_edits(&edited).await {
-                    Ok(()) => {}
+                    Ok(outcome) => last_check = outcome,
                     Err(Error::Cancelled) => return self.finish_cancelled(last_text).await,
                     Err(e) => return Err(e),
                 }
@@ -1636,8 +1714,9 @@ impl Agent {
 
     /// Run the project's fast check and say what it came to: the error
     /// count and the errors, capped (`check::report`), with `ok` for a
-    /// clean run. `None` when the turn was cancelled meanwhile.
-    fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String)> {
+    /// clean run, and whether the command could run at all (a check whose
+    /// program is not on this machine is not one to hold the model to).
+    fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String, bool)> {
         use crate::tools::shell::Run;
         let root = self.root();
         let began = std::time::Instant::now();
@@ -1660,15 +1739,11 @@ impl Agent {
             ),
             Run::Cancelled => return Err(Error::Cancelled),
         };
-        self.observe_command(
-            cmd,
-            crate::observed::Outcome::of(ok, timed_out, &body),
-            began.elapsed(),
-            true,
-        );
+        let outcome = crate::observed::Outcome::of(ok, timed_out, &body);
+        self.observe_command(cmd, outcome, began.elapsed(), true);
         self.last_check = Some(ok);
         let (n, text) = crate::check::report(&body, ok);
-        Ok((ok, n, text))
+        Ok((ok, n, text, outcome != crate::observed::Outcome::NotFound))
     }
 
     /// After a build round that edited files: the project's approved
@@ -1678,17 +1753,20 @@ impl Agent {
     /// user has approved as it stands: nothing is asked mid-round. It
     /// goes through the same hooks as the model's own `run_project` call,
     /// and its row is answered however it ends, Esc included.
-    async fn check_after_edits(&mut self, edited: &[String]) -> Result<()> {
+    ///
+    /// Returns what the check came to when it ran, for the turn's end:
+    /// `None` when there was no check to run, or it did not run.
+    async fn check_after_edits(&mut self, edited: &[String]) -> Result<Option<CheckOutcome>> {
         use crate::tools::ToolOutput;
         let root = self.root();
         let crate::run::Found::Approved(run) = crate::run::find(&root, &self.home) else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(cmd) = run.check.clone() else {
-            return Ok(());
+            return Ok(None);
         };
         if self.run_refused(&run).is_some() {
-            return Ok(());
+            return Ok(None);
         }
         let id = format!("check-{}-{}", self.turn, crate::event::now_ms());
         let args = serde_json::json!({ "action": "check" });
@@ -1706,10 +1784,10 @@ impl Agent {
         // The hooks a `run_project` call from the model runs: one that
         // denies or watches that call sees this one too.
         let ctx = self.ctx.clone();
-        let mut found: Option<(bool, usize)> = None;
+        let mut found: Option<(bool, usize, bool)> = None;
         let result = crate::tools::with_hooks("run_project", &args, &ctx, || {
-            let (ok, n, text) = self.run_check(&cmd)?;
-            found = Some((ok, n));
+            let (ok, n, text, could_run) = self.run_check(&cmd)?;
+            found = Some((ok, n, could_run));
             Ok(if ok {
                 ToolOutput::ok(text)
             } else {
@@ -1751,12 +1829,12 @@ impl Agent {
         };
         let text = out.text;
         let content = match found {
-            Some((true, _)) => format!("[Ryter] `{cmd}` passed after your edits to {files}."),
-            Some((false, 0)) => format!(
+            Some((true, _, _)) => format!("[Ryter] `{cmd}` passed after your edits to {files}."),
+            Some((false, 0, _)) => format!(
                 "[Ryter] `{cmd}` {text}\n\nIt ran after your edits to {files}. See to it \
                  before going on; Ryter runs it again after your next edits."
             ),
-            Some((false, _)) => format!(
+            Some((false, _, _)) => format!(
                 "[Ryter] `{cmd}` after your edits to {files}: {text}\n\nFix them before going \
                  on; Ryter runs the check again after your next edits."
             ),
@@ -1769,7 +1847,19 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
-        })
+        })?;
+        Ok(found.map(|(ok, _, could_run)| CheckOutcome {
+            cmd,
+            ok,
+            could_run,
+            report: text,
+        }))
+    }
+
+    /// Done means checked: how many rounds a build turn may go on for
+    /// after the model says it is done while the check still fails.
+    fn check_rounds(&self) -> u32 {
+        self.cfg.as_ref().map_or(3, |c| c.limits.check_rounds)
     }
 
     /// Put how the project runs to the user. `Ok(None)` is their yes.
@@ -2621,7 +2711,7 @@ impl Agent {
                         crate::run::FILE
                     )));
                 };
-                let (ok, _, text) = self.run_check(&cmd)?;
+                let (ok, _, text, _) = self.run_check(&cmd)?;
                 let text = format!("$ {cmd}\n{text}");
                 Ok(if ok {
                     ToolOutput::ok(text)
@@ -7443,6 +7533,174 @@ mod tests {
             last.contains("README.md changed since you last read it (now 2 lines)"),
             "{last}"
         );
+    }
+
+    /// A failing check script, and the files the model writes.
+    fn checked_project(
+        turns: Vec<Vec<StreamDelta>>,
+    ) -> (TempDir, TempDir, Agent, std::path::PathBuf) {
+        let (home, cwd, mut agent) = build_agent(turns);
+        let check = cwd.path().join("check.sh");
+        std::fs::write(
+            &check,
+            "printf 'error: not yet\\n --> src/x.rs:1:1\\n'; exit 1\n",
+        )
+        .unwrap();
+        let run = crate::run::RunFile {
+            check: Some("sh check.sh".into()),
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        seen(&agent, "check.sh");
+        agent.sink = None;
+        (home, cwd, agent, check)
+    }
+
+    fn notices(rx: &std::sync::mpsc::Receiver<AgentEvent>) -> Vec<String> {
+        rx.try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Done means checked: the build hat's "done" with the check failing
+    /// is not the end of the turn. The failures go back to it; when its
+    /// next edit makes the check pass, its next "done" ends the turn.
+    #[tokio::test]
+    async fn a_build_turn_does_not_end_on_done_while_the_check_fails() {
+        let (_home, _cwd, mut agent, _check) = checked_project(vec![
+            write("notes.txt", "one\n"),
+            say("done, I think"),
+            write("check.sh", "exit 0\n"),
+            say("done, checked"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        assert_eq!(r.text, "done, checked");
+        let back: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "user" && m.content.starts_with("[Ryter] Not done:"))
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(back.len(), 1, "{back:?}");
+        assert!(
+            back[0].starts_with(
+                "[Ryter] Not done: `sh check.sh` still fails.\n\n1 error\n\nerror: not yet"
+            ),
+            "{}",
+            back[0]
+        );
+        assert!(
+            back[0].ends_with("starting the line with `Blocked:`, and stop."),
+            "{}",
+            back[0]
+        );
+        let n = notices(&rx);
+        assert!(
+            n.iter()
+                .any(|m| m == "not done: `sh check.sh` still fails · round 1 of 3"),
+            "{n:?}"
+        );
+        assert!(!n.iter().any(|m| m.starts_with("stopped:")), "{n:?}");
+    }
+
+    /// The loop is bounded by `[limits] check_rounds`, says so when it
+    /// gives up, and is off at `0`. A model that says what is in the way
+    /// (`Blocked:`) ends the turn at once. A check whose program is not on
+    /// this machine is not held against the model.
+    #[tokio::test]
+    async fn the_check_loop_is_capped_off_at_zero_and_ended_by_a_blocked_line() {
+        // Capped: three continuations, then the turn ends with the notice.
+        let (_home, _cwd, mut agent, _check) = checked_project(vec![
+            write("notes.txt", "one\n"),
+            say("done 1"),
+            say("done 2"),
+            say("done 3"),
+            say("done 4"),
+            say("never sent"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(
+            (r.reason, r.text.as_str()),
+            (StopReason::Completed, "done 4")
+        );
+        let n = notices(&rx);
+        assert_eq!(
+            n.iter().filter(|m| m.starts_with("not done:")).count(),
+            3,
+            "{n:?}"
+        );
+        assert!(
+            n.iter()
+                .any(|m| m.starts_with("stopped: `sh check.sh` still fails after 3 more rounds.")),
+            "{n:?}"
+        );
+        // Off: the turn ends on the model's word.
+        let (_home, _cwd, mut agent, _check) =
+            checked_project(vec![write("notes.txt", "one\n"), say("done"), say("never")]);
+        agent.cfg.as_mut().unwrap().limits.check_rounds = 0;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.text, "done");
+        let n = notices(&rx);
+        assert!(
+            !n.iter()
+                .any(|m| m.starts_with("not done:") || m.starts_with("stopped:")),
+            "{n:?}"
+        );
+        // Blocked: said in a line, the turn ends and the chat says so.
+        let (_home, _cwd, mut agent, _check) = checked_project(vec![
+            write("notes.txt", "one\n"),
+            say("I cannot run this.\n\nBlocked: check.sh needs a database that is not here."),
+            say("never"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert!(r.text.starts_with("I cannot run this."));
+        let n = notices(&rx);
+        assert!(
+            n.iter().any(|m| m == "the model says it is blocked, with `sh check.sh` still failing: check.sh needs a database that is not here."),
+            "{n:?}"
+        );
+        assert!(!n.iter().any(|m| m.starts_with("not done:")), "{n:?}");
+        // A check that cannot run here: no loop.
+        let (_home, cwd, mut agent, check) =
+            checked_project(vec![write("notes.txt", "one\n"), say("done"), say("never")]);
+        std::fs::write(&check, "sh: 1: no-such-checker: not found\n").unwrap();
+        std::fs::write(
+            cwd.path().join("check.sh"),
+            "echo 'sh: 1: no-such-checker: command not found' >&2; exit 127\n",
+        )
+        .unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.text, "done");
+        assert!(!notices(&rx).iter().any(|m| m.starts_with("not done:")));
+    }
+
+    #[test]
+    fn a_blocked_line_is_found_however_it_is_dressed() {
+        assert_eq!(
+            blocked_line("Blocked: no database here"),
+            Some("no database here")
+        );
+        assert_eq!(
+            blocked_line("Done.\n\n**Blocked:** the port is taken"),
+            Some("the port is taken")
+        );
+        assert_eq!(blocked_line("BLOCKED:  needs root"), Some("needs root"));
+        assert_eq!(blocked_line("nothing blocked here"), None);
     }
 
     /// A `run_project test` hands the model the tests that failed, each
