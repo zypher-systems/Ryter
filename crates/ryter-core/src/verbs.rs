@@ -72,6 +72,9 @@ struct Recognised {
     /// What goes between the command and arguments added to it: ` -- `
     /// through `npm` and `pnpm`, a space otherwise.
     joint: &'static str,
+    /// Whether a script behind the command (`npm test` → `vitest run test/`)
+    /// already names test paths, which a file list could not take out.
+    positional: bool,
 }
 
 /// Narrow `cmd`, one of the run file's test commands, to `filter` (a test
@@ -109,10 +112,10 @@ pub fn narrow(cmd: &str, filter: Option<&str>, files: &[String], root: &Path) ->
         }
     }
     let scoped = match found.runner {
-        Runner::Cargo => cargo(cmd, filter, &matched, root, &mut unmatched),
+        Runner::Cargo => Ok(cargo(cmd, filter, &matched, root, &mut unmatched)),
         Runner::Pytest => pytest(cmd, &found, filter, &matched, root, &mut unmatched),
         Runner::Go => go(cmd, filter, &matched, &mut unmatched),
-        Runner::Jest => jest(cmd, &found, filter, &matched, &mut unmatched),
+        Runner::Jest => jest(cmd, &found, filter, &matched, root, &mut unmatched),
         Runner::Vitest | Runner::Bun => {
             by_test_file(cmd, &found, "-t", filter, &matched, root, &mut unmatched)
         }
@@ -125,6 +128,10 @@ pub fn narrow(cmd: &str, filter: Option<&str>, files: &[String], root: &Path) ->
             root,
             &mut unmatched,
         ),
+    };
+    let scoped = match scoped {
+        Ok(scoped) => scoped,
+        Err(why) => return Scope::Cannot(why),
     };
     match scoped {
         // Files were given and none of them is covered: a run of the whole
@@ -164,7 +171,13 @@ pub fn ran_nothing(output: &str) -> bool {
         if last.contains("no tests ran") {
             return true;
         }
-        if last.contains("deselected") && !last.contains("passed") && !last.contains("failed") {
+        // `2 deselected` alone; `1 error, 2 deselected` is a run that
+        // collected something and broke.
+        if last.contains("deselected")
+            && !last.contains("passed")
+            && !last.contains("failed")
+            && !last.contains("error")
+        {
             return true;
         }
     }
@@ -176,11 +189,18 @@ pub fn ran_nothing(output: &str) -> bool {
     if !go.is_empty() && go.iter().all(|l| l.contains("[no tests to run]")) {
         return true;
     }
+    // mocha: `0 passing` with nothing failing; `0 passing` over `1 failing`
+    // is a failure, not an empty run.
+    let failing = lines.iter().any(|l| {
+        l.split_once(' ').is_some_and(|(n, rest)| {
+            rest.starts_with("failing") && n.parse::<u64>().is_ok_and(|n| n > 0)
+        })
+    });
     // jest, vitest, mocha.
     lines.iter().any(|l| {
         l.starts_with("No tests found")
             || l.starts_with("No test files found")
-            || (*l == "0 passing" || l.starts_with("0 passing ("))
+            || (!failing && (*l == "0 passing" || l.starts_with("0 passing (")))
     })
 }
 
@@ -217,7 +237,13 @@ fn recognise(cmd: &str, root: &Path) -> Option<Recognised> {
 fn recognise_words(words: &[&str], root: &Path, depth: u8) -> Option<Recognised> {
     let (first, rest) = words.split_first()?;
     let first = first.rsplit('/').next().unwrap_or(first);
-    let direct = |runner| Some(Recognised { runner, joint: " " });
+    let direct = |runner| {
+        Some(Recognised {
+            runner,
+            joint: " ",
+            positional: false,
+        })
+    };
     match first {
         "cargo" => match rest {
             ["test", ..] => direct(Runner::Cargo),
@@ -297,10 +323,279 @@ fn script_runner(root: &Path, script: &str, depth: u8, joint: &'static str) -> O
         .skip_while(|w| is_assignment(w))
         .collect();
     let inner = recognise_words(&words, root, depth + 1)?;
+    // A path the script names itself can't be taken out through `npm test
+    // -- …`: a file list would widen to it.
+    let positional = inner.positional
+        || match strip_positional_paths(line, inner.runner, root) {
+            Ok(stripped) => stripped != line,
+            Err(_) => true,
+        };
     Some(Recognised {
         runner: inner.runner,
         joint,
+        positional,
     })
+}
+
+/// The runner's own word in `cmd` (through wrappers), and the index after
+/// it and its subcommand (`go test`, `bun test`, `cargo test`), from which
+/// the command's own arguments run.
+fn arguments_start(words: &[&str], runner: Runner) -> Option<usize> {
+    let names: &[&str] = match runner {
+        Runner::Cargo => &["cargo"],
+        Runner::Pytest => &["pytest", "py.test"],
+        Runner::Go => &["go"],
+        Runner::Jest => &["jest"],
+        Runner::Vitest => &["vitest"],
+        Runner::Mocha => &["mocha"],
+        Runner::Bun => &["bun"],
+    };
+    let at = words.iter().position(|w| {
+        let base = w.rsplit('/').next().unwrap_or(w);
+        names.contains(&base)
+    })?;
+    Some(match runner {
+        Runner::Cargo | Runner::Go | Runner::Bun => at + 2,
+        _ => at + 1,
+    })
+}
+
+/// Whether `flag` (without an `=`) takes the next word as its value, for
+/// the runners whose positional words are paths.
+fn takes_value(runner: Runner, flag: &str) -> bool {
+    let list: &[&str] = match runner {
+        Runner::Pytest => &[
+            "-k",
+            "-m",
+            "-p",
+            "-c",
+            "-o",
+            "-W",
+            "-n",
+            "-r",
+            "--rootdir",
+            "--confcutdir",
+            "--tb",
+            "--durations",
+            "--maxfail",
+            "--junitxml",
+            "--basetemp",
+            "--deselect",
+            "--ignore",
+            "--ignore-glob",
+            "--import-mode",
+            "--log-level",
+            "--log-file",
+            "--override-ini",
+            "--timeout",
+            "--dist",
+            "--cov",
+            "--cov-report",
+            "--cov-config",
+            "--doctest-glob",
+        ],
+        Runner::Vitest => &[
+            "-t",
+            "--testNamePattern",
+            "-c",
+            "--config",
+            "-r",
+            "--root",
+            "--dir",
+            "--reporter",
+            "--outputFile",
+            "--pool",
+            "--project",
+            "--environment",
+            "--exclude",
+            "--testTimeout",
+            "--hookTimeout",
+            "--maxConcurrency",
+            "--shard",
+            "--mode",
+        ],
+        Runner::Mocha => &[
+            "-g",
+            "--grep",
+            "-f",
+            "--fgrep",
+            "-r",
+            "--require",
+            "-R",
+            "--reporter",
+            "-t",
+            "--timeout",
+            "-s",
+            "--slow",
+            "--file",
+            "--config",
+            "--package",
+            "--extension",
+            "-u",
+            "--ui",
+            "--spec",
+            "-O",
+            "--reporter-option",
+            "--retries",
+            "-j",
+            "--jobs",
+            "-n",
+            "--node-option",
+            "--global",
+            "--ignore",
+            "--exclude",
+        ],
+        Runner::Bun => &[
+            "-t",
+            "--test-name-pattern",
+            "--timeout",
+            "--preload",
+            "-r",
+            "--rerun-each",
+            "--coverage-dir",
+            "--coverage-reporter",
+            "--reporter",
+            "--reporter-outfile",
+        ],
+        Runner::Jest => &[
+            "-t",
+            "--testNamePattern",
+            "-c",
+            "--config",
+            "--rootDir",
+            "--roots",
+            "--reporters",
+            "--maxWorkers",
+            "-w",
+            "--testPathPattern",
+            "--testPathIgnorePatterns",
+            "--coverageDirectory",
+            "--outputFile",
+            "--selectProjects",
+            "--shard",
+            "--testTimeout",
+        ],
+        Runner::Cargo | Runner::Go => &[],
+    };
+    list.contains(&flag)
+}
+
+/// Words the runner takes as its own subcommands, not as paths.
+fn is_subcommand(runner: Runner, word: &str) -> bool {
+    match runner {
+        Runner::Vitest => matches!(word, "run" | "watch" | "related" | "bench" | "dev" | "init"),
+        _ => false,
+    }
+}
+
+/// Whether a positional word reads as a path or a path pattern.
+fn path_like(word: &str) -> bool {
+    word.contains('/')
+        || word.contains(['*', '?', '['])
+        || word.ends_with(".py")
+        || Path::new(word)
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| {
+                matches!(
+                    e,
+                    "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts"
+                )
+            })
+}
+
+/// `cmd` without the test paths it names itself, so the files' own tests
+/// can take their place: a positional word that is a folder under `root`
+/// is dropped. A positional word that still reads as a path or a pattern
+/// (`test/**/*.js`, `tests/unit.py`) can't be told from one the runner
+/// needs, and is refused.
+fn strip_positional_paths(
+    cmd: &str,
+    runner: Runner,
+    root: &Path,
+) -> std::result::Result<String, String> {
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    let Some(start) = arguments_start(&words, runner) else {
+        return Ok(cmd.to_string());
+    };
+    let mut out: Vec<&str> = words[..start.min(words.len())].to_vec();
+    let mut value_next = false;
+    for w in &words[start.min(words.len())..] {
+        if value_next {
+            out.push(w);
+            value_next = false;
+            continue;
+        }
+        if w.starts_with('-') {
+            out.push(w);
+            value_next = !w.contains('=') && takes_value(runner, w);
+            continue;
+        }
+        if is_subcommand(runner, w) {
+            out.push(w);
+            continue;
+        }
+        if root.join(w).is_dir() {
+            continue;
+        }
+        if path_like(w) {
+            return Err(format!(
+                "`{w}` in the command picks tests of its own, which a file list can't take out; \
+                 take it out of the run file, or run the runner with bash"
+            ));
+        }
+        out.push(w);
+    }
+    Ok(out.join(" "))
+}
+
+/// `cmd` ready for a file list: its own test paths taken out, or why it
+/// can't be. A script behind it that names paths is refused the same way.
+fn without_own_paths(
+    cmd: &str,
+    found: &Recognised,
+    root: &Path,
+) -> std::result::Result<String, String> {
+    if found.positional {
+        return Err(
+            "the script it runs already names test paths, which a file list can't take out; \
+             run the runner itself with bash, or put it in the run file directly"
+                .into(),
+        );
+    }
+    strip_positional_paths(cmd, found.runner, root)
+}
+
+/// The test files for a source file, by name: `test_{stem}.py` and
+/// `{stem}_test.py` for Python, `{stem}.test.*` and `{stem}.spec.*` for a
+/// script, the stem being the name before its last extension
+/// (`button.component` for `button.component.ts`). Those beside the source
+/// are preferred to those elsewhere.
+fn tests_named_for(source: &Path, index: &[PathBuf], python: bool) -> Vec<PathBuf> {
+    let stem = source.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if stem.is_empty() {
+        return Vec::new();
+    }
+    let wanted = |name: &str| {
+        if python {
+            name == format!("test_{stem}.py") || name == format!("{stem}_test.py")
+        } else {
+            name.starts_with(&format!("{stem}.test.")) || name.starts_with(&format!("{stem}.spec."))
+        }
+    };
+    let hits: Vec<&PathBuf> = index
+        .iter()
+        .filter(|t| t.file_name().and_then(|n| n.to_str()).is_some_and(wanted))
+        .collect();
+    let beside: Vec<&PathBuf> = hits
+        .iter()
+        .copied()
+        .filter(|t| t.parent() == source.parent())
+        .collect();
+    (if beside.is_empty() { hits } else { beside })
+        .into_iter()
+        .cloned()
+        .collect()
 }
 
 /// `file` as a path under `root`, relative, or why it isn't one.
@@ -465,7 +760,7 @@ fn pytest(
     files: &[PathBuf],
     root: &Path,
     unmatched: &mut Vec<String>,
-) -> Option<String> {
+) -> std::result::Result<Option<String>, String> {
     let index = if files.iter().any(|f| !is_python_test(f)) {
         test_files(root)
     } else {
@@ -477,21 +772,14 @@ fn pytest(
             paths.push(quote(&f.display().to_string()));
             continue;
         }
-        let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let ext = f.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let mut hits: Vec<String> = Vec::new();
-        if ext == "py" && !stem.is_empty() {
-            let wants = [format!("test_{stem}.py"), format!("{stem}_test.py")];
-            hits = index
+        let hits: Vec<String> = if f.extension().and_then(|e| e.to_str()) == Some("py") {
+            tests_named_for(f, &index, true)
                 .iter()
-                .filter(|t| {
-                    t.file_name()
-                        .and_then(|n| n.to_str())
-                        .is_some_and(|n| wants.iter().any(|w| w == n))
-                })
                 .map(|t| quote(&t.display().to_string()))
-                .collect();
-        }
+                .collect()
+        } else {
+            Vec::new()
+        };
         if hits.is_empty() {
             unmatched.push(format!("no test file for `{}`", f.display()));
         } else {
@@ -499,17 +787,22 @@ fn pytest(
         }
     }
     if paths.is_empty() && !files.is_empty() {
-        return None;
+        return Ok(None);
     }
     paths.sort();
     paths.dedup();
+    let cmd = if paths.is_empty() {
+        cmd.to_string()
+    } else {
+        without_own_paths(cmd, found, root)?
+    };
     let mut args = Vec::new();
     if let Some(f) = filter {
         args.push("-k".to_string());
         args.push(quote(f));
     }
     args.extend(paths);
-    Some(append(cmd, found, &args))
+    Ok(Some(append(&cmd, found, &args)))
 }
 
 fn is_python_test(rel: &Path) -> bool {
@@ -524,7 +817,7 @@ fn go(
     filter: Option<&str>,
     files: &[PathBuf],
     unmatched: &mut Vec<String>,
-) -> Option<String> {
+) -> std::result::Result<Option<String>, String> {
     let mut dirs = BTreeSet::new();
     for f in files {
         if f.extension().and_then(|e| e.to_str()) != Some("go") {
@@ -542,14 +835,31 @@ fn go(
         });
     }
     if dirs.is_empty() && !files.is_empty() {
-        return None;
+        return Ok(None);
     }
     let words: Vec<&str> = cmd.split_whitespace().collect();
-    let mut out: Vec<String> = Vec::new();
-    for w in &words {
-        // A package pattern the command names (`./...`, `./pkg`, `.`)
-        // gives way to the files' own.
-        if !dirs.is_empty() && (w.starts_with("./") || *w == "." || w.ends_with("/...")) {
+    let start = arguments_start(&words, Runner::Go).unwrap_or(words.len());
+    let mut out: Vec<String> = words[..start.min(words.len())]
+        .iter()
+        .map(|w| w.to_string())
+        .collect();
+    let mut value_next = false;
+    for w in &words[start.min(words.len())..] {
+        if value_next {
+            out.push((*w).to_string());
+            value_next = false;
+            continue;
+        }
+        if w.starts_with('-') {
+            out.push((*w).to_string());
+            // Go's flags take their value as the next word unless they are
+            // boolean or written `-flag=value`.
+            value_next = !w.contains('=') && !go_boolean_flag(w);
+            continue;
+        }
+        // Every other word names packages (`./...`, `all`, `...`, a
+        // directory, an import path); the files' own take their place.
+        if !dirs.is_empty() {
             continue;
         }
         out.push((*w).to_string());
@@ -558,8 +868,32 @@ fn go(
         out.push("-run".into());
         out.push(quote(f));
     }
-    out.extend(dirs);
-    Some(out.join(" "))
+    out.extend(dirs.iter().map(|d| quote(d)));
+    Ok(Some(out.join(" ")))
+}
+
+/// `go test`'s flags that take no value.
+fn go_boolean_flag(flag: &str) -> bool {
+    matches!(
+        flag,
+        "-v" | "-race"
+            | "-cover"
+            | "-short"
+            | "-json"
+            | "-failfast"
+            | "-benchmem"
+            | "-msan"
+            | "-asan"
+            | "-a"
+            | "-n"
+            | "-x"
+            | "-work"
+            | "-trimpath"
+            | "-linkshared"
+            | "-c"
+            | "-i"
+            | "-fullpath"
+    )
 }
 
 /// `jest`: `-t` for the filter, `--findRelatedTests` for the files, which
@@ -569,8 +903,9 @@ fn jest(
     found: &Recognised,
     filter: Option<&str>,
     files: &[PathBuf],
+    root: &Path,
     unmatched: &mut Vec<String>,
-) -> Option<String> {
+) -> std::result::Result<Option<String>, String> {
     let mut related = Vec::new();
     for f in files {
         if is_script(f) {
@@ -580,8 +915,13 @@ fn jest(
         }
     }
     if related.is_empty() && !files.is_empty() {
-        return None;
+        return Ok(None);
     }
+    let cmd = if related.is_empty() {
+        cmd.to_string()
+    } else {
+        without_own_paths(cmd, found, root)?
+    };
     let mut args = Vec::new();
     if let Some(f) = filter {
         args.push("-t".to_string());
@@ -591,7 +931,7 @@ fn jest(
         args.push("--findRelatedTests".into());
         args.extend(related);
     }
-    Some(append(cmd, found, &args))
+    Ok(Some(append(&cmd, found, &args)))
 }
 
 /// vitest, mocha, bun test: `flag` for the filter; a test file as its path,
@@ -605,7 +945,7 @@ fn by_test_file(
     files: &[PathBuf],
     root: &Path,
     unmatched: &mut Vec<String>,
-) -> Option<String> {
+) -> std::result::Result<Option<String>, String> {
     let index = if files.iter().any(|f| !is_script_test(f)) {
         test_files(root)
     } else {
@@ -617,19 +957,14 @@ fn by_test_file(
             paths.push(quote(&f.display().to_string()));
             continue;
         }
-        let stem = f.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let mut hits: Vec<String> = Vec::new();
-        if is_script(f) && !stem.is_empty() {
-            hits = index
+        let hits: Vec<String> = if is_script(f) {
+            tests_named_for(f, &index, false)
                 .iter()
-                .filter(|t| {
-                    let name = t.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    let base = name.split('.').next().unwrap_or("");
-                    base == stem
-                })
                 .map(|t| quote(&t.display().to_string()))
-                .collect();
-        }
+                .collect()
+        } else {
+            Vec::new()
+        };
         if hits.is_empty() {
             unmatched.push(format!("no test file for `{}`", f.display()));
         } else {
@@ -637,17 +972,22 @@ fn by_test_file(
         }
     }
     if paths.is_empty() && !files.is_empty() {
-        return None;
+        return Ok(None);
     }
     paths.sort();
     paths.dedup();
+    let cmd = if paths.is_empty() {
+        cmd.to_string()
+    } else {
+        without_own_paths(cmd, found, root)?
+    };
     let mut args = Vec::new();
     if let Some(f) = filter {
         args.push(flag.to_string());
         args.push(quote(f));
     }
     args.extend(paths);
-    Some(append(cmd, found, &args))
+    Ok(Some(append(&cmd, found, &args)))
 }
 
 fn is_script(rel: &Path) -> bool {
@@ -794,8 +1134,11 @@ pub fn detect(root: &Path) -> Option<(crate::run::RunFile, &'static str)> {
         };
         return Some((run, source));
     }
-    if has("Makefile") {
-        let makefile = read("Makefile");
+    if let Some(name) = ["Makefile", "makefile", "GNUmakefile"]
+        .into_iter()
+        .find(|n| has(n))
+    {
+        let makefile = read(name);
         let target = |name: &str| {
             makefile
                 .lines()
@@ -810,7 +1153,7 @@ pub fn detect(root: &Path) -> Option<(crate::run::RunFile, &'static str)> {
             format: target("format").or_else(|| target("fmt")),
             ..RunFile::default()
         };
-        return (!run.is_empty()).then_some((run, "Makefile"));
+        return (!run.is_empty()).then_some((run, name));
     }
     None
 }
@@ -1055,6 +1398,211 @@ mod tests {
             root.path(),
         ));
         assert_eq!(why, "pytest: no test file for `pkg/other.py`");
+    }
+
+    #[test]
+    fn a_source_matches_the_test_named_for_its_whole_stem_and_beside_it_first() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                ("src/button.ts", ""),
+                ("src/button.test.ts", ""),
+                ("src/button.component.ts", ""),
+                ("src/button.component.spec.ts", ""),
+                ("src/api/index.ts", ""),
+                ("src/api/index.test.ts", ""),
+                ("src/web/index.test.ts", ""),
+                ("src/lib/util.ts", ""),
+                ("test/util.test.ts", ""),
+                ("test/other.test.ts", ""),
+            ],
+        );
+        let run =
+            |files: &[&str]| narrowed(narrow("npx vitest", None, &strings(files), root.path())).cmd;
+        // The whole stem, not the text before the first dot.
+        assert_eq!(run(&["src/button.ts"]), "npx vitest src/button.test.ts");
+        assert_eq!(
+            run(&["src/button.component.ts"]),
+            "npx vitest src/button.component.spec.ts"
+        );
+        // Beside the source first; elsewhere only when nothing is beside.
+        assert_eq!(
+            run(&["src/api/index.ts"]),
+            "npx vitest src/api/index.test.ts"
+        );
+        assert_eq!(run(&["src/lib/util.ts"]), "npx vitest test/util.test.ts");
+        // Python the same way.
+        let py = tempfile::tempdir().unwrap();
+        files(
+            py.path(),
+            &[
+                ("pkg/mod.py", ""),
+                ("pkg/test_mod.py", ""),
+                ("tests/test_mod.py", ""),
+                ("pkg/other.py", ""),
+                ("tests/test_other.py", ""),
+            ],
+        );
+        let n = narrowed(narrow(
+            "pytest",
+            None,
+            &strings(&["pkg/mod.py", "pkg/other.py"]),
+            py.path(),
+        ));
+        assert_eq!(n.cmd, "pytest pkg/test_mod.py tests/test_other.py");
+    }
+
+    #[test]
+    fn a_commands_own_test_paths_give_way_to_the_files() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                ("pkg/mod.py", ""),
+                ("tests/test_mod.py", ""),
+                ("tests/test_other.py", ""),
+                ("tests/unit/test_a.py", ""),
+                ("src/sum.ts", ""),
+                ("src/sum.test.ts", ""),
+                ("test/old.js", ""),
+                (
+                    "package.json",
+                    r#"{"scripts":{"test":"vitest run test/","unit":"vitest run","old":"mocha test/**/*.js"}}"#,
+                ),
+            ],
+        );
+        // A folder the command names is dropped; a flag's value is kept.
+        let n = narrowed(narrow(
+            "pytest -q tests",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest -q tests/test_mod.py");
+        let n = narrowed(narrow(
+            "pytest -k slow tests -p no:cacheprovider",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(
+            n.cmd,
+            "pytest -k slow -p no:cacheprovider tests/test_mod.py"
+        );
+        let n = narrowed(narrow(
+            "pytest --rootdir tests tests/",
+            Some("x"),
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest --rootdir tests -k x tests/test_mod.py");
+        // A filter alone leaves the command's paths as they are.
+        let n = narrowed(narrow("pytest tests", Some("x"), &[], root.path()));
+        assert_eq!(n.cmd, "pytest tests -k x");
+        // A path that is not a folder here (a file, a pattern) is refused.
+        let why = cannot(narrow(
+            "pytest tests/unit/test_a.py",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert!(
+            why.contains("`tests/unit/test_a.py` in the command picks tests of its own"),
+            "{why}"
+        );
+        let why = cannot(narrow(
+            "npx mocha 'test/**/*.js'",
+            None,
+            &strings(&["test/old.js"]),
+            root.path(),
+        ));
+        assert!(why.contains("picks tests of its own"), "{why}");
+        // vitest's subcommand is not a path; its folder is dropped.
+        let n = narrowed(narrow(
+            "npx vitest run test",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "npx vitest run src/sum.test.ts");
+        // A script that names paths itself can't be narrowed by files, only
+        // by a filter.
+        let why = cannot(narrow(
+            "npm test",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert!(
+            why.contains("the script it runs already names test paths"),
+            "{why}"
+        );
+        let n = narrowed(narrow("npm test", Some("adds"), &[], root.path()));
+        assert_eq!(n.cmd, "npm test -- -t adds");
+        let n = narrowed(narrow(
+            "npm run unit",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "npm run unit -- src/sum.test.ts");
+        assert!(
+            cannot(narrow(
+                "yarn run old",
+                None,
+                &strings(&["test/old.js"]),
+                root.path()
+            ))
+            .contains("already names test paths")
+        );
+    }
+
+    #[test]
+    fn go_keeps_flag_values_and_replaces_every_package_word() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[("pkg/a.go", ""), ("pkg/a/a.go", ""), ("go.mod", "")],
+        );
+        let run = |cmd: &str, files: &[&str]| {
+            narrowed(narrow(cmd, None, &strings(files), root.path())).cmd
+        };
+        assert_eq!(
+            run("go test -coverprofile ./coverage.out ./...", &["pkg/a.go"]),
+            "go test -coverprofile ./coverage.out ./pkg"
+        );
+        assert_eq!(
+            run("go test -exec ./tools/wrap ./...", &["pkg/a.go"]),
+            "go test -exec ./tools/wrap ./pkg"
+        );
+        assert_eq!(run("go test ...", &["pkg/a/a.go"]), "go test ./pkg/a");
+        assert_eq!(run("go test all", &["pkg/a/a.go"]), "go test ./pkg/a");
+        assert_eq!(run("go test ./...", &["pkg/a/a.go"]), "go test ./pkg/a");
+        assert_eq!(
+            run(
+                "go test -v -count=1 -timeout 30s example.com/m/pkg",
+                &["pkg/a.go"]
+            ),
+            "go test -v -count=1 -timeout 30s ./pkg"
+        );
+        assert_eq!(
+            run("go test -race ./... -run Old", &["pkg/a.go"]),
+            "go test -race -run Old ./pkg"
+        );
+        // A directory with a space is one word.
+        let odd = tempfile::tempdir().unwrap();
+        files(odd.path(), &[("my pkg/a.go", "")]);
+        assert_eq!(
+            narrowed(narrow(
+                "go test ./...",
+                None,
+                &strings(&["my pkg/a.go"]),
+                odd.path()
+            ))
+            .cmd,
+            "go test './my pkg'"
+        );
     }
 
     #[test]
@@ -1304,6 +1852,13 @@ mod tests {
         assert_eq!(run.test, ["make test"]);
         assert_eq!(run.format.as_deref(), Some("make fmt"));
         assert_eq!(run.lint, None);
+        let lower = tempfile::tempdir().unwrap();
+        files(lower.path(), &[("GNUmakefile", "test:\n\t./t\n")]);
+        let (run, from) = detect(lower.path()).unwrap();
+        assert_eq!(
+            (from, run.test),
+            ("GNUmakefile", vec!["make test".to_string()])
+        );
     }
 
     #[test]
@@ -1343,11 +1898,16 @@ mod tests {
         assert!(ran_nothing("===== no tests ran in 0.01s =====\n[exit 5]"));
         assert!(ran_nothing("===== 12 deselected in 0.01s ====="));
         assert!(!ran_nothing("===== 1 passed, 12 deselected in 0.01s ====="));
+        assert!(!ran_nothing("===== 1 error, 2 deselected in 0.05s ====="));
+        assert!(!ran_nothing("===== 2 errors in 0.05s ====="));
         assert!(ran_nothing("ok  \tpkg/a\t0.002s [no tests to run]"));
         assert!(!ran_nothing("ok  \tpkg/a\t0.002s"));
         assert!(ran_nothing("No tests found, exiting with code 0"));
         assert!(ran_nothing("No test files found, exiting with code 1"));
         assert!(ran_nothing("  0 passing (2ms)"));
         assert!(!ran_nothing("  3 passing (2ms)"));
+        assert!(!ran_nothing(
+            "  0 passing (12ms)\n  1 failing\n\n  1) adds up:\n     AssertionError"
+        ));
     }
 }

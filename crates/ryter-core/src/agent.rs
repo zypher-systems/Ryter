@@ -1084,18 +1084,19 @@ impl Agent {
                         return Err(e);
                     }
                 };
+                // What the formatter changed is this round's edit too,
+                // whether or not it then failed: the check runs after it,
+                // and the session notes it.
+                for p in std::mem::take(&mut self.last_formatted) {
+                    if !edited.contains(&p) {
+                        edited.push(p.clone());
+                    }
+                    if !self.session_edits.contains(&p) {
+                        self.session_edits.push(p);
+                    }
+                }
                 if !out.is_error {
                     self.note_created(&call.name, &args, out.diff.as_ref(), effects);
-                    // What the formatter changed is this round's edit too:
-                    // the check runs after it, and the session notes it.
-                    for p in std::mem::take(&mut self.last_formatted) {
-                        if !edited.contains(&p) {
-                            edited.push(p.clone());
-                        }
-                        if !self.session_edits.contains(&p) {
-                            self.session_edits.push(p);
-                        }
-                    }
                     if matches!(call.name.as_str(), "write" | "search_replace") {
                         if let Some(p) = args.get("path").and_then(Value::as_str) {
                             if !edited.iter().any(|e| e == p) {
@@ -2142,7 +2143,20 @@ impl Agent {
         let (ok, _, text, _) = self.run_check(cmd, false)?;
         let changed = crate::verbs::changed(&before, &crate::verbs::snapshot(&root));
         if !ok {
-            return Ok(ToolOutput::err(format!("$ {cmd}\n{text}")));
+            // A formatter that wrote and then failed (a file it could not
+            // parse, a lint step after the write) changed files all the
+            // same: they are this round's edits, and the model is told.
+            let text = match changed.len() {
+                0 => format!("$ {cmd}\n{text}"),
+                n => format!(
+                    "$ {cmd}\n{text}\n{n} file{} changed before it failed:\n{}\nRead a file \
+                     again before editing it.",
+                    if n == 1 { "" } else { "s" },
+                    changed.join("\n")
+                ),
+            };
+            self.last_formatted = changed;
+            return Ok(ToolOutput::err(text));
         }
         let text = match changed.len() {
             0 => format!("$ {cmd}\nnothing to format"),
@@ -6154,6 +6168,44 @@ mod tests {
         agent.session_edits = vec!["tests/test_ghost.py".into()];
         let out = agent.test_verb(&serde_json::json!({})).unwrap();
         assert_eq!(out.text, "$ bin/pytest -q\n1 passed in 0.01s\n");
+    }
+
+    /// A formatter that writes files and then exits non-zero: the files it
+    /// changed are named in the error, and count as the round's edits all
+    /// the same.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_formatter_that_fails_after_writing_still_counts_its_changes() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        std::fs::write(cwd.path().join("a.txt"), "x").unwrap();
+        std::fs::write(
+            cwd.path().join("fmt.sh"),
+            "printf formatted > a.txt\necho 'error: could not parse b.txt'\nexit 1\n",
+        )
+        .unwrap();
+        let run = crate::run::RunFile {
+            format: Some("sh fmt.sh".into()),
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let (_, results, _) = build_turn(
+            &mut agent,
+            vec![call("format", serde_json::json!({}))],
+            Vec::new(),
+        )
+        .await;
+        assert!(results[0].starts_with("$ sh fmt.sh\n"), "{results:?}");
+        assert!(
+            results[0].ends_with(
+                "1 file changed before it failed:\na.txt\nRead a file again before editing it."
+            ),
+            "{results:?}"
+        );
+        assert!(results[0].contains("could not parse b.txt"), "{results:?}");
+        assert_eq!(agent.session_edits, ["a.txt"]);
+        assert!(agent.last_formatted.is_empty());
     }
 
     /// With no run file, a verb reads the project's manifest and puts what
