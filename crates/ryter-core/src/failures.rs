@@ -216,21 +216,24 @@ fn cargo(lines: &[&str]) -> Option<Digest> {
             .and_then(|r| r.strip_suffix(" stdout ----"))
             .map(str::to_string)
     };
-    // The closing `failures:` list names the tests that failed. Under
+    // Each harness closes with a `failures:` list naming the tests that
+    // failed in it, and `--no-fail-fast` runs every harness, so there is a
+    // list per harness: every one counts. (The `failures:` that opens the
+    // stdout blocks is followed by a blank line and names nothing.) Under
     // `--show-output` a passing test gets a `---- name stdout ----` block
-    // too, so a block is a failure only when the list names it; with no
-    // list (the output cut short), a block with a panic in it.
+    // too, so a block is a failure only when a list names it; with no list
+    // at all (the output cut short), a block with a panic in it.
     let listed: Vec<String> = lines
         .iter()
-        .rposition(|l| l.trim() == "failures:")
-        .map(|at| {
+        .enumerate()
+        .filter(|(_, l)| l.trim() == "failures:")
+        .flat_map(|(at, _)| {
             lines[at + 1..]
                 .iter()
                 .take_while(|l| l.starts_with(' ') || l.starts_with('\t'))
                 .map(|l| l.trim().to_string())
-                .collect()
         })
-        .unwrap_or_default();
+        .collect();
     let mut failures = Vec::new();
     let mut i = 0;
     while i < lines.len() {
@@ -928,6 +931,21 @@ test result: FAILED. 1 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; 
         );
         let kept = kept_totals(vec!["ok  \ta".into(), "FAIL\tb".into()]);
         assert_eq!(kept.len(), 2);
+    }
+
+    /// `cargo test --no-fail-fast` runs every harness and each prints its
+    /// own `failures:` list: a failure in an earlier harness is kept.
+    #[test]
+    fn every_harness_failures_list_counts() {
+        let out = "     Running unittests src/lib.rs\n\nrunning 1 test\ntest lib_fails ... FAILED\n\nfailures:\n\n---- lib_fails stdout ----\nthread 'lib_fails' panicked at src/lib.rs:3:5:\nlib broke\n\n\nfailures:\n    lib_fails\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\n\n     Running tests/it.rs\n\nrunning 1 test\ntest it_fails ... FAILED\n\nfailures:\n\n---- it_fails stdout ----\nthread 'it_fails' panicked at tests/it.rs:3:5:\nit broke\n\n\nfailures:\n    it_fails\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored\nerror: 2 targets failed:\n    `--lib`\n    `--test it`\n";
+        let d = digest(out).unwrap();
+        let names: Vec<&str> = d.failures.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["lib_fails", "it_fails"], "{:?}", d.failures);
+        assert!(d.failures[0].detail.iter().any(|l| l == "lib broke"));
+        assert!(d.failures[1].detail.iter().any(|l| l == "it broke"));
+        assert_eq!(d.totals.len(), 2);
+        let text = d.text();
+        assert!(text.starts_with("2 failed\n"), "{text}");
     }
 
     #[test]
