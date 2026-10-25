@@ -124,6 +124,16 @@ pub struct Agent {
     /// cache of it, survive the model's own edits; remade when the
     /// conversation is compacted, which breaks the cache anyway.
     pub project_map: Option<String>,
+    /// What Ryter has seen in this project ([`crate::observed`]), made and
+    /// held with the map.
+    pub observed: Option<String>,
+    /// The files the model wrote or edited this session, in the order
+    /// first touched, for the session's note.
+    pub session_edits: Vec<String>,
+    /// How the last check or test run this session came out.
+    pub last_check: Option<bool>,
+    /// Turns run in this session, for its note.
+    pub session_turns: u32,
 }
 
 /// Output ceiling per round of the conversation.
@@ -343,6 +353,7 @@ impl Agent {
         }
         let turn = next_turn();
         self.turn = turn;
+        self.session_turns += 1;
         // What this turn makes, it may delete without asking; the turn's
         // checkpoint holds none of it.
         self.ctx.created.clear();
@@ -411,6 +422,7 @@ impl Agent {
             });
         }
         let _ = self.emit_asked(None);
+        self.note_session();
         let _ = self.emit(AgentEvent::TurnFinished {
             turn,
             tools,
@@ -922,6 +934,9 @@ impl Agent {
                             if !edited.iter().any(|e| e == p) {
                                 edited.push(p.to_string());
                             }
+                            if !self.session_edits.iter().any(|e| e == p) {
+                                self.session_edits.push(p.to_string());
+                            }
                         }
                     }
                 }
@@ -941,6 +956,17 @@ impl Agent {
                          different approach, or stop and tell the user what is in the way.",
                         ordinal(*seen)
                     ));
+                }
+                if call.name == "bash" && parsed.is_ok() {
+                    if let Some(cmd) = args.get("command").and_then(Value::as_str) {
+                        let timed_out = out.text.starts_with("bash: timed out after");
+                        self.observe_command(
+                            cmd,
+                            crate::observed::Outcome::of(!out.is_error, timed_out, &out.text),
+                            t0.elapsed(),
+                            false,
+                        );
+                    }
                 }
                 self.emit(AgentEvent::ToolResult {
                     id: call.id.clone(),
@@ -1614,6 +1640,7 @@ impl Agent {
     fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String)> {
         use crate::tools::shell::Run;
         let root = self.root();
+        let began = std::time::Instant::now();
         let out = self.ctx.sandboxed(|| {
             crate::tools::shell::run_command_live(
                 cmd,
@@ -1623,6 +1650,7 @@ impl Agent {
                 self.ctx.live.as_ref(),
             )
         })?;
+        let timed_out = matches!(out, Run::TimedOut);
         let (body, ok) = match out {
             Run::Ok(o) => (o, true),
             Run::Failed(o) => (o, false),
@@ -1632,6 +1660,13 @@ impl Agent {
             ),
             Run::Cancelled => return Err(Error::Cancelled),
         };
+        self.observe_command(
+            cmd,
+            crate::observed::Outcome::of(ok, timed_out, &body),
+            began.elapsed(),
+            true,
+        );
+        self.last_check = Some(ok);
         let (n, text) = crate::check::report(&body, ok);
         Ok((ok, n, text))
     }
@@ -2530,6 +2565,7 @@ impl Agent {
                     if let Some(live) = self.audit_live.as_mut() {
                         live.used_product = true;
                     }
+                    let began = std::time::Instant::now();
                     let out = self.ctx.sandboxed(|| {
                         crate::tools::shell::run_command_live(
                             cmd,
@@ -2539,6 +2575,7 @@ impl Agent {
                             self.ctx.live.as_ref(),
                         )
                     })?;
+                    let timed_out = matches!(out, Run::TimedOut);
                     let (body, ok) = match out {
                         Run::Ok(o) => (o, true),
                         Run::Failed(o) => (o, false),
@@ -2551,6 +2588,12 @@ impl Agent {
                     if !ok {
                         failed += 1;
                     }
+                    self.observe_command(
+                        cmd,
+                        crate::observed::Outcome::of(ok, timed_out, &body),
+                        began.elapsed(),
+                        true,
+                    );
                     // Its failures with what each said, its totals when it
                     // passed; the last lines only when no runner is
                     // recognised (`failures::report`).
@@ -2559,6 +2602,7 @@ impl Agent {
                         crate::failures::report(&body, ok, 60)
                     ));
                 }
+                self.last_check = Some(failed == 0);
                 Ok(if failed == 0 {
                     ToolOutput::ok(text)
                 } else {
@@ -3259,6 +3303,7 @@ impl Agent {
         // for goes with the transcript, and the model's edits since the
         // session began are in the files now.
         self.project_map = None;
+        self.observed = None;
         self.ensure_project_map();
         let sys = self.system_prompt()?;
         let (_, model, connection) = self.hat_stack();
@@ -3291,6 +3336,23 @@ impl Agent {
     /// Seed [`Self::last_input_tokens`] from the session's spend log (resume).
     pub fn seed_prompt_tokens(&mut self) {
         self.last_input_tokens = self.session.last_input_tokens();
+    }
+
+    /// Go on in `session` (new or resumed) in the same project: what was
+    /// held for the old one goes. The map and the notes of what Ryter has
+    /// seen are remade at the next turn, so a new session sees what the
+    /// last one did; the files edited and the last check are the new
+    /// session's own.
+    pub fn swap_session(&mut self, session: crate::session::Session) {
+        self.session = session;
+        self.seed_prompt_tokens();
+        self.announce_recovery();
+        self.ctx.notes_dir = self.session.notes_dir();
+        self.project_map = None;
+        self.observed = None;
+        self.session_edits.clear();
+        self.last_check = None;
+        self.session_turns = 0;
     }
 
     fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
@@ -3744,13 +3806,18 @@ impl Agent {
             system.push('\n');
             system.push_str(&crate::map::section(map));
         }
+        if let Some(seen) = self.observed.as_deref().filter(|o| !o.is_empty()) {
+            system.push('\n');
+            system.push_str(seen);
+        }
         Ok(system)
     }
 
-    /// Make the project map if this session has none yet: at its first
-    /// turn, and again after compaction. `[map] chars = 0` leaves it out.
+    /// Make the project map and the notes of what Ryter has seen here if
+    /// this session has none yet: at its first turn, and again after
+    /// compaction. `[map] chars = 0` leaves the map out.
     fn ensure_project_map(&mut self) {
-        if self.project_map.is_some() {
+        if self.project_map.is_some() && self.observed.is_some() {
             return;
         }
         let chars = self
@@ -3762,6 +3829,46 @@ impl Agent {
             .as_deref()
             .and_then(|root| crate::map::build(root, chars));
         self.project_map = Some(map.unwrap_or_default());
+        let id = self.session.meta.id.to_string();
+        let observed = self
+            .project_root
+            .as_deref()
+            .and_then(|root| crate::observed::shown(&self.home, root, &id));
+        self.observed = Some(observed.unwrap_or_default());
+    }
+
+    /// Note a command's run in what Ryter has seen here. `always` for the
+    /// run file's own commands.
+    fn observe_command(
+        &self,
+        cmd: &str,
+        outcome: crate::observed::Outcome,
+        took: std::time::Duration,
+        always: bool,
+    ) {
+        if let Some(root) = self.project_root.as_deref() {
+            crate::observed::note_command(&self.home, root, cmd, outcome, took, always);
+        }
+    }
+
+    /// Note this session as it stands, at the end of a turn.
+    fn note_session(&self) {
+        let Some(root) = self.project_root.as_deref() else {
+            return;
+        };
+        crate::observed::note_session(
+            &self.home,
+            root,
+            crate::observed::SessionNote {
+                id: self.session.meta.id.to_string(),
+                at: crate::clock::stamp(),
+                title: self.session.meta.title.clone(),
+                turns: self.session_turns,
+                edited: self.session_edits.clone(),
+                edited_more: 0,
+                check: self.last_check,
+            },
+        );
     }
 
     async fn finish_cancelled(&mut self, text: String) -> Result<TurnResult> {
@@ -4036,19 +4143,20 @@ mod tests {
         home: TempDir,
         cwd: TempDir,
     ) -> (TempDir, TempDir, Agent) {
-        std::fs::write(cwd.path().join("hello.txt"), "hi there").unwrap();
-        let session = Session::create(
-            home.path(),
-            cwd.path(),
-            "spacexsi".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
+        let agent = setup_at(provider, home.path(), cwd.path());
+        (home, cwd, agent)
+    }
+
+    /// An agent with a fresh session in `home` and `cwd`: a second session
+    /// in the same project.
+    fn setup_at(provider: ReplayProvider, home: &std::path::Path, cwd: &std::path::Path) -> Agent {
+        std::fs::write(cwd.join("hello.txt"), "hi there").unwrap();
+        let session = Session::create(home, cwd, "spacexsi".into(), "grok-4.6".into()).unwrap();
         let notes = session.notes_dir();
         let ctx = ToolContext {
             sandbox: None,
             live: None,
-            workspace: cwd.path().to_path_buf(),
+            workspace: cwd.to_path_buf(),
             notes_dir: notes,
             role: Role::Build,
             always_approve: true,
@@ -4068,7 +4176,7 @@ mod tests {
             sessions: Vec::new(),
             search: Default::default(),
         };
-        let agent = Agent {
+        Agent {
             provider: Arc::new(provider),
             book: PriceBook::new(),
             session,
@@ -4079,8 +4187,8 @@ mod tests {
             max_turns: 8,
             budget_usd: 0.0,
             sink: None,
-            home: home.path().to_path_buf(),
-            project_root: Some(cwd.path().to_path_buf()),
+            home: home.to_path_buf(),
+            project_root: Some(cwd.to_path_buf()),
             trusted: false,
             context_window: 0,
             cfg: None,
@@ -4092,8 +4200,11 @@ mod tests {
             turn: 0,
             last_input_tokens: None,
             project_map: None,
-        };
-        (home, cwd, agent)
+            observed: None,
+            session_edits: Vec::new(),
+            last_check: None,
+            session_turns: 0,
+        }
     }
 
     #[tokio::test]
@@ -7175,6 +7286,76 @@ mod tests {
         agent.project_map = None;
         agent.ensure_project_map();
         assert!(!agent.system_prompt().unwrap().contains("## Project map"));
+    }
+
+    /// What a session ran and did is noted for the project, and the next
+    /// session is shown it at its first turn: the commands with how they
+    /// came out and how long they took, and the last sessions with what
+    /// they edited. A session is not shown its own note.
+    #[tokio::test]
+    async fn the_next_session_is_shown_what_this_one_ran_and_edited() {
+        let (home, cwd, mut agent) = build_agent(vec![
+            write("notes.txt", "one\n"),
+            call("run_project", serde_json::json!({"action": "test"})),
+            say("done"),
+            say("in the new session"),
+        ]);
+        std::fs::write(cwd.path().join("t.sh"), "exit 1\n").unwrap();
+        let run = crate::run::RunFile {
+            test: vec!["sh t.sh".into()],
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        agent.session.set_title("write the notes").unwrap();
+        agent.turn("write the notes").await.unwrap();
+        // This session's own prompt says nothing of itself.
+        assert!(
+            !agent
+                .system_prompt()
+                .unwrap()
+                .contains("What Ryter has seen")
+        );
+        let seen = crate::observed::load(home.path(), cwd.path());
+        let note = &seen.commands["sh t.sh"];
+        assert_eq!((note.runs, note.failed), (1, 1));
+        assert_eq!(seen.sessions.len(), 1);
+        assert_eq!(seen.sessions[0].title, "write the notes");
+        assert_eq!(seen.sessions[0].edited, vec!["notes.txt"]);
+        assert_eq!(seen.sessions[0].check, Some(false));
+        // A later session in the same project, from the same home.
+        let p = ReplayProvider::scripted(vec![say("hello")]);
+        let mut next = setup_at(p, home.path(), cwd.path());
+        next.turn("hi").await.unwrap();
+        check_shown(&next.system_prompt().unwrap());
+        // The same agent going on in a new session (`/new`): what it held
+        // for the old one goes, and the new one is shown the note.
+        let fresh = Session::create(
+            home.path(),
+            cwd.path(),
+            "spacexsi".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        agent.swap_session(fresh);
+        assert!(agent.session_edits.is_empty() && agent.last_check.is_none());
+        agent.turn("and now").await.unwrap();
+        check_shown(&agent.system_prompt().unwrap());
+    }
+
+    fn check_shown(prompt: &str) {
+        let i = prompt
+            .find("## What Ryter has seen in this project")
+            .expect("the section");
+        let section = &prompt[i..];
+        assert!(
+            section.contains("- `sh t.sh` · 1 run · last failed "),
+            "{section}"
+        );
+        assert!(
+            section.contains("· \"write the notes\" · 1 turn · edited notes.txt · the check was failing at the end"),
+            "{section}"
+        );
+        assert!(!section.contains("and now"), "{section}");
     }
 
     /// A `run_project test` hands the model the tests that failed, each

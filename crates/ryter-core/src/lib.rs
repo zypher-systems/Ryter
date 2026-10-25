@@ -23,6 +23,7 @@ pub mod llm;
 pub mod map;
 pub mod mcp;
 pub mod memory;
+pub mod observed;
 mod outside;
 pub mod page;
 pub mod permissions;

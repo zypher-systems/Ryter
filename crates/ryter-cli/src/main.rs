@@ -614,6 +614,10 @@ async fn run_prompt(
         turn: 0,
         last_input_tokens,
         project_map: None,
+        observed: None,
+        session_edits: Vec::new(),
+        last_check: None,
+        session_turns: 0,
     };
     agent.fire_session_start()?;
     let result = agent.turn(&prompt).await;
@@ -1203,6 +1207,10 @@ fn mcp_serve() -> ryter_core::Result<()> {
         turn: 0,
         last_input_tokens: None,
         project_map: None,
+        observed: None,
+        session_edits: Vec::new(),
+        last_check: None,
+        session_turns: 0,
     };
     if let Err(e) = agent.fire_session_start() {
         eprintln!("{e}");
@@ -1338,6 +1346,10 @@ fn serve_host_from_config(
         turn: 0,
         last_input_tokens: None,
         project_map: None,
+        observed: None,
+        session_edits: Vec::new(),
+        last_check: None,
+        session_turns: 0,
     };
     agent.fire_session_start()?;
     Ok(ServeHost::new(agent, rt))
