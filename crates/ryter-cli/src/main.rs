@@ -617,6 +617,7 @@ async fn run_prompt(
         project_map: None,
         observed: None,
         session_edits: Vec::new(),
+        last_formatted: Vec::new(),
         last_check: None,
         session_turns: 0,
     };
@@ -1211,6 +1212,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         project_map: None,
         observed: None,
         session_edits: Vec::new(),
+        last_formatted: Vec::new(),
         last_check: None,
         session_turns: 0,
     };
@@ -1351,6 +1353,7 @@ fn serve_host_from_config(
         project_map: None,
         observed: None,
         session_edits: Vec::new(),
+        last_formatted: Vec::new(),
         last_check: None,
         session_turns: 0,
     };

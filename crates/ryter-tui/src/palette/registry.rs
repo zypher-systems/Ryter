@@ -574,7 +574,7 @@ pub fn run_command(view: &mut View, raw: &str) -> Action {
     if cmd == "test" {
         view.warn(
             "/test went with the test hat · the build hat starts the product (run_project) \
-             and runs its tests (test), /audit checks the work",
+             and runs its tests, build, check, lint and format, /audit checks the work",
         );
         return Action::None;
     }

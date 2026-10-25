@@ -140,8 +140,9 @@ pub fn test_summary(output: &str) -> Option<String> {
             None => format!("{pass} passed"),
         });
     }
-    // A check's report leads with its count: `2 errors`, or `passed`.
-    if let Some(first) = output.lines().next().map(str::trim) {
+    // A check's report leads with its count: `2 errors`, or `passed`; a
+    // verb's leads with the command it ran.
+    if let Some(first) = output.lines().map(str::trim).find(|l| !l.starts_with("$ ")) {
         let (n, word) = first.split_once(' ').unwrap_or(("", ""));
         if n.chars().all(|c| c.is_ascii_digit())
             && !n.is_empty()
@@ -167,6 +168,18 @@ pub fn test_summary(output: &str) -> Option<String> {
         .take(60)
         .collect();
     Some(clean)
+}
+
+/// What a verb said in a word under the command it ran: `built`, `clean`,
+/// `passed`, `nothing to format`, `formatted 3 files:`.
+fn verb_word(output: &str) -> Option<String> {
+    let line = output
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("$ "))?;
+    (matches!(line, "built" | "clean" | "passed" | "nothing to format")
+        || line.starts_with("formatted "))
+    .then(|| line.trim_end_matches(':').to_string())
 }
 
 fn last_lines(output: &str, n: usize, skip: impl Fn(&str) -> bool) -> Vec<String> {
@@ -296,8 +309,8 @@ pub fn result(tool: &str, output: &str, is_error: bool) -> (String, String) {
         // The project's own commands: its tests' totals when there are
         // any, otherwise that it went through. What Ryter told the model
         // about it is not the user's to read.
-        "run_project" | "test" => (
-            match test_summary(output) {
+        "run_project" | "test" | "build" | "check" | "lint" | "format" => (
+            match test_summary(output).or_else(|| verb_word(output)) {
                 Some(s) => format!("✓ {s}"),
                 None => "✓".into(),
             },
@@ -608,7 +621,28 @@ mod tests {
         let (d, body) = result("run_project", out, true);
         assert_eq!(d, "✗ 2 errors");
         assert!(body.contains("error[E0308]"), "{body}");
-        assert_eq!(result("run_project", "passed", false).0, "✓");
+        // A clean check says so, and a verb says its word under the command.
+        assert_eq!(result("run_project", "passed", false).0, "✓ passed");
+        assert_eq!(result("build", "$ cargo build\nbuilt", false).0, "✓ built");
+        assert_eq!(result("lint", "$ cargo clippy\nclean", false).0, "✓ clean");
+        assert_eq!(
+            result(
+                "format",
+                "$ cargo fmt\nformatted 2 files:\na.rs\nb.rs",
+                false
+            )
+            .0,
+            "✓ formatted 2 files"
+        );
+        assert_eq!(
+            result(
+                "lint",
+                "$ cargo clippy\n3 errors\n\nerror: x\n --> a.rs:1:1",
+                true
+            )
+            .0,
+            "✗ 3 errors"
+        );
     }
 
     /// From a real run: the cause was above npm's closing boilerplate.

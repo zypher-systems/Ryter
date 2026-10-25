@@ -130,6 +130,9 @@ pub struct Agent {
     /// The files the model wrote or edited this session, in the order
     /// first touched, for the session's note.
     pub session_edits: Vec<String>,
+    /// The files the last `format` call changed, until the loop counts
+    /// them as that round's edits.
+    pub last_formatted: Vec<String>,
     /// How the last check or test run this session came out.
     pub last_check: Option<bool>,
     /// Turns run in this session, for its note.
@@ -978,8 +981,8 @@ impl Agent {
                     role: self.role,
                     // For the project's own commands, the command itself:
                     // the call only says "start", or a filter.
-                    summary: Some(if matches!(call.name.as_str(), "run_project" | "test") {
-                        self.run_summary(&args)
+                    summary: Some(if crate::tools::is_project_verb(&call.name) {
+                        self.run_summary(&call.name, &args)
                     } else {
                         tool_summary(&call.name, &args)
                     }),
@@ -1033,6 +1036,10 @@ impl Agent {
                                 | "propose_run"
                                 | "run_project"
                                 | "test"
+                                | "build"
+                                | "check"
+                                | "lint"
+                                | "format"
                                 | "file_audit"
                                 | "load_skill"
                                 | "show_page"
@@ -1048,6 +1055,7 @@ impl Agent {
                                 "propose_run" => self.propose_run(&args),
                                 "run_project" => self.run_project(&args),
                                 "test" => self.test_verb(&args),
+                                "build" | "check" | "lint" | "format" => self.run_verb(&call.name),
                                 "file_audit" => Ok(self.file_audit(&args)),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
@@ -1076,6 +1084,16 @@ impl Agent {
                 };
                 if !out.is_error {
                     self.note_created(&call.name, &args, out.diff.as_ref(), effects);
+                    // What the formatter changed is this round's edit too:
+                    // the check runs after it, and the session notes it.
+                    for p in std::mem::take(&mut self.last_formatted) {
+                        if !edited.contains(&p) {
+                            edited.push(p.clone());
+                        }
+                        if !self.session_edits.contains(&p) {
+                            self.session_edits.push(p);
+                        }
+                    }
                     if matches!(call.name.as_str(), "write" | "search_replace") {
                         if let Some(p) = args.get("path").and_then(Value::as_str) {
                             if !edited.iter().any(|e| e == p) {
@@ -1763,11 +1781,18 @@ impl Agent {
     }
 
     /// What a `run_project` call runs, for the chat: the command itself.
-    fn run_summary(&self, args: &Value) -> String {
+    fn run_summary(&self, name: &str, args: &Value) -> String {
         let run = match crate::run::find(&self.root(), &self.home) {
             crate::run::Found::Approved(r) | crate::run::Found::Unapproved(r, _) => r,
             _ => return String::new(),
         };
+        match name {
+            "build" => return run.build.unwrap_or_default(),
+            "check" => return run.check.unwrap_or_default(),
+            "lint" => return run.lint.unwrap_or_default(),
+            "format" => return run.format.unwrap_or_default(),
+            _ => {}
+        }
         match args.get("action").and_then(Value::as_str) {
             Some("start") => run.start.unwrap_or_default(),
             Some("stop") => run.stop.unwrap_or_default(),
@@ -1916,7 +1941,7 @@ impl Agent {
     /// count and the errors, capped (`check::report`), with `ok` for a
     /// clean run, and whether the command could run at all (a check whose
     /// program is not on this machine is not one to hold the model to).
-    fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String, bool)> {
+    fn run_check(&mut self, cmd: &str, the_check: bool) -> Result<(bool, usize, String, bool)> {
         use crate::tools::shell::Run;
         let root = self.root();
         let began = std::time::Instant::now();
@@ -1941,9 +1966,90 @@ impl Agent {
         };
         let outcome = crate::observed::Outcome::of(ok, timed_out, &body);
         self.observe_command(cmd, outcome, began.elapsed(), true);
-        self.last_check = Some(ok);
+        if the_check {
+            self.last_check = Some(ok);
+        }
         let (n, text) = crate::check::report(&body, ok);
         Ok((ok, n, text, outcome != crate::observed::Outcome::NotFound))
+    }
+
+    /// `build`, `check`, `lint`, `format`: the project's own command for
+    /// the verb, from the approved run file, and what it came to as the
+    /// check's report (the errors, capped) or the formatter's changed
+    /// files. The build and audit hats' tools; `format` the build hat's
+    /// alone, since the audit changes nothing.
+    fn run_verb(&mut self, verb: &str) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        if let Some(refused) = self.not_the_plan_hat(verb) {
+            return Ok(refused);
+        }
+        if verb == "format" && self.role == Role::Audit {
+            return Ok(ToolOutput::err(
+                "format changes files: the audit hat changes nothing. What is unformatted \
+                 is a finding.",
+            ));
+        }
+        let run = match self.approved_run()? {
+            Ok(run) => run,
+            Err(reply) => return Ok(reply),
+        };
+        let cmd = match verb {
+            "build" => run.build,
+            "check" => run.check,
+            "lint" => run.lint,
+            "format" => run.format,
+            _ => None,
+        };
+        let Some(cmd) = cmd else {
+            return Ok(ToolOutput::err(format!(
+                "`{}` has no {verb} command. Run the project's {verb} with bash, or propose \
+                 the file again with one.",
+                crate::run::FILE
+            )));
+        };
+        if verb == "format" {
+            return self.run_format(&cmd);
+        }
+        let (ok, _, text, _) = self.run_check(&cmd, verb == "check")?;
+        let text = if ok && text == "passed" {
+            match verb {
+                "build" => "built".to_string(),
+                "lint" => "clean".to_string(),
+                _ => text,
+            }
+        } else {
+            text
+        };
+        let text = format!("$ {cmd}\n{text}");
+        Ok(if ok {
+            ToolOutput::ok(text)
+        } else {
+            ToolOutput::err(text)
+        })
+    }
+
+    /// The formatter over the project: the files it changed, read from the
+    /// project before and after, since a formatter's own output varies and
+    /// is often nothing.
+    fn run_format(&mut self, cmd: &str) -> Result<crate::tools::ToolOutput> {
+        use crate::tools::ToolOutput;
+        let root = self.root();
+        let before = crate::verbs::snapshot(&root);
+        let (ok, _, text, _) = self.run_check(cmd, false)?;
+        let changed = crate::verbs::changed(&before, &crate::verbs::snapshot(&root));
+        if !ok {
+            return Ok(ToolOutput::err(format!("$ {cmd}\n{text}")));
+        }
+        let text = match changed.len() {
+            0 => format!("$ {cmd}\nnothing to format"),
+            n => format!(
+                "$ {cmd}\nformatted {n} file{}:\n{}\nRead a file again before editing it.",
+                if n == 1 { "" } else { "s" },
+                changed.join("\n")
+            ),
+        };
+        self.last_formatted = changed;
+        Ok(ToolOutput::ok(text))
     }
 
     /// After a build round that edited files: the project's approved
@@ -1986,7 +2092,7 @@ impl Agent {
         let ctx = self.ctx.clone();
         let mut found: Option<(bool, usize, bool)> = None;
         let result = crate::tools::with_hooks("run_project", &args, &ctx, || {
-            let (ok, n, text, could_run) = self.run_check(&cmd)?;
+            let (ok, n, text, could_run) = self.run_check(&cmd, true)?;
             found = Some((ok, n, could_run));
             Ok(if ok {
                 ToolOutput::ok(text)
@@ -2474,15 +2580,18 @@ impl Agent {
         let run = crate::run::RunFile {
             start: text("start"),
             ready: text("ready"),
+            build: text("build"),
             test,
             check: text("check"),
+            lint: text("lint"),
+            format: text("format"),
             stop: text("stop"),
         }
         .tidy();
         if run.is_empty() {
             return Ok(ToolOutput::err(
-                "propose_run needs at least one of `start`, `ready`, `test` (a list), `check` \
-                 and `stop`",
+                "propose_run needs at least one of `start`, `ready`, `build`, `test` (a \
+                 list), `check`, `lint`, `format` and `stop`",
             ));
         }
         if let Some(why) = self.run_refused(&run) {
@@ -2511,7 +2620,8 @@ impl Agent {
         })?;
         Ok(ToolOutput::ok(format!(
             "The user approved how the project runs. It is saved as `{}`. Start it with \
-             run_project (action `start`), run its tests with action `test`.",
+             run_project (action `start`); its tests, build, check, lint and format are \
+             the tools of those names.",
             crate::run::FILE
         )))
     }
@@ -2833,26 +2943,7 @@ impl Agent {
                 }
             }
             "test" => self.run_tests(None, &[]),
-            "check" => {
-                let run = match self.approved_run()? {
-                    Ok(run) => run,
-                    Err(reply) => return Ok(reply),
-                };
-                let Some(cmd) = run.check else {
-                    return Ok(ToolOutput::err(format!(
-                        "`{}` has no check command. Run the project's check with bash, or \
-                         propose the file again with one.",
-                        crate::run::FILE
-                    )));
-                };
-                let (ok, _, text, _) = self.run_check(&cmd)?;
-                let text = format!("$ {cmd}\n{text}");
-                Ok(if ok {
-                    ToolOutput::ok(text)
-                } else {
-                    ToolOutput::err(text)
-                })
-            }
+            "check" => self.run_verb("check"),
             other => Ok(ToolOutput::err(format!(
                 "run_project: unknown action {other:?}: start, test, check, stop, or status"
             ))),
@@ -2871,7 +2962,7 @@ impl Agent {
     /// the gate doesn't pass as read-only. Reads never trigger a checkpoint.
     fn would_change(&self, name: &str, args: &Value) -> bool {
         match name {
-            "write" | "search_replace" => true,
+            "write" | "search_replace" | "format" => true,
             "bash" => crate::tools::decide(name, args, &self.ctx) != crate::tools::Decision::Allow,
             _ => false,
         }
@@ -4205,7 +4296,7 @@ impl Agent {
     /// Pass a running command's newest lines to the screen. Sink only — not
     /// the session log (several a second is noise; finished calls still log).
     fn listen_for_live(&mut self, id: &str, name: &str) {
-        if !matches!(name, "bash" | "run_project" | "test") {
+        if name != "bash" && !crate::tools::is_project_verb(name) {
             self.ctx.live = None;
             return;
         }
@@ -4438,6 +4529,7 @@ mod tests {
             project_map: None,
             observed: None,
             session_edits: Vec::new(),
+            last_formatted: Vec::new(),
             last_check: None,
             session_turns: 0,
         }
@@ -5767,6 +5859,126 @@ mod tests {
         assert!(out.is_error);
         assert!(
             out.text.starts_with("test is the build and audit hats'"),
+            "{}",
+            out.text
+        );
+    }
+
+    /// `build`, `check`, `lint` and `format` run the run file's command for
+    /// the verb and come back as the check's report; `format` comes back
+    /// as the files it changed, which count as the round's edits. A verb
+    /// the run file has no command for says so; the audit hat may not
+    /// format; the plan hat starts nothing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_verbs_run_the_run_files_commands() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        std::fs::write(cwd.path().join("a.txt"), "x").unwrap();
+        std::fs::write(cwd.path().join("b.txt"), "y").unwrap();
+        std::fs::write(
+            cwd.path().join("lint.sh"),
+            "echo 'src/a.py:3:1: E302 expected 2 blank lines'\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::write(cwd.path().join("fmt.sh"), "printf formatted > a.txt\n").unwrap();
+        let run = crate::run::RunFile {
+            build: Some("echo built it".into()),
+            check: Some("echo checked".into()),
+            lint: Some("sh lint.sh".into()),
+            format: Some("sh fmt.sh".into()),
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+
+        let out = agent.run_verb("build").unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(out.text, "$ echo built it\nbuilt");
+        assert_eq!(agent.last_check, None, "a build is not the check");
+
+        let out = agent.run_verb("check").unwrap();
+        assert_eq!(out.text, "$ echo checked\npassed");
+        assert_eq!(agent.last_check, Some(true));
+
+        let out = agent.run_verb("lint").unwrap();
+        assert!(out.is_error, "{out:?}");
+        assert!(
+            out.text
+                .contains("src/a.py:3:1: E302 expected 2 blank lines"),
+            "{}",
+            out.text
+        );
+        assert_eq!(agent.last_check, Some(true), "a lint is not the check");
+
+        // The formatter's changes, read from the project itself.
+        let out = agent.run_verb("format").unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "$ sh fmt.sh\nformatted 1 file:\na.txt\nRead a file again before editing it."
+        );
+        assert_eq!(agent.last_formatted, ["a.txt"]);
+        // Run again, nothing changes.
+        let out = agent.run_verb("format").unwrap();
+        assert_eq!(out.text, "$ sh fmt.sh\nnothing to format");
+
+        // Through a turn, what format changed is that round's edit.
+        agent.last_formatted.clear();
+        let (_, results, _) = build_turn(
+            &mut agent,
+            vec![call("format", serde_json::json!({}))],
+            Vec::new(),
+        )
+        .await;
+        assert!(results[0].ends_with("nothing to format"), "{results:?}");
+        std::fs::write(cwd.path().join("a.txt"), "x").unwrap();
+        let (_, results, _) = build_turn(
+            &mut agent,
+            vec![call("format", serde_json::json!({}))],
+            Vec::new(),
+        )
+        .await;
+        assert!(
+            results[0].contains("formatted 1 file:\na.txt"),
+            "{results:?}"
+        );
+        assert!(
+            agent.session_edits.contains(&"a.txt".to_string()),
+            "{:?}",
+            agent.session_edits
+        );
+        assert!(agent.last_formatted.is_empty());
+
+        // No command for a verb: said, with what to do.
+        let run = crate::run::RunFile {
+            test: vec!["echo ok".into()],
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let out = agent.run_verb("lint").unwrap();
+        assert!(out.is_error);
+        assert_eq!(
+            out.text,
+            "`.ryter/run.toml` has no lint command. Run the project's lint with bash, or propose the file again with one."
+        );
+
+        // The audit hat changes nothing; the plan hat starts nothing.
+        agent.role = Role::Audit;
+        agent.ctx.role = Role::Audit;
+        let out = agent.run_verb("format").unwrap();
+        assert!(out.is_error);
+        assert!(
+            out.text
+                .starts_with("format changes files: the audit hat changes nothing"),
+            "{}",
+            out.text
+        );
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        let out = agent.run_verb("build").unwrap();
+        assert!(
+            out.text.starts_with("build is the build and audit hats'"),
             "{}",
             out.text
         );

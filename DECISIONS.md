@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-25 — `build`, `check`, `lint` and `format` as verbs, from the run file
+
+With `test` in place the other verbs were the same shape and cheap: the run file gains `build`, `lint` and `format` beside `check`, proposed and approved like the rest, and each is a tool of that name. `build`, `check` and `lint` come back as the check's report, which already knows compilers' and linters' `path:line:col` blocks; a clean run says `built`, `passed` or `clean`, since "passed" under a build read wrong. `run_project check` stays and runs the same code.
+
+`format` is different in kind: it changes files, and formatters are quiet about which. Ryter reads the project before and after and reports the files whose content changed, by digest, since `cargo fmt` and `gofmt -w` rewrite a file whether or not it changed and an mtime would call every file formatted. Those files count as the round's edits, so the check after edits runs over them and the session's note carries them; the model is told to read a file again before editing it, because `write` would otherwise be refused for a file changed since it was seen, and that refusal would cost a round for a change the harness itself made. The audit hat is refused `format` outright: it changes nothing, and an unformatted file is a finding. A `format` call checkpoints like a write, so `/undo` covers it.
+
+What was not done: detection of these commands for a project with no run file. The model still reads the project and proposes them, and the user approves; Ryter filling the proposal in from `Cargo.toml` or `package.json` is the next step, under the same approval. Open: a `lint` or `format` scoped to files, which the runners mostly support, and `check` running by itself after `format` as it does after an edit (it does, since the formatted files are the round's edits, but only in the build hat).
+
 ### 2026-10-25 — Project verbs as tools: `test` narrows to the runner's own filter
 
 The build hat had `run_project` for the run file's commands and `bash` for everything else, and in practice it ran most tests through `bash`: `cargo test some_name`, `pytest -k thing`, `npx vitest run src/x.test.ts`. Each was a guess at the runner, its filter syntax and the directory, and a guess that missed cost a round; a guess that ran the whole suite to look at one test cost minutes and a wall of output that was then cut. The harness knew the runner all along: it is in the run file the user approved. That is the pattern of the whole fewer-redos line, so the first project verb to become a tool is the one that burns the most rounds.

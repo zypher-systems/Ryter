@@ -8,7 +8,7 @@
 //! the runner's filter to that command; it never swaps the runner for
 //! another program. A command Ryter can't narrow is said so, not run whole.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
 
 /// The most files the walk for test files visits.
@@ -674,10 +674,58 @@ fn is_script_test(rel: &Path) -> bool {
         })
 }
 
-/// Every test file in the project (Python and script), relative to `root`:
-/// the ignore files honoured, the build and dependency folders skipped,
+/// The project's files as they stand, by path: a digest of each one's
+/// content. Taken before and after `format` runs, to say which files it
+/// changed; a formatter that rewrites a file as it was changed nothing.
+pub type Snapshot = BTreeMap<PathBuf, [u8; 32]>;
+
+/// The largest file read whole for its digest; a larger one is known by
+/// its size and mtime.
+const DIGEST_BYTES: u64 = 1 << 20;
+
+/// The files under `root` the ignore files keep, each with its digest,
 /// capped.
-fn test_files(root: &Path) -> Vec<PathBuf> {
+pub fn snapshot(root: &Path) -> Snapshot {
+    use sha2::{Digest, Sha256};
+    let mut out = BTreeMap::new();
+    for entry in walk(root).take(MAX_WALK).flatten() {
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
+            continue;
+        }
+        let Ok(rel) = entry.path().strip_prefix(root) else {
+            continue;
+        };
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let digest: [u8; 32] = if meta.len() <= DIGEST_BYTES {
+            match std::fs::read(entry.path()) {
+                Ok(bytes) => Sha256::digest(&bytes).into(),
+                Err(_) => continue,
+            }
+        } else {
+            let mut h = Sha256::new();
+            h.update(meta.len().to_le_bytes());
+            h.update(format!("{:?}", meta.modified().ok()).as_bytes());
+            h.finalize().into()
+        };
+        out.insert(rel.to_path_buf(), digest);
+    }
+    out
+}
+
+/// The files `after` has that `before` did not, or not as they are now.
+pub fn changed(before: &Snapshot, after: &Snapshot) -> Vec<String> {
+    after
+        .iter()
+        .filter(|(path, stamp)| before.get(*path) != Some(stamp))
+        .map(|(path, _)| path.display().to_string())
+        .collect()
+}
+
+/// The project's files, the ignore files honoured and the build and
+/// dependency folders skipped.
+fn walk(root: &Path) -> ignore::Walk {
     let mut walker = ignore::WalkBuilder::new(root);
     walker
         .hidden(true)
@@ -691,8 +739,15 @@ fn test_files(root: &Path) -> Vec<PathBuf> {
                     .to_str()
                     .is_some_and(|n| crate::map::SKIP_DIRS.contains(&n)))
         });
+    walker.build()
+}
+
+/// Every test file in the project (Python and script), relative to `root`:
+/// the ignore files honoured, the build and dependency folders skipped,
+/// capped.
+fn test_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    for entry in walker.build().take(MAX_WALK).flatten() {
+    for entry in walk(root).take(MAX_WALK).flatten() {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -998,6 +1053,31 @@ mod tests {
         assert_eq!(quote("a b"), "'a b'");
         assert_eq!(quote("it's"), "'it'\\''s'");
         assert_eq!(quote("$(x)"), "'$(x)'");
+    }
+
+    #[test]
+    fn a_formatters_changes_are_read_from_two_snapshots() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                ("src/a.rs", "fn a(){}\n"),
+                ("src/b.rs", "fn b() {}\n"),
+                ("target/x", "built"),
+                (".gitignore", "target/\n"),
+            ],
+        );
+        let before = snapshot(root.path());
+        assert!(before.contains_key(Path::new("src/a.rs")));
+        assert!(!before.contains_key(Path::new("target/x")));
+        assert!(changed(&before, &snapshot(root.path())).is_empty());
+        // A formatter rewrites one file and adds another; one it wrote
+        // back as it was is not changed, whatever its mtime says.
+        std::fs::write(root.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(root.path().join("src/b.rs"), "fn b() {}\n").unwrap();
+        std::fs::write(root.path().join("src/c.rs"), "").unwrap();
+        let after = snapshot(root.path());
+        assert_eq!(changed(&before, &after), ["src/a.rs", "src/c.rs"]);
     }
 
     #[test]

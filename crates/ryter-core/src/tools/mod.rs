@@ -480,31 +480,34 @@ fn spec(name: &str) -> Option<ToolSpec> {
         ),
         "propose_run" => (
             "Propose how this project runs, for the user to approve: the command that \
-             starts it, an address that answers once it is up, its test commands, and the \
-             command that stops it. Read the project first (its README, compose file, \
+             starts it, an address that answers once it is up, its build, test, check, \
+             lint and format commands, and the command that stops it. Read the project first (its README, compose file, \
              package.json, Makefile, scripts). Use the commands the project itself uses. \
              The start command may return (`docker compose up -d --wait`) or stay in the \
              foreground (`npm run dev`): Ryter runs it and keeps it up. Approved, it is \
-             saved as `.ryter/run.toml` and Ryter runs these commands with run_project and \
-             test, without asking again. `check` is the project's fast check (`cargo check`, \
-             `tsc --noEmit`, `pyright`, `go vet`): Ryter runs it itself after each build \
-             round that edited files and hands you the errors, so you need not run it. \
-             Leave out what the project doesn't have.",
+             saved as `.ryter/run.toml` and Ryter runs these commands as the tools \
+             run_project, test, build, check, lint and format, without asking again. \
+             `check` is the project's fast check (`cargo check`, `tsc --noEmit`, `pyright`, \
+             `go vet`): Ryter runs it itself after each build round that edited files and \
+             hands you the errors, so you need not run it. `build` builds the product, \
+             `lint` is its linter, `format` its formatter applied to the project. Leave \
+             out what the project doesn't have.",
             json!({"type":"object","properties":{
                 "start":{"type":"string","description":"starts the product"},
                 "ready":{"type":"string","description":"an http address on this machine that answers once it is up, e.g. http://localhost:8000/healthz"},
+                "build":{"type":"string","description":"builds the product: cargo build, npm run build, go build ./..."},
                 "test":{"type":"array","items":{"type":"string"},"description":"the project's test commands, in order"},
                 "check":{"type":"string","description":"the project's fast check, run by Ryter after your edits: cargo check, tsc --noEmit, pyright, go vet"},
+                "lint":{"type":"string","description":"the project's linter: cargo clippy, eslint ., ruff check ."},
+                "format":{"type":"string","description":"the project's formatter, applied: cargo fmt, prettier -w ., ruff format ."},
                 "stop":{"type":"string","description":"stops what start started"}
             }}),
         ),
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
-             `test` runs every test command whole (the `test` tool does the same and can \
-             narrow the run to a name or to files). `check` runs its fast check and \
-             returns the errors (Ryter also runs it by itself after each build round that \
-             edited files). `stop` stops what was started \
+             `test` and `check` are the tools of those names (test can narrow the run to a \
+             name or to files). `stop` stops what was started \
              (the user usually does this, with /stop: leave the product running when you \
              finish). `status` says whether it is up. With no run file yet, propose one \
              with propose_run. The build and audit hats run these; the plan hat starts \
@@ -533,6 +536,32 @@ fn spec(name: &str) -> Option<ToolSpec> {
                 "filter":{"type":"string","description":"a test name or pattern, as the runner matches it, without its flag"},
                 "files":{"type":"array","items":{"type":"string"},"description":"paths under the project whose tests should run, e.g. the files you edited"}
             }}),
+        ),
+        "build" => (
+            "Build the product with the project's own build command from the approved \
+             `.ryter/run.toml`, and get back the compiler's errors, capped, or that it \
+             built. For the build and audit hats.",
+            json!({"type":"object","properties":{}}),
+        ),
+        "check" => (
+            "Run the project's fast check (`cargo check`, `tsc --noEmit`, `pyright`, `go \
+             vet`) from the approved `.ryter/run.toml` and get back its errors, capped. In \
+             the build hat Ryter runs it by itself after each round that edited files and \
+             hands you the errors, so call it only when you want it now. For the build and \
+             audit hats.",
+            json!({"type":"object","properties":{}}),
+        ),
+        "lint" => (
+            "Run the project's linter from the approved `.ryter/run.toml` and get back what \
+             it found, capped, or that it is clean. For the build and audit hats.",
+            json!({"type":"object","properties":{}}),
+        ),
+        "format" => (
+            "Run the project's formatter from the approved `.ryter/run.toml` over the \
+             project and get back the files it changed. Read a file again before editing \
+             it after a format changed it. For the build hat; the audit hat changes \
+             nothing.",
+            json!({"type":"object","properties":{}}),
         ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
@@ -614,6 +643,10 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "propose_run",
             "run_project",
             "test",
+            "build",
+            "check",
+            "lint",
+            "format",
             "file_audit",
             "search_tool",
             "use_tool",
@@ -625,6 +658,15 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
         // A role from crew mode, which is gone: nothing runs as it.
         Role::Crew => &[],
     }
+}
+
+/// The tools that run the project's own commands from its run file, whose
+/// chat rows name the command and whose output streams while it runs.
+pub fn is_project_verb(name: &str) -> bool {
+    matches!(
+        name,
+        "run_project" | "test" | "build" | "check" | "lint" | "format"
+    )
 }
 
 /// Run a built-in tool. Callers must have already applied [`decide`].
@@ -646,9 +688,10 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" | "test" | "file_audit" | "scout" => Ok(
-            ToolOutput::err(format!("{name} is handled by the agent loop")),
-        ),
+        | "update_rules" | "propose_run" | "run_project" | "test" | "build" | "check" | "lint"
+        | "format" | "file_audit" | "scout" => Ok(ToolOutput::err(format!(
+            "{name} is handled by the agent loop"
+        ))),
         "check_package" => packages::check_package(args, ctx),
         "web_fetch" => web::web_fetch(args, ctx),
         "web_search" => web::web_search(args, ctx),
