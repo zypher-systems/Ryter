@@ -9,7 +9,9 @@
 //! another program. A command Ryter can't narrow is said so, not run whole.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::iter::Peekable;
 use std::path::{Component, Path, PathBuf};
+use std::str::CharIndices;
 
 /// The most files the walk for test files visits.
 const MAX_WALK: usize = 20_000;
@@ -95,6 +97,9 @@ pub fn narrow(cmd: &str, filter: Option<&str>, files: &[String], root: &Path) ->
              list them one by one"
                 .into(),
         );
+    }
+    if shell_words(cmd).is_none() {
+        return Scope::Cannot("the command has an unclosed quote or substitution".into());
     }
     let Some(found) = recognise(cmd, root) else {
         return Scope::Cannot(
@@ -227,11 +232,19 @@ fn is_compound(cmd: &str) -> bool {
 /// The runner `cmd` runs, through whatever wrapper: `uv run pytest`,
 /// `python -m pytest`, `npx jest`, `npm test` (read from `package.json`).
 fn recognise(cmd: &str, root: &Path) -> Option<Recognised> {
-    let words: Vec<&str> = cmd
-        .split_whitespace()
+    recognise_line(cmd, root, 0)
+}
+
+/// `recognise`, `depth` wrappers deep: the line is split as a shell splits
+/// it, so `LDFLAGS="-s -w" go test` is an assignment and then `go`.
+fn recognise_line(cmd: &str, root: &Path, depth: u8) -> Option<Recognised> {
+    let words = shell_words(cmd)?;
+    let words: Vec<&str> = words
+        .iter()
+        .map(|w| w.text.as_str())
         .skip_while(|w| is_assignment(w))
         .collect();
-    recognise_words(&words, root, 0)
+    recognise_words(&words, root, depth)
 }
 
 fn recognise_words(words: &[&str], root: &Path, depth: u8) -> Option<Recognised> {
@@ -318,11 +331,7 @@ fn script_runner(root: &Path, script: &str, depth: u8, joint: &'static str) -> O
     if is_compound(line) {
         return None;
     }
-    let words: Vec<&str> = line
-        .split_whitespace()
-        .skip_while(|w| is_assignment(w))
-        .collect();
-    let inner = recognise_words(&words, root, depth + 1)?;
+    let inner = recognise_line(line, root, depth + 1)?;
     // A path the script names itself can't be taken out through `npm test
     // -- …`: a file list would widen to it.
     let positional = inner.positional
@@ -514,32 +523,33 @@ fn strip_positional_paths(
     runner: Runner,
     root: &Path,
 ) -> std::result::Result<(String, bool), String> {
-    let words = shell_words(cmd).ok_or_else(|| "the command has an unclosed quote".to_string())?;
-    let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    let words = shell_words(cmd)
+        .ok_or_else(|| "the command has an unclosed quote or substitution".to_string())?;
+    let refs: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
     let Some(start) = arguments_start(&refs, runner) else {
         return Ok((cmd.to_string(), false));
     };
     let start = start.min(words.len());
-    let mut out: Vec<String> = words[..start].to_vec();
+    let mut out: Vec<Word> = words[..start].to_vec();
     let mut dropped = false;
     let mut value_next = false;
     let mut previous: Option<&str> = None;
-    for w in &words[start..] {
-        let w = w.as_str();
+    for word in &words[start..] {
+        let w = word.text.as_str();
         if value_next {
-            out.push(w.to_string());
+            out.push(word.clone());
             value_next = false;
             previous = None;
             continue;
         }
         if w.starts_with('-') {
-            out.push(w.to_string());
+            out.push(word.clone());
             value_next = !w.contains('=') && takes_value(runner, w);
             previous = Some(w);
             continue;
         }
         if is_subcommand(runner, w) {
-            out.push(w.to_string());
+            out.push(word.clone());
             previous = None;
             continue;
         }
@@ -563,7 +573,7 @@ fn strip_positional_paths(
                  take it out of the run file, or run the runner with bash"
             ));
         }
-        out.push(w.to_string());
+        out.push(word.clone());
         previous = None;
     }
     Ok((join_words(&out), dropped))
@@ -707,22 +717,46 @@ fn boolean_flag(runner: Runner, flag: &str) -> bool {
     list.contains(&flag)
 }
 
-/// `cmd` split as a shell would: whitespace between words, single and
-/// double quotes grouping, a backslash escaping the next character outside
-/// single quotes. `None` for an unclosed quote.
-fn shell_words(cmd: &str) -> Option<Vec<String>> {
+/// One word of a command: what the shell makes of it, and how it was
+/// written. It goes back on the line as written, so a `"$VAR"`, a
+/// `$(...)` or a `NAME="value"` prefix the user approved is still read by
+/// the shell the way it was.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Word {
+    text: String,
+    raw: String,
+}
+
+impl Word {
+    /// A word Ryter adds, written as one shell word.
+    fn new(text: &str) -> Word {
+        Word {
+            text: text.to_string(),
+            raw: quote(text),
+        }
+    }
+}
+
+/// `cmd` split as a shell splits it: quotes group, a backslash escapes, a
+/// `$(…)`, `${…}` or `` `…` `` runs to its closing mark. `None` when one
+/// of them is unclosed.
+fn shell_words(cmd: &str) -> Option<Vec<Word>> {
     let mut words = Vec::new();
     let mut word = String::new();
+    let mut start = 0;
     let mut in_word = false;
-    let mut chars = cmd.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut chars = cmd.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if !in_word && !c.is_whitespace() {
+            start = i;
+        }
         match c {
             '\'' => {
                 in_word = true;
                 loop {
                     match chars.next() {
-                        Some('\'') => break,
-                        Some(c) => word.push(c),
+                        Some((_, '\'')) => break,
+                        Some((_, c)) => word.push(c),
                         None => return None,
                     }
                 }
@@ -731,29 +765,37 @@ fn shell_words(cmd: &str) -> Option<Vec<String>> {
                 in_word = true;
                 loop {
                     match chars.next() {
-                        Some('"') => break,
-                        Some('\\') => match chars.next() {
-                            Some(c @ ('"' | '\\' | '$' | '`')) => word.push(c),
-                            Some(c) => {
+                        Some((_, '"')) => break,
+                        Some((_, '\\')) => match chars.next() {
+                            Some((_, c @ ('"' | '\\' | '$' | '`'))) => word.push(c),
+                            Some((_, c)) => {
                                 word.push('\\');
                                 word.push(c);
                             }
                             None => return None,
                         },
-                        Some(c) => word.push(c),
+                        Some((_, c @ ('`' | '$'))) => substitution(&mut chars, c, &mut word)?,
+                        Some((_, c)) => word.push(c),
                         None => return None,
                     }
                 }
             }
             '\\' => {
                 in_word = true;
-                word.push(chars.next()?);
+                word.push(chars.next()?.1);
             }
             c if c.is_whitespace() => {
                 if in_word {
-                    words.push(std::mem::take(&mut word));
+                    words.push(Word {
+                        text: std::mem::take(&mut word),
+                        raw: cmd[start..i].to_string(),
+                    });
                     in_word = false;
                 }
+            }
+            c @ ('`' | '$') => {
+                in_word = true;
+                substitution(&mut chars, c, &mut word)?;
             }
             c => {
                 in_word = true;
@@ -762,14 +804,72 @@ fn shell_words(cmd: &str) -> Option<Vec<String>> {
         }
     }
     if in_word {
-        words.push(word);
+        words.push(Word {
+            text: word,
+            raw: cmd[start..].to_string(),
+        });
     }
     Some(words)
 }
 
-/// Words back into one command line, each quoted as it needs.
-fn join_words(words: &[String]) -> String {
-    words.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ")
+/// A `$(…)`, `${…}` or `` `…` `` whose first mark `c` has been read,
+/// pushed onto `word` through its closing mark, the shell's way: it is one
+/// word however many spaces it holds. A bare `$` is just that. `None` when
+/// unclosed.
+fn substitution(chars: &mut Peekable<CharIndices>, c: char, word: &mut String) -> Option<()> {
+    word.push(c);
+    let (open, close) = match c {
+        '`' => ('`', '`'),
+        _ => match chars.peek() {
+            Some(&(_, o @ ('(' | '{'))) => {
+                chars.next();
+                word.push(o);
+                (o, if o == '(' { ')' } else { '}' })
+            }
+            _ => return Some(()),
+        },
+    };
+    let mut depth = 1;
+    while let Some((_, c)) = chars.next() {
+        word.push(c);
+        match c {
+            '\\' => word.push(chars.next()?.1),
+            '\'' if open != '`' => loop {
+                let (_, c) = chars.next()?;
+                word.push(c);
+                if c == '\'' {
+                    break;
+                }
+            },
+            '"' if open != '`' => loop {
+                let (_, c) = chars.next()?;
+                word.push(c);
+                match c {
+                    '\\' => word.push(chars.next()?.1),
+                    '"' => break,
+                    _ => {}
+                }
+            },
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(());
+                }
+            }
+            c if c == open => depth += 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Words back into one command line, each as it was written.
+fn join_words(words: &[Word]) -> String {
+    words
+        .iter()
+        .map(|w| w.raw.as_str())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// `cmd` ready for a file list: its own test paths taken out, or why it
@@ -1061,30 +1161,34 @@ fn go(
     if dirs.is_empty() && !files.is_empty() {
         return Ok(None);
     }
-    let words = shell_words(cmd).ok_or_else(|| "the command has an unclosed quote".to_string())?;
-    let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    let words = shell_words(cmd)
+        .ok_or_else(|| "the command has an unclosed quote or substitution".to_string())?;
+    let refs: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
     let start = arguments_start(&refs, Runner::Go)
         .unwrap_or(words.len())
         .min(words.len());
-    let mut out: Vec<String> = words[..start].to_vec();
+    let mut out: Vec<Word> = words[..start].to_vec();
+    let own = &words[start..];
     // Everything from `-args` on belongs to the test binary: the packages,
     // and a `-run`, go before it.
-    let args_at = words[start..]
-        .iter()
-        .position(|w| matches!(w.as_str(), "-args" | "--args" | "-test.args"))
-        .map(|i| start + i)
-        .unwrap_or(words.len());
-    let own = &words[start..args_at];
+    let mut tail: &[Word] = &[];
     let mut value_next = false;
-    for (i, w) in own.iter().enumerate() {
-        let w = w.as_str();
+    for (i, word) in own.iter().enumerate() {
+        let w = word.text.as_str();
         if value_next {
-            out.push(w.to_string());
+            out.push(word.clone());
             value_next = false;
             continue;
         }
+        // The separator is a word of its own: a flag's value spelt `-args`
+        // (`-ldflags -args`) was taken as the value above. `-test.args` is a
+        // flag like any other.
+        if matches!(w, "-args" | "--args") {
+            tail = &own[i..];
+            break;
+        }
         if w.starts_with('-') {
-            out.push(w.to_string());
+            out.push(word.clone());
             if w.contains('=') {
                 continue;
             }
@@ -1098,7 +1202,7 @@ fn go(
                 false
             } else {
                 !own.get(i + 1)
-                    .is_some_and(|next| go_package_word(next, root))
+                    .is_some_and(|next| go_package_word(&next.text, root))
             };
             continue;
         }
@@ -1107,14 +1211,14 @@ fn go(
         if !dirs.is_empty() {
             continue;
         }
-        out.push(w.to_string());
+        out.push(word.clone());
     }
     if let Some(f) = filter {
-        out.push("-run".into());
-        out.push(f.to_string());
+        out.push(Word::new("-run"));
+        out.push(Word::new(f));
     }
-    out.extend(dirs.iter().cloned());
-    out.extend(words[args_at..].iter().cloned());
+    out.extend(dirs.iter().map(|d| Word::new(d)));
+    out.extend(tail.iter().cloned());
     Ok(Some(join_words(&out)))
 }
 
@@ -1941,10 +2045,10 @@ mod tests {
             .cmd,
             "go test -run TestX ./pkg -args -update"
         );
-        // A quoted value is one word and comes back quoted.
+        // A quoted value is one word and comes back as it was written.
         assert_eq!(
             run("go test -ldflags \"-s -w\" ./...", &["pkg/a.go"]),
-            "go test -ldflags '-s -w' ./pkg"
+            "go test -ldflags \"-s -w\" ./pkg"
         );
         assert_eq!(
             run("go test -gcflags 'all=-N -l' ./...", &["pkg/a.go"]),
@@ -1980,6 +2084,131 @@ mod tests {
             run("go test -outputdir ./pkg ./...", &["pkg/a.go"]),
             "go test -outputdir ./pkg ./pkg"
         );
+        // A flag's value spelt `-args` is the value, not the separator;
+        // `-test.args` is a flag like any other.
+        assert_eq!(
+            run("go test -ldflags -args ./...", &["pkg/a.go"]),
+            "go test -ldflags -args ./pkg"
+        );
+        assert_eq!(
+            run("go test -ldflags \"-args\" ./...", &["pkg/a.go"]),
+            "go test -ldflags \"-args\" ./pkg"
+        );
+        assert_eq!(
+            run("go test ./... -ldflags -args", &["pkg/a.go"]),
+            "go test -ldflags -args ./pkg"
+        );
+        assert_eq!(
+            run("go test -test.args x ./...", &["pkg/a.go"]),
+            "go test -test.args x ./pkg"
+        );
+        assert_eq!(
+            run("go test -v -args -update ./pkg", &["pkg/a.go"]),
+            "go test -v ./pkg -args -update ./pkg"
+        );
+    }
+
+    #[test]
+    fn expansions_and_assignments_are_kept_as_written() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                ("pkg/a.go", ""),
+                ("go.mod", ""),
+                ("pkg/mod.py", ""),
+                ("pkg/test_mod.py", ""),
+                ("tests/.keep", ""),
+            ],
+        );
+        let run = |cmd: &str, files: &[&str]| {
+            narrowed(narrow(cmd, None, &strings(files), root.path())).cmd
+        };
+        // A `$VAR`, a `$(…)` or a backtick the user approved still expands:
+        // the word goes back on the line as it was written.
+        for (cmd, want) in [
+            (
+                "go test -skip \"$SKIP\" ./...",
+                "go test -skip \"$SKIP\" ./pkg",
+            ),
+            (
+                "go test -ldflags \"-X main.version=$VERSION\" ./...",
+                "go test -ldflags \"-X main.version=$VERSION\" ./pkg",
+            ),
+            ("go test -count $COUNT ./...", "go test -count $COUNT ./pkg"),
+            (
+                "go test -gcflags \"$(pwd)\" ./...",
+                "go test -gcflags \"$(pwd)\" ./pkg",
+            ),
+            (
+                "go test -tags `cat tags` ./...",
+                "go test -tags `cat tags` ./pkg",
+            ),
+            (
+                "go test -tags $(cat a b) ./...",
+                "go test -tags $(cat a b) ./pkg",
+            ),
+            (
+                "go test -tags \"$(echo \"a )\" b)\" ./...",
+                "go test -tags \"$(echo \"a )\" b)\" ./pkg",
+            ),
+            (
+                "go test -tags ${TAGS:-a b} ./...",
+                "go test -tags ${TAGS:-a b} ./pkg",
+            ),
+            ("go test -tags a$ ./...", "go test -tags a$ ./pkg"),
+            ("go test -run 'Test$' ./...", "go test -run 'Test$' ./pkg"),
+            (
+                "go test -ldflags -X\\ main.v=1 ./...",
+                "go test -ldflags -X\\ main.v=1 ./pkg",
+            ),
+        ] {
+            assert_eq!(run(cmd, &["pkg/a.go"]), want, "{cmd}");
+        }
+        // An assignment before the runner stays one, quoted as it was.
+        assert_eq!(
+            run("TAGS=\"$FOO\" go test ./...", &["pkg/a.go"]),
+            "TAGS=\"$FOO\" go test ./pkg"
+        );
+        assert_eq!(
+            run("LDFLAGS=\"-s -w\" go test ./...", &["pkg/a.go"]),
+            "LDFLAGS=\"-s -w\" go test ./pkg"
+        );
+        assert_eq!(
+            run("FOO=\"a b\" pytest tests", &["pkg/mod.py"]),
+            "FOO=\"a b\" pytest pkg/test_mod.py"
+        );
+        // A filter alone, too.
+        let n = narrowed(narrow(
+            "go test -ldflags \"-X main.version=$VERSION\" ./...",
+            Some("TestX"),
+            &[],
+            root.path(),
+        ));
+        assert_eq!(
+            n.cmd,
+            "go test -ldflags \"-X main.version=$VERSION\" ./... -run TestX"
+        );
+        assert_eq!(
+            run("pytest -k \"$NAME\" tests", &["pkg/mod.py"]),
+            "pytest -k \"$NAME\" pkg/test_mod.py"
+        );
+        // What Ryter adds is one shell word of its own.
+        let n = narrowed(narrow(
+            "go test ./...",
+            Some("Test$"),
+            &strings(&["pkg/a.go"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "go test -run 'Test$' ./pkg");
+        // An unclosed substitution is said, like an unclosed quote.
+        for cmd in ["go test -tags $(cat ./...", "go test -tags `cat ./..."] {
+            let why = cannot(narrow(cmd, None, &strings(&["pkg/a.go"]), root.path()));
+            assert!(
+                why.contains("unclosed quote or substitution"),
+                "{cmd}: {why}"
+            );
+        }
     }
 
     #[test]
