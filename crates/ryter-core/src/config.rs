@@ -36,6 +36,9 @@ pub struct Config {
     /// `[scout]`: the read-only scout the looking hats send questions to.
     #[serde(default)]
     pub scout: ScoutConfig,
+    /// `[map]`: the project map put in front of the model at a session's start.
+    #[serde(default)]
+    pub map: MapConfig,
     /// Per-model USD rates; always wins over shipped / catalog prices.
     #[serde(default)]
     pub pricing: BTreeMap<String, PriceOverride>,
@@ -151,6 +154,7 @@ impl Default for Config {
             spend: SpendConfig::default(),
             limits: LimitsConfig::default(),
             scout: ScoutConfig::default(),
+            map: MapConfig::default(),
             pricing: BTreeMap::new(),
             context_windows: BTreeMap::new(),
             mcp: McpSettings::default(),
@@ -462,6 +466,25 @@ impl Default for ScoutConfig {
     }
 }
 
+/// `[map]`: the project map, the project's folders and the signatures of
+/// its source files, put in front of the model when a session's first turn
+/// begins so it goes to a file instead of searching for it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MapConfig {
+    /// The most characters the map may run to (about a quarter as many
+    /// tokens); `0` leaves the map out.
+    pub chars: usize,
+}
+
+impl Default for MapConfig {
+    fn default() -> Self {
+        Self {
+            chars: crate::map::DEFAULT_CHARS,
+        }
+    }
+}
+
 /// `[limits]`: how far one message may go before Ryter stops the turn and
 /// asks to continue. The spend budget is the real guard; this is the
 /// safety net under a model going round in circles.
@@ -471,11 +494,19 @@ pub struct LimitsConfig {
     /// Model rounds one message may use (a round is one reply, with its
     /// tool calls). `0` lifts the cap.
     pub rounds: u32,
+    /// Done means checked: rounds a build turn may go on for after the
+    /// model says it is done while the project's check still fails, each
+    /// with the failures put back to it. `0` ends the turn on the model's
+    /// word, as before.
+    pub check_rounds: u32,
 }
 
 impl Default for LimitsConfig {
     fn default() -> Self {
-        Self { rounds: 150 }
+        Self {
+            rounds: 150,
+            check_rounds: 3,
+        }
     }
 }
 
@@ -1415,6 +1446,7 @@ struct ConfigFile {
     #[serde(default)]
     limits: Option<LimitsConfig>,
     scout: Option<ScoutConfig>,
+    map: Option<MapConfig>,
     ui: Option<UiFile>,
     update: Option<UpdateConfig>,
     reasoning_effort: BTreeMap<String, String>,
@@ -1591,6 +1623,9 @@ impl ConfigFile {
         }
         if let Some(sc) = self.scout {
             cfg.scout = sc;
+        }
+        if let Some(m) = self.map {
+            cfg.map = m;
         }
         // Rules add up across files; a later file's answer for the same
         // pattern replaces an earlier one's.

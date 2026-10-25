@@ -2,9 +2,15 @@
 
 mod bounded;
 mod fs;
+pub use fs::Seen;
+/// A project path as the file tools resolve it, for the crate's tests.
+#[cfg(test)]
+pub(crate) use policy::resolve as resolve_path;
 mod packages;
 mod policy;
 mod secret;
+/// Whether a project path is one the gate holds secret, for the map.
+pub(crate) use secret::is_secret as secret_path;
 pub(crate) mod shell;
 mod web;
 
@@ -166,6 +172,10 @@ pub struct ToolContext {
     pub sessions: Vec<String>,
     /// Where `web_search` looks, with its key read once.
     pub search: web::Search,
+    /// The files the model has read or written this session, each as it
+    /// was then ([`fs::Seen`]): a `write` over a file the model has not
+    /// seen as it is now is refused, so nothing is lost unread.
+    pub seen: Arc<Mutex<std::collections::HashMap<std::path::PathBuf, Seen>>>,
 }
 
 impl ToolContext {
@@ -354,7 +364,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
         "write" => (
             "Create a new file, or replace one wholesale. To change part of an \
              existing file use search_replace: it is cheaper and cannot clobber \
-             lines you did not mean to touch.",
+             lines you did not mean to touch. A rewrite of an existing file is \
+             refused unless you have read the file as it is now (this session, and \
+             since anything changed it), so nothing is lost unread.",
             json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         ),
         "search_replace" => (
@@ -446,20 +458,25 @@ fn spec(name: &str) -> Option<ToolSpec> {
             },"required":["title","plan"]}),
         ),
         "record_decision" => (
-            "Record one place where the work differs from the plan the user approved, and \
-             why. Call it when the user tells you to leave out, add or change something the \
-             plan says, and when the plan can't be followed as written and you take another \
-             way to the same goal. One call for each difference, when it is decided, before \
-             you build it. The entry goes in `.ryter/decisions.md` in the project, and a \
-             review reads it: a difference recorded there is not held against the work. \
-             Don't record work that follows the plan, or things the plan doesn't speak to.",
+            "Record a decision in `.ryter/decisions.md`, so that no later session or hat \
+             redoes it. Two kinds. A difference from the plan the user approved (`plan_said`, \
+             `built_instead`): when the user tells you to leave out, add or change something \
+             the plan says, and when the plan can't be followed as written and you take \
+             another way to the same goal. A choice made in the work (`chose`): a library, a \
+             data model, a structure, a workaround, picked among others, and anything the \
+             user decided when you asked. One call per decision, when it is decided, before \
+             you build on it. Every hat reads the file at the start of a session, and an \
+             audit reads it: a difference or a choice recorded there is not held against the \
+             work. Don't record work that follows the plan, or routine steps nobody would \
+             decide otherwise.",
             json!({"type":"object","properties":{
                 "title":{"type":"string","description":"a few words: what was decided"},
-                "plan_said":{"type":"string","description":"what the plan says, with its step"},
-                "built_instead":{"type":"string","description":"what is built instead"},
+                "plan_said":{"type":"string","description":"a difference from the plan: what the plan says, with its step"},
+                "built_instead":{"type":"string","description":"a difference from the plan: what is built instead"},
+                "chose":{"type":"string","description":"a choice in the work: what was chosen, and over what"},
                 "why":{"type":"string","description":"the reason, in a sentence; the user's own words when they decided"},
                 "decided_by":{"type":"string","enum":["user","model"],"description":"`user` when they told you to; `model` when you chose"}
-            },"required":["title","plan_said","built_instead","why","decided_by"]}),
+            },"required":["title","why","decided_by"]}),
         ),
         "propose_run" => (
             "Propose how this project runs, for the user to approve: the command that \
@@ -484,8 +501,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
-             `test` runs the project's test commands and returns their output. `check` \
-             runs its fast check and returns the errors (Ryter also runs it by itself \
+             `test` runs the project's test commands and returns what failed: each failed \
+             test with its assertion and where, and the runner's totals (a run that passed, \
+             its totals). `check` runs its fast check and returns the errors (Ryter also runs it by itself \
              after each build round that edited files). `stop` stops what was started \
              (the user usually does this, with /stop: leave the product running when you \
              finish). `status` says whether it is up. With no run file yet, propose one \
@@ -1096,7 +1114,102 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         }
+    }
+
+    /// A `write` over a file the model has not seen as it is now is
+    /// refused: never read this session, or changed since it was read (by
+    /// the user, a formatter, a command). A read, or an edit of its own,
+    /// is seeing it; a new file needs no read.
+    #[test]
+    fn a_rewrite_of_a_file_not_seen_as_it_is_now_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        let c = ctx(Role::Build, root);
+        let rewrite = |text: &str| json!({"path": "a.txt", "content": text});
+        // Never read: refused, with the way forward.
+        let out = execute("write", &rewrite("new\n"), &c).unwrap();
+        assert!(out.is_error, "{}", out.text);
+        assert!(
+            out.text
+                .contains("a.txt exists (2 lines) and you have not read it this session")
+                && out.text.contains("search_replace"),
+            "{}",
+            out.text
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        // Read, then rewritten: fine, and the rewrite counts as seeing it.
+        execute("read_file", &json!({"path": "a.txt"}), &c).unwrap();
+        let out = execute("write", &rewrite("new\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &rewrite("newer\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        // Changed since by someone else: refused until read again.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(
+            root.join("a.txt"),
+            "the user's line\nand another\nand a third\n",
+        )
+        .unwrap();
+        let out = execute("write", &rewrite("clobber\n"), &c).unwrap();
+        assert!(out.is_error, "{}", out.text);
+        assert!(
+            out.text
+                .contains("a.txt changed since you last read it (now 3 lines)"),
+            "{}",
+            out.text
+        );
+        assert!(
+            std::fs::read_to_string(root.join("a.txt"))
+                .unwrap()
+                .starts_with("the user's line")
+        );
+        // A search_replace that misses says the file changed, not "may have".
+        let out = execute(
+            "search_replace",
+            &json!({"path": "a.txt", "old_string": "newer", "new_string": "x"}),
+            &c,
+        )
+        .unwrap();
+        assert!(
+            out.text.contains("changed since you last read it"),
+            "{}",
+            out.text
+        );
+        // One that hits applies, and counts as seeing the file.
+        let out = execute(
+            "search_replace",
+            &json!({"path": "a.txt", "old_string": "and a third", "new_string": "third"}),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &rewrite("after the edit\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        // A read that returned none of the file is not a read.
+        std::fs::write(root.join("c.txt"), "one\ntwo\n").unwrap();
+        let out = execute("read_file", &json!({"path": "c.txt", "offset": 9}), &c).unwrap();
+        assert!(
+            out.is_error && out.text.contains("past the end"),
+            "{}",
+            out.text
+        );
+        let out = execute("write", &json!({"path": "c.txt", "content": "x\n"}), &c).unwrap();
+        assert!(out.is_error, "{}", out.text);
+        let out = execute("read_file", &json!({"path": "c.txt", "offset": 2}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &json!({"path": "c.txt", "content": "x\n"}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        // A new file needs no read, and a second write of it is its own.
+        let out = execute("write", &json!({"path": "b.txt", "content": "b\n"}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &json!({"path": "b.txt", "content": "bb\n"}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
     }
 
     #[cfg(target_os = "linux")]

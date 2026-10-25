@@ -118,6 +118,46 @@ pub struct Agent {
     /// gauge. Cleared when compaction rewrites the transcript, so the gauge
     /// does not keep a pre-compact count.
     pub last_input_tokens: Option<u64>,
+    /// The project map ([`crate::map`]) as the session's first turn found
+    /// it, `Some("")` when there is none to show; `None` until it is made.
+    /// Held for the session so the prompt's prefix, and the provider's
+    /// cache of it, survive the model's own edits; remade when the
+    /// conversation is compacted, which breaks the cache anyway.
+    pub project_map: Option<String>,
+    /// What Ryter has seen in this project ([`crate::observed`]), made and
+    /// held with the map.
+    pub observed: Option<String>,
+    /// The files the model wrote or edited this session, in the order
+    /// first touched, for the session's note.
+    pub session_edits: Vec<String>,
+    /// How the last check or test run this session came out.
+    pub last_check: Option<bool>,
+    /// Turns run in this session, for its note.
+    pub session_turns: u32,
+}
+
+/// What the check after a round's edits came to, for the turn's end.
+struct CheckOutcome {
+    /// The check command, as the run file has it.
+    cmd: String,
+    /// Whether it passed.
+    ok: bool,
+    /// Whether it could run at all: a program not on this machine is not
+    /// a failing check.
+    could_run: bool,
+    /// The failures as the model was told them (`check::report`).
+    report: String,
+}
+
+/// The line by which the model says it cannot make the check pass
+/// (`Blocked: the fixture needs a database`), which ends the turn.
+fn blocked_line(text: &str) -> Option<&str> {
+    text.lines().find_map(|l| {
+        let t = l.trim_start().trim_start_matches(['*', '_', '#', ' ']);
+        t.strip_prefix("Blocked:")
+            .or_else(|| t.strip_prefix("BLOCKED:"))
+            .map(|r| r.trim_start_matches(['*', '_', ' ']).trim())
+    })
 }
 
 /// Output ceiling per round of the conversation.
@@ -337,6 +377,7 @@ impl Agent {
         }
         let turn = next_turn();
         self.turn = turn;
+        self.session_turns += 1;
         // What this turn makes, it may delete without asking; the turn's
         // checkpoint holds none of it.
         self.ctx.created.clear();
@@ -405,6 +446,7 @@ impl Agent {
             });
         }
         let _ = self.emit_asked(None);
+        self.note_session();
         let _ = self.emit(AgentEvent::TurnFinished {
             turn,
             tools,
@@ -531,6 +573,7 @@ impl Agent {
         // DECISIONS.md, which this same turn edits: rebuilding it every round
         // changed the prompt's prefix and threw away the provider's cache for
         // the whole conversation, every time memory was touched.
+        self.ensure_project_map();
         let mut system = self.system_prompt()?;
         // The model that has read this conversation so far. A hat on another
         // model reads it all again, uncached: the user is told what that is.
@@ -538,6 +581,10 @@ impl Agent {
         // A review's own limit: the session's spend when the review hat
         // took over, and whether it has been told to write up.
         let mut reviewing: Option<(f64, bool)> = None;
+        // Done means checked: what the last check after edits came to this
+        // turn, and how many times the turn has gone on past "done".
+        let mut last_check: Option<CheckOutcome> = None;
+        let mut continued = 0u32;
         for _round in 0..self.max_turns {
             if self.ctx.cancel.is_cancelled() {
                 return self.finish_cancelled(last_text).await;
@@ -787,6 +834,56 @@ impl Agent {
                 if self.ctx.cancel.is_cancelled() {
                     return self.finish_cancelled(last_text).await;
                 }
+                // Done means checked. The build hat's "done" with the
+                // project's check failing is not the end of the turn: the
+                // failures go back to it, a bounded number of times, unless
+                // it says what is in the way. A check that could not run is
+                // not held against it, and the gate is unchanged: every ask
+                // still asks.
+                if !truncated && self.role == Role::Build {
+                    if let Some(check) = last_check.as_ref().filter(|c| !c.ok && c.could_run) {
+                        let cap = self.check_rounds();
+                        if let Some(why) = blocked_line(&last_text) {
+                            self.emit(AgentEvent::Notice {
+                                message: format!(
+                                    "the model says it is blocked, with `{}` still failing: {why}",
+                                    check.cmd
+                                ),
+                            })?;
+                        } else if continued < cap {
+                            continued += 1;
+                            self.emit(AgentEvent::Notice {
+                                message: format!(
+                                    "not done: `{}` still fails · round {continued} of {cap}",
+                                    check.cmd
+                                ),
+                            })?;
+                            self.session.push_message(Message {
+                                role: "user".into(),
+                                content: format!(
+                                    "[Ryter] Not done: `{}` still fails.\n\n{}\n\nFix it before \
+                                     you finish. If you cannot, say in one line what is in the \
+                                     way, starting the line with `Blocked:`, and stop.",
+                                    check.cmd, check.report
+                                ),
+                                tool_call_id: None,
+                                tool_calls: None,
+                                messages_blocks: None,
+                            })?;
+                            continue;
+                        } else if cap > 0 {
+                            self.emit(AgentEvent::Notice {
+                                message: format!(
+                                    "stopped: `{}` still fails after {cap} more round{}. Fix it, or \
+                                     tell the model what is in the way ([limits] check_rounds in \
+                                     config.toml sets how far it goes on).",
+                                    check.cmd,
+                                    if cap == 1 { "" } else { "s" }
+                                ),
+                            })?;
+                        }
+                    }
+                }
                 // "No tool calls" used to mean success even when the provider
                 // had cut the answer off at `max_tokens`.
                 return Ok(TurnResult {
@@ -915,6 +1012,9 @@ impl Agent {
                             if !edited.iter().any(|e| e == p) {
                                 edited.push(p.to_string());
                             }
+                            if !self.session_edits.iter().any(|e| e == p) {
+                                self.session_edits.push(p.to_string());
+                            }
                         }
                     }
                 }
@@ -934,6 +1034,17 @@ impl Agent {
                          different approach, or stop and tell the user what is in the way.",
                         ordinal(*seen)
                     ));
+                }
+                if call.name == "bash" && parsed.is_ok() {
+                    if let Some(cmd) = args.get("command").and_then(Value::as_str) {
+                        let timed_out = out.text.starts_with("bash: timed out after");
+                        self.observe_command(
+                            cmd,
+                            crate::observed::Outcome::of(!out.is_error, timed_out, &out.text),
+                            t0.elapsed(),
+                            false,
+                        );
+                    }
                 }
                 self.emit(AgentEvent::ToolResult {
                     id: call.id.clone(),
@@ -975,7 +1086,7 @@ impl Agent {
             }
             if self.role == Role::Build && !edited.is_empty() {
                 match self.check_after_edits(&edited).await {
-                    Ok(()) => {}
+                    Ok(outcome) => last_check = outcome,
                     Err(Error::Cancelled) => return self.finish_cancelled(last_text).await,
                     Err(e) => return Err(e),
                 }
@@ -1465,16 +1576,23 @@ impl Agent {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
         };
-        let (Some(title), Some(plan_said), Some(built_instead), Some(why)) = (
-            text("title"),
-            text("plan_said"),
-            text("built_instead"),
-            text("why"),
-        ) else {
+        let (Some(title), Some(why)) = (text("title"), text("why")) else {
             return Ok(ToolOutput::err(
-                "record_decision needs `title`, `plan_said`, `built_instead` and `why`, \
-                 each a short line",
+                "record_decision needs `title` and `why`, each a short line, with either \
+                 `plan_said` and `built_instead` (a difference from the plan) or `chose` \
+                 (a choice made in the work)",
             ));
+        };
+        let kind = match (text("plan_said"), text("built_instead"), text("chose")) {
+            (Some(plan_said), Some(built_instead), None) => Ok((plan_said, built_instead)),
+            (None, None, Some(chose)) => Err(chose),
+            _ => {
+                return Ok(ToolOutput::err(
+                    "record_decision takes either `plan_said` and `built_instead` (a \
+                     difference from the plan) or `chose` (a choice made in the work), not \
+                     both and not one of the pair alone",
+                ));
+            }
         };
         let by = match text("decided_by") {
             Some("user") => "you".to_string(),
@@ -1503,16 +1621,46 @@ impl Agent {
                 self.role
             )));
         }
-        let Some(plan_file) = self.session.meta.plan_file.clone() else {
-            return Ok(ToolOutput::err(
-                "no plan has been approved in this session, so there is no plan for the \
-                 work to differ from. Nothing was recorded.",
-            ));
-        };
         let root = self
             .project_root
             .clone()
             .unwrap_or_else(|| self.ctx.workspace.clone());
+        let (plan_said, built_instead) = match kind {
+            Ok(pair) => pair,
+            Err(chose) => {
+                let choice = crate::decisions::Choice {
+                    title: title.to_string(),
+                    chose: chose.to_string(),
+                    why: why.to_string(),
+                    by,
+                };
+                if let Err(e) = crate::decisions::record_choice(&root, &choice) {
+                    return Ok(ToolOutput::err(format!(
+                        "the decision could not be recorded ({e}). Tell the user what you \
+                         chose, and why."
+                    )));
+                }
+                self.emit(AgentEvent::Notice {
+                    message: format!(
+                        "decision recorded: {}",
+                        title.split_whitespace().collect::<Vec<_>>().join(" ")
+                    ),
+                })?;
+                return Ok(ToolOutput::ok(format!(
+                    "Recorded in `{}` under `{}`. Every hat reads it at the start of a \
+                     session, and an audit reads it.",
+                    crate::decisions::FILE,
+                    crate::decisions::WORK
+                )));
+            }
+        };
+        let Some(plan_file) = self.session.meta.plan_file.clone() else {
+            return Ok(ToolOutput::err(
+                "no plan has been approved in this session, so there is no plan for the \
+                 work to differ from. Nothing was recorded. A choice made in the work is \
+                 recorded with `chose` instead.",
+            ));
+        };
         let entry = crate::decisions::Entry {
             title: title.to_string(),
             plan_said: plan_said.to_string(),
@@ -1566,10 +1714,12 @@ impl Agent {
 
     /// Run the project's fast check and say what it came to: the error
     /// count and the errors, capped (`check::report`), with `ok` for a
-    /// clean run. `None` when the turn was cancelled meanwhile.
-    fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String)> {
+    /// clean run, and whether the command could run at all (a check whose
+    /// program is not on this machine is not one to hold the model to).
+    fn run_check(&mut self, cmd: &str) -> Result<(bool, usize, String, bool)> {
         use crate::tools::shell::Run;
         let root = self.root();
+        let began = std::time::Instant::now();
         let out = self.ctx.sandboxed(|| {
             crate::tools::shell::run_command_live(
                 cmd,
@@ -1579,6 +1729,7 @@ impl Agent {
                 self.ctx.live.as_ref(),
             )
         })?;
+        let timed_out = matches!(out, Run::TimedOut);
         let (body, ok) = match out {
             Run::Ok(o) => (o, true),
             Run::Failed(o) => (o, false),
@@ -1588,8 +1739,11 @@ impl Agent {
             ),
             Run::Cancelled => return Err(Error::Cancelled),
         };
+        let outcome = crate::observed::Outcome::of(ok, timed_out, &body);
+        self.observe_command(cmd, outcome, began.elapsed(), true);
+        self.last_check = Some(ok);
         let (n, text) = crate::check::report(&body, ok);
-        Ok((ok, n, text))
+        Ok((ok, n, text, outcome != crate::observed::Outcome::NotFound))
     }
 
     /// After a build round that edited files: the project's approved
@@ -1599,17 +1753,20 @@ impl Agent {
     /// user has approved as it stands: nothing is asked mid-round. It
     /// goes through the same hooks as the model's own `run_project` call,
     /// and its row is answered however it ends, Esc included.
-    async fn check_after_edits(&mut self, edited: &[String]) -> Result<()> {
+    ///
+    /// Returns what the check came to when it ran, for the turn's end:
+    /// `None` when there was no check to run, or it did not run.
+    async fn check_after_edits(&mut self, edited: &[String]) -> Result<Option<CheckOutcome>> {
         use crate::tools::ToolOutput;
         let root = self.root();
         let crate::run::Found::Approved(run) = crate::run::find(&root, &self.home) else {
-            return Ok(());
+            return Ok(None);
         };
         let Some(cmd) = run.check.clone() else {
-            return Ok(());
+            return Ok(None);
         };
         if self.run_refused(&run).is_some() {
-            return Ok(());
+            return Ok(None);
         }
         let id = format!("check-{}-{}", self.turn, crate::event::now_ms());
         let args = serde_json::json!({ "action": "check" });
@@ -1627,10 +1784,10 @@ impl Agent {
         // The hooks a `run_project` call from the model runs: one that
         // denies or watches that call sees this one too.
         let ctx = self.ctx.clone();
-        let mut found: Option<(bool, usize)> = None;
+        let mut found: Option<(bool, usize, bool)> = None;
         let result = crate::tools::with_hooks("run_project", &args, &ctx, || {
-            let (ok, n, text) = self.run_check(&cmd)?;
-            found = Some((ok, n));
+            let (ok, n, text, could_run) = self.run_check(&cmd)?;
+            found = Some((ok, n, could_run));
             Ok(if ok {
                 ToolOutput::ok(text)
             } else {
@@ -1672,12 +1829,12 @@ impl Agent {
         };
         let text = out.text;
         let content = match found {
-            Some((true, _)) => format!("[Ryter] `{cmd}` passed after your edits to {files}."),
-            Some((false, 0)) => format!(
+            Some((true, _, _)) => format!("[Ryter] `{cmd}` passed after your edits to {files}."),
+            Some((false, 0, _)) => format!(
                 "[Ryter] `{cmd}` {text}\n\nIt ran after your edits to {files}. See to it \
                  before going on; Ryter runs it again after your next edits."
             ),
-            Some((false, _)) => format!(
+            Some((false, _, _)) => format!(
                 "[Ryter] `{cmd}` after your edits to {files}: {text}\n\nFix them before going \
                  on; Ryter runs the check again after your next edits."
             ),
@@ -1690,7 +1847,19 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
-        })
+        })?;
+        Ok(found.map(|(ok, _, could_run)| CheckOutcome {
+            cmd,
+            ok,
+            could_run,
+            report: text,
+        }))
+    }
+
+    /// Done means checked: how many rounds a build turn may go on for
+    /// after the model says it is done while the check still fails.
+    fn check_rounds(&self) -> u32 {
+        self.cfg.as_ref().map_or(3, |c| c.limits.check_rounds)
     }
 
     /// Put how the project runs to the user. `Ok(None)` is their yes.
@@ -2486,6 +2655,7 @@ impl Agent {
                     if let Some(live) = self.audit_live.as_mut() {
                         live.used_product = true;
                     }
+                    let began = std::time::Instant::now();
                     let out = self.ctx.sandboxed(|| {
                         crate::tools::shell::run_command_live(
                             cmd,
@@ -2495,6 +2665,7 @@ impl Agent {
                             self.ctx.live.as_ref(),
                         )
                     })?;
+                    let timed_out = matches!(out, Run::TimedOut);
                     let (body, ok) = match out {
                         Run::Ok(o) => (o, true),
                         Run::Failed(o) => (o, false),
@@ -2507,11 +2678,21 @@ impl Agent {
                     if !ok {
                         failed += 1;
                     }
+                    self.observe_command(
+                        cmd,
+                        crate::observed::Outcome::of(ok, timed_out, &body),
+                        began.elapsed(),
+                        true,
+                    );
+                    // Its failures with what each said, its totals when it
+                    // passed; the last lines only when no runner is
+                    // recognised (`failures::report`).
                     text.push_str(&format!(
                         "$ {cmd}\n{}\n",
-                        crate::run::last_lines(body.trim_end(), 60)
+                        crate::failures::report(&body, ok, 60)
                     ));
                 }
+                self.last_check = Some(failed == 0);
                 Ok(if failed == 0 {
                     ToolOutput::ok(text)
                 } else {
@@ -2530,7 +2711,7 @@ impl Agent {
                         crate::run::FILE
                     )));
                 };
-                let (ok, _, text) = self.run_check(&cmd)?;
+                let (ok, _, text, _) = self.run_check(&cmd)?;
                 let text = format!("$ {cmd}\n{text}");
                 Ok(if ok {
                     ToolOutput::ok(text)
@@ -3208,6 +3389,12 @@ impl Agent {
 
     /// Deterministic compact. Emits [`AgentEvent::Compacted`] with measured size.
     pub fn compact_now(&mut self) -> Result<crate::compact::ContextReport> {
+        // The map is remade with the conversation: the cache it was held
+        // for goes with the transcript, and the model's edits since the
+        // session began are in the files now.
+        self.project_map = None;
+        self.observed = None;
+        self.ensure_project_map();
         let sys = self.system_prompt()?;
         let (_, model, connection) = self.hat_stack();
         let before = self.report_for(&sys, &model, &connection);
@@ -3239,6 +3426,30 @@ impl Agent {
     /// Seed [`Self::last_input_tokens`] from the session's spend log (resume).
     pub fn seed_prompt_tokens(&mut self) {
         self.last_input_tokens = self.session.last_input_tokens();
+    }
+
+    /// Go on in `session` (new or resumed) in the same project: what was
+    /// held for the old one goes. The map and the notes of what Ryter has
+    /// seen are remade at the next turn, so a new session sees what the
+    /// last one did; the files edited and the last check are the new
+    /// session's own.
+    pub fn swap_session(&mut self, session: crate::session::Session) {
+        self.session = session;
+        self.seed_prompt_tokens();
+        self.announce_recovery();
+        self.ctx.notes_dir = self.session.notes_dir();
+        self.project_map = None;
+        self.observed = None;
+        self.session_edits.clear();
+        self.last_check = None;
+        self.session_turns = 0;
+        // What the old session read is not what this one has seen: a
+        // rewrite here needs its own read, as the refusal says.
+        self.ctx
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
@@ -3459,7 +3670,15 @@ impl Agent {
             model,
             connection,
             window,
-            system: crate::prompt::scout(self.project_root.as_deref()),
+            system: {
+                // The scout is sent to find things: the map says where.
+                let mut s = crate::prompt::scout(self.project_root.as_deref());
+                if let Some(map) = self.project_map.as_deref().filter(|m| !m.is_empty()) {
+                    s.push_str("\n\n");
+                    s.push_str(&crate::map::section(map));
+                }
+                s
+            },
             tools: crate::tools::scout_specs(),
             cfg,
         };
@@ -3517,6 +3736,10 @@ impl Agent {
         // lookups, under the scout's own row.
         let mut ctx = self.ctx.clone();
         ctx.live = None;
+        // The scout's reads are its own: what it read stays in its
+        // transcript, so the hat has not seen the file and may not rewrite
+        // it on the scout's summary.
+        ctx.seen = Default::default();
         let cap = call.cfg.rounds.max(1);
         loop {
             if self.ctx.cancel.is_cancelled() {
@@ -3680,7 +3903,73 @@ impl Agent {
         let mut system =
             crate::prompt::system(&self.home, self.project_root.as_deref(), self.trusted);
         system.push_str(&self.machine);
+        if let Some(map) = self.project_map.as_deref().filter(|m| !m.is_empty()) {
+            system.push('\n');
+            system.push_str(&crate::map::section(map));
+        }
+        if let Some(seen) = self.observed.as_deref().filter(|o| !o.is_empty()) {
+            system.push('\n');
+            system.push_str(seen);
+        }
         Ok(system)
+    }
+
+    /// Make the project map and the notes of what Ryter has seen here if
+    /// this session has none yet: at its first turn, and again after
+    /// compaction. `[map] chars = 0` leaves the map out.
+    fn ensure_project_map(&mut self) {
+        if self.project_map.is_some() && self.observed.is_some() {
+            return;
+        }
+        let chars = self
+            .cfg
+            .as_ref()
+            .map_or(crate::map::DEFAULT_CHARS, |c| c.map.chars);
+        let map = self
+            .project_root
+            .as_deref()
+            .and_then(|root| crate::map::build(root, chars));
+        self.project_map = Some(map.unwrap_or_default());
+        let id = self.session.meta.id.to_string();
+        let observed = self
+            .project_root
+            .as_deref()
+            .and_then(|root| crate::observed::shown(&self.home, root, &id));
+        self.observed = Some(observed.unwrap_or_default());
+    }
+
+    /// Note a command's run in what Ryter has seen here. `always` for the
+    /// run file's own commands.
+    fn observe_command(
+        &self,
+        cmd: &str,
+        outcome: crate::observed::Outcome,
+        took: std::time::Duration,
+        always: bool,
+    ) {
+        if let Some(root) = self.project_root.as_deref() {
+            crate::observed::note_command(&self.home, root, cmd, outcome, took, always);
+        }
+    }
+
+    /// Note this session as it stands, at the end of a turn.
+    fn note_session(&self) {
+        let Some(root) = self.project_root.as_deref() else {
+            return;
+        };
+        crate::observed::note_session(
+            &self.home,
+            root,
+            crate::observed::SessionNote {
+                id: self.session.meta.id.to_string(),
+                at: crate::clock::stamp(),
+                title: self.session.meta.title.clone(),
+                turns: self.session_turns,
+                edited: self.session_edits.clone(),
+                edited_more: 0,
+                check: self.last_check,
+            },
+        );
     }
 
     async fn finish_cancelled(&mut self, text: String) -> Result<TurnResult> {
@@ -3955,19 +4244,20 @@ mod tests {
         home: TempDir,
         cwd: TempDir,
     ) -> (TempDir, TempDir, Agent) {
-        std::fs::write(cwd.path().join("hello.txt"), "hi there").unwrap();
-        let session = Session::create(
-            home.path(),
-            cwd.path(),
-            "spacexsi".into(),
-            "grok-4.6".into(),
-        )
-        .unwrap();
+        let agent = setup_at(provider, home.path(), cwd.path());
+        (home, cwd, agent)
+    }
+
+    /// An agent with a fresh session in `home` and `cwd`: a second session
+    /// in the same project.
+    fn setup_at(provider: ReplayProvider, home: &std::path::Path, cwd: &std::path::Path) -> Agent {
+        std::fs::write(cwd.join("hello.txt"), "hi there").unwrap();
+        let session = Session::create(home, cwd, "spacexsi".into(), "grok-4.6".into()).unwrap();
         let notes = session.notes_dir();
         let ctx = ToolContext {
             sandbox: None,
             live: None,
-            workspace: cwd.path().to_path_buf(),
+            workspace: cwd.to_path_buf(),
             notes_dir: notes,
             role: Role::Build,
             always_approve: true,
@@ -3986,8 +4276,9 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         };
-        let agent = Agent {
+        Agent {
             provider: Arc::new(provider),
             book: PriceBook::new(),
             session,
@@ -3998,8 +4289,8 @@ mod tests {
             max_turns: 8,
             budget_usd: 0.0,
             sink: None,
-            home: home.path().to_path_buf(),
-            project_root: Some(cwd.path().to_path_buf()),
+            home: home.to_path_buf(),
+            project_root: Some(cwd.to_path_buf()),
             trusted: false,
             context_window: 0,
             cfg: None,
@@ -4010,8 +4301,12 @@ mod tests {
             last_audit_verdict: None,
             turn: 0,
             last_input_tokens: None,
-        };
-        (home, cwd, agent)
+            project_map: None,
+            observed: None,
+            session_edits: Vec::new(),
+            last_check: None,
+            session_turns: 0,
+        }
     }
 
     #[tokio::test]
@@ -4116,6 +4411,8 @@ mod tests {
         agent.ctx.role = Role::Plan;
         let r = agent.turn("what does hello.txt say?").await.unwrap();
         assert_eq!(r.text, "The scout read it: hi there.");
+        // The scout's read is the scout's: the hat has not seen the file.
+        assert!(agent.ctx.seen.lock().unwrap().is_empty());
         let t = &agent.session.transcript;
         assert!(
             t.iter().all(|m| m
@@ -4541,6 +4838,7 @@ mod tests {
             ..crate::run::RunFile::default()
         };
         crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        seen(&agent, "check.sh");
         let r = agent.turn("write the notes").await.unwrap();
         assert_eq!(r.text, "done");
         let notes: Vec<&str> = agent
@@ -4632,10 +4930,20 @@ mod tests {
             ..crate::run::RunFile::default()
         };
         crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        // Esc once the check is running, not after a fixed wait: on a slow
+        // runner the rounds before the check took longer than the wait,
+        // and the cancel landed before there was a row to answer.
         let cancel = agent.ctx.cancel.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
         let t = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            cancel.cancel();
+            for event in rx {
+                if matches!(&event, AgentEvent::ToolCall { id, .. } if id.starts_with("check-")) {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    cancel.cancel();
+                    return;
+                }
+            }
         });
         let started = std::time::Instant::now();
         let r = agent.turn("write the notes").await.unwrap();
@@ -4716,6 +5024,14 @@ mod tests {
         crate::git::init_repo(cwd.path()).unwrap();
         agent.cfg = Some(crate::config::Config::default());
         (home, cwd, agent)
+    }
+
+    /// The model has read `rel` as it is now, so a `write` over it is not
+    /// refused as a rewrite of a file it has not seen.
+    fn seen(agent: &Agent, rel: &str) {
+        let path = crate::tools::resolve_path(&agent.ctx, rel).expect("a project path");
+        let now = crate::tools::Seen::of(&path).expect("an existing file");
+        agent.ctx.seen.lock().unwrap().insert(path, now);
     }
 
     fn write(path: &str, content: &str) -> Vec<StreamDelta> {
@@ -5037,6 +5353,7 @@ mod tests {
         });
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "README.md");
         agent.turn("plan the readme, then do it").await.unwrap();
         agent.ctx.user_io = None;
         let asked = asked.join().unwrap();
@@ -5755,6 +6072,7 @@ mod tests {
         };
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "README.md");
         agent.turn("plan the readme").await.unwrap();
         agent.ctx.user_io = None;
         let shown = shown.map(|t| t.join().unwrap()).unwrap_or_default();
@@ -5785,6 +6103,7 @@ mod tests {
         agent.role = Role::Build;
         agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
+        seen(&agent, "README.md");
         agent.turn("write the readme").await.unwrap();
         let result = agent
             .session
@@ -6090,6 +6409,120 @@ mod tests {
         assert!(result.contains("needs `decided_by`"), "{result}");
     }
 
+    /// A choice made in the work needs no plan: it goes under `## work`,
+    /// the chat says so, and the next turn's prompt carries it, so the next
+    /// session and the next hat build on it. An auditor still records
+    /// nothing, and a half of the plan pair is refused.
+    #[tokio::test]
+    async fn a_choice_in_the_work_is_recorded_without_a_plan_and_shown_to_every_hat() {
+        let choice = |extra: serde_json::Value| {
+            let mut args = serde_json::json!({
+                "title": "SQLite through better-sqlite3",
+                "chose": "better-sqlite3 over an ORM",
+                "why": "one file, synchronous, nothing to configure",
+                "decided_by": "model",
+            });
+            for (k, v) in extra.as_object().into_iter().flatten() {
+                args[k] = v.clone();
+            }
+            call("record_decision", args)
+        };
+        let p = ReplayProvider::scripted(vec![
+            choice(serde_json::json!({})),
+            say("done"),
+            say("done again"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        assert!(
+            !agent
+                .system_prompt()
+                .unwrap()
+                .contains("## Decisions in this project")
+        );
+        agent.turn("set up the database").await.unwrap();
+        let file = std::fs::read_to_string(cwd.path().join(crate::decisions::FILE)).unwrap();
+        assert!(
+            file.contains(
+                "## work\n\n\
+                 ### SQLite through better-sqlite3\n\
+                 - Chose: better-sqlite3 over an ORM\n\
+                 - Why: one file, synchronous, nothing to configure\n\
+                 - Decided by: build hat (grok-4.6) · 20"
+            ),
+            "{file}"
+        );
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            result.starts_with("Recorded in `.ryter/decisions.md` under `## work`."),
+            "{result}"
+        );
+        let notices: Vec<String> = events
+            .try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notices,
+            ["decision recorded: SQLite through better-sqlite3"]
+        );
+        // The next turn's prompt carries it, for every hat.
+        let prompt = agent.system_prompt().unwrap();
+        let i = prompt
+            .find("## Decisions in this project")
+            .expect("the section");
+        assert!(
+            prompt[i..].contains("- Chose: better-sqlite3 over an ORM"),
+            "{prompt}"
+        );
+        agent.put_on(Role::Plan).unwrap();
+        assert!(
+            agent
+                .system_prompt()
+                .unwrap()
+                .contains("better-sqlite3 over an ORM")
+        );
+        // A difference from the plan still needs the plan; half a pair is refused.
+        let p = ReplayProvider::scripted(vec![
+            choice(serde_json::json!({"plan_said": "step 4"})),
+            say("done"),
+        ]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        agent.turn("go").await.unwrap();
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            result.contains("not both and not one of the pair alone"),
+            "{result}"
+        );
+        assert!(!cwd.path().join(crate::decisions::FILE).exists());
+        // An auditor records no choice either.
+        let p = ReplayProvider::scripted(vec![choice(serde_json::json!({})), say("done")]);
+        let (_home, cwd, mut agent) = repo_setup(p);
+        agent.role = Role::Audit;
+        agent.ctx.role = Role::Audit;
+        agent.turn("audit").await.unwrap();
+        assert!(!cwd.path().join(crate::decisions::FILE).exists());
+    }
+
     /// With nobody to show it to, a plan is not approved by default, and a
     /// plan too long to read is not shown at all.
     #[tokio::test]
@@ -6299,6 +6732,7 @@ mod tests {
         agent.ctx.always_approve = true;
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "README.md");
         let r = agent.turn("build it").await.unwrap();
         assert_eq!(r.reason, StopReason::Completed);
         assert_eq!(
@@ -6378,6 +6812,7 @@ mod tests {
         agent.role = Role::Build;
         agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
+        seen(&agent, "README.md");
         agent.turn("rewrite the readme").await.unwrap();
         let readme = cwd.path().join("README.md");
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), "rewritten\n");
@@ -6446,6 +6881,7 @@ mod tests {
     async fn undo_over_the_users_own_edit_asks_for_force_and_redo_reverses() {
         let (_home, cwd, mut agent) =
             build_agent(vec![write("README.md", "by the model\n"), say("done")]);
+        seen(&agent, "README.md");
         agent.turn("rewrite the readme").await.unwrap();
         let readme = cwd.path().join("README.md");
         std::fs::write(&readme, "by the model\nand then by me\n").unwrap();
@@ -6515,6 +6951,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(d.join("local.cfg"), "mine\n").unwrap();
+        seen(&agent, "local.cfg");
         agent.turn("set the config").await.unwrap();
         assert_eq!(
             std::fs::read_to_string(d.join("local.cfg")).unwrap(),
@@ -6939,6 +7376,415 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// The project map is made when the session's first turn begins and
+    /// held: the model's own edits do not change the prompt's prefix.
+    /// Compaction remakes it, and `[map] chars = 0` leaves it out.
+    #[tokio::test]
+    async fn the_project_map_is_made_at_the_first_turn_held_and_remade_on_compaction() {
+        let (_home, cwd, mut agent) = build_agent(vec![say("ok"), say("ok again")]);
+        std::fs::create_dir_all(cwd.path().join("src")).unwrap();
+        std::fs::write(
+            cwd.path().join("src/lib.rs"),
+            "pub fn mapped_fn(a: u32) -> u32 { a }\n",
+        )
+        .unwrap();
+        assert!(!agent.system_prompt().unwrap().contains("## Project map"));
+        agent.turn("hello").await.unwrap();
+        let prompt = agent.system_prompt().unwrap();
+        assert!(prompt.contains("## Project map"), "{prompt}");
+        assert!(
+            prompt.contains("src/ · 1 file\n  lib.rs: pub fn mapped_fn(a: u32) -> u32"),
+            "{prompt}"
+        );
+        // A file made after the first turn is not in the held map.
+        std::fs::write(cwd.path().join("src/later.rs"), "pub fn later() {}\n").unwrap();
+        agent.turn("again").await.unwrap();
+        assert!(!agent.system_prompt().unwrap().contains("later.rs"));
+        agent.compact_now().unwrap();
+        assert!(
+            agent
+                .system_prompt()
+                .unwrap()
+                .contains("later.rs: pub fn later()")
+        );
+        // Switched off in the config.
+        let mut cfg = crate::config::Config::default();
+        cfg.map.chars = 0;
+        agent.cfg = Some(cfg);
+        agent.project_map = None;
+        agent.ensure_project_map();
+        assert!(!agent.system_prompt().unwrap().contains("## Project map"));
+    }
+
+    /// What a session ran and did is noted for the project, and the next
+    /// session is shown it at its first turn: the commands with how they
+    /// came out and how long they took, and the last sessions with what
+    /// they edited. A session is not shown its own note.
+    #[tokio::test]
+    async fn the_next_session_is_shown_what_this_one_ran_and_edited() {
+        let (home, cwd, mut agent) = build_agent(vec![
+            write("notes.txt", "one\n"),
+            call("run_project", serde_json::json!({"action": "test"})),
+            say("done"),
+            say("in the new session"),
+        ]);
+        std::fs::write(cwd.path().join("t.sh"), "exit 1\n").unwrap();
+        let run = crate::run::RunFile {
+            test: vec!["sh t.sh".into()],
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        agent.session.set_title("write the notes").unwrap();
+        agent.turn("write the notes").await.unwrap();
+        // This session's own prompt says nothing of itself.
+        assert!(
+            !agent
+                .system_prompt()
+                .unwrap()
+                .contains("What Ryter has seen")
+        );
+        let seen = crate::observed::load(home.path(), cwd.path());
+        let note = &seen.commands["sh t.sh"];
+        assert_eq!((note.runs, note.failed), (1, 1));
+        assert_eq!(seen.sessions.len(), 1);
+        assert_eq!(seen.sessions[0].title, "write the notes");
+        assert_eq!(seen.sessions[0].edited, vec!["notes.txt"]);
+        assert_eq!(seen.sessions[0].check, Some(false));
+        // A later session in the same project, from the same home.
+        let p = ReplayProvider::scripted(vec![say("hello")]);
+        let mut next = setup_at(p, home.path(), cwd.path());
+        next.turn("hi").await.unwrap();
+        check_shown(&next.system_prompt().unwrap());
+        // The same agent going on in a new session (`/new`): what it held
+        // for the old one goes, and the new one is shown the note.
+        let fresh = Session::create(
+            home.path(),
+            cwd.path(),
+            "spacexsi".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        agent.swap_session(fresh);
+        assert!(agent.session_edits.is_empty() && agent.last_check.is_none());
+        agent.turn("and now").await.unwrap();
+        check_shown(&agent.system_prompt().unwrap());
+    }
+
+    fn check_shown(prompt: &str) {
+        let i = prompt
+            .find("## What Ryter has seen in this project")
+            .expect("the section");
+        let section = &prompt[i..];
+        assert!(
+            section.contains("- `sh t.sh` · 1 run · last failed "),
+            "{section}"
+        );
+        assert!(
+            section.contains("· \"write the notes\" · 1 turn · edited notes.txt · the check was failing at the end"),
+            "{section}"
+        );
+        assert!(!section.contains("and now"), "{section}");
+    }
+
+    /// Through a turn: a rewrite of a file the model has not read is
+    /// refused and the file kept; the user's edit between turns makes the
+    /// next rewrite a refusal too, until the model reads the file again.
+    #[tokio::test]
+    async fn the_model_cannot_rewrite_what_it_has_not_seen_as_it_is() {
+        let (_home, cwd, mut agent) = build_agent(vec![
+            write("README.md", "clobbered\n"),
+            say("first"),
+            vec![
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "r".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "README.md"}).to_string(),
+                },
+                StreamDelta::Done,
+            ],
+            write("README.md", "by the model\n"),
+            say("second"),
+            write("README.md", "clobbered again\n"),
+            say("third"),
+            write("README.md", "after new\n"),
+            say("fourth"),
+        ]);
+        let readme = cwd.path().join("README.md");
+        agent.turn("rewrite the readme").await.unwrap();
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "repo\n");
+        let refusal = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            refusal.contains("README.md exists (1 lines) and you have not read it this session"),
+            "{refusal}"
+        );
+        agent.turn("read it, then rewrite it").await.unwrap();
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "by the model\n");
+        // The user edits it between turns.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&readme, "by the model\nand by me\n").unwrap();
+        agent.turn("rewrite it again").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            "by the model\nand by me\n"
+        );
+        let last = agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            last.contains("README.md changed since you last read it (now 2 lines)"),
+            "{last}"
+        );
+        // A new session in the same project (`/new`) has seen nothing: the
+        // old session's read does not carry over.
+        let fresh = Session::create(
+            _home.path(),
+            cwd.path(),
+            "spacexsi".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        agent.swap_session(fresh);
+        agent.turn("rewrite it after /new").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            "by the model\nand by me\n"
+        );
+        let last = agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(last.contains("you have not read it this session"), "{last}");
+    }
+
+    /// A failing check script, and the files the model writes.
+    fn checked_project(
+        turns: Vec<Vec<StreamDelta>>,
+    ) -> (TempDir, TempDir, Agent, std::path::PathBuf) {
+        let (home, cwd, mut agent) = build_agent(turns);
+        let check = cwd.path().join("check.sh");
+        std::fs::write(
+            &check,
+            "printf 'error: not yet\\n --> src/x.rs:1:1\\n'; exit 1\n",
+        )
+        .unwrap();
+        let run = crate::run::RunFile {
+            check: Some("sh check.sh".into()),
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        seen(&agent, "check.sh");
+        agent.sink = None;
+        (home, cwd, agent, check)
+    }
+
+    fn notices(rx: &std::sync::mpsc::Receiver<AgentEvent>) -> Vec<String> {
+        rx.try_iter()
+            .filter_map(|e| match e {
+                AgentEvent::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Done means checked: the build hat's "done" with the check failing
+    /// is not the end of the turn. The failures go back to it; when its
+    /// next edit makes the check pass, its next "done" ends the turn.
+    #[tokio::test]
+    async fn a_build_turn_does_not_end_on_done_while_the_check_fails() {
+        let (_home, _cwd, mut agent, _check) = checked_project(vec![
+            write("notes.txt", "one\n"),
+            say("done, I think"),
+            write("check.sh", "exit 0\n"),
+            say("done, checked"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.reason, StopReason::Completed);
+        assert_eq!(r.text, "done, checked");
+        let back: Vec<&str> = agent
+            .session
+            .transcript
+            .iter()
+            .filter(|m| m.role == "user" && m.content.starts_with("[Ryter] Not done:"))
+            .map(|m| m.content.as_str())
+            .collect();
+        assert_eq!(back.len(), 1, "{back:?}");
+        assert!(
+            back[0].starts_with(
+                "[Ryter] Not done: `sh check.sh` still fails.\n\n1 error\n\nerror: not yet"
+            ),
+            "{}",
+            back[0]
+        );
+        assert!(
+            back[0].ends_with("starting the line with `Blocked:`, and stop."),
+            "{}",
+            back[0]
+        );
+        let n = notices(&rx);
+        assert!(
+            n.iter()
+                .any(|m| m == "not done: `sh check.sh` still fails · round 1 of 3"),
+            "{n:?}"
+        );
+        assert!(!n.iter().any(|m| m.starts_with("stopped:")), "{n:?}");
+    }
+
+    /// The loop is bounded by `[limits] check_rounds`, says so when it
+    /// gives up, and is off at `0`. A model that says what is in the way
+    /// (`Blocked:`) ends the turn at once. A check whose program is not on
+    /// this machine is not held against the model.
+    #[tokio::test]
+    async fn the_check_loop_is_capped_off_at_zero_and_ended_by_a_blocked_line() {
+        // Capped: three continuations, then the turn ends with the notice.
+        let (_home, _cwd, mut agent, _check) = checked_project(vec![
+            write("notes.txt", "one\n"),
+            say("done 1"),
+            say("done 2"),
+            say("done 3"),
+            say("done 4"),
+            say("never sent"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(
+            (r.reason, r.text.as_str()),
+            (StopReason::Completed, "done 4")
+        );
+        let n = notices(&rx);
+        assert_eq!(
+            n.iter().filter(|m| m.starts_with("not done:")).count(),
+            3,
+            "{n:?}"
+        );
+        assert!(
+            n.iter()
+                .any(|m| m.starts_with("stopped: `sh check.sh` still fails after 3 more rounds.")),
+            "{n:?}"
+        );
+        // Off: the turn ends on the model's word.
+        let (_home, _cwd, mut agent, _check) =
+            checked_project(vec![write("notes.txt", "one\n"), say("done"), say("never")]);
+        agent.cfg.as_mut().unwrap().limits.check_rounds = 0;
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.text, "done");
+        let n = notices(&rx);
+        assert!(
+            !n.iter()
+                .any(|m| m.starts_with("not done:") || m.starts_with("stopped:")),
+            "{n:?}"
+        );
+        // Blocked: said in a line, the turn ends and the chat says so.
+        let (_home, _cwd, mut agent, _check) = checked_project(vec![
+            write("notes.txt", "one\n"),
+            say("I cannot run this.\n\nBlocked: check.sh needs a database that is not here."),
+            say("never"),
+        ]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert!(r.text.starts_with("I cannot run this."));
+        let n = notices(&rx);
+        assert!(
+            n.iter().any(|m| m == "the model says it is blocked, with `sh check.sh` still failing: check.sh needs a database that is not here."),
+            "{n:?}"
+        );
+        assert!(!n.iter().any(|m| m.starts_with("not done:")), "{n:?}");
+        // A check that cannot run here: no loop.
+        let (_home, cwd, mut agent, _check) =
+            checked_project(vec![write("notes.txt", "one\n"), say("done"), say("never")]);
+        std::fs::write(
+            cwd.path().join("check.sh"),
+            "echo 'sh: 1: no-such-checker: not found' >&2; exit 127\n",
+        )
+        .unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        let r = agent.turn("write the notes").await.unwrap();
+        assert_eq!(r.text, "done");
+        assert!(!notices(&rx).iter().any(|m| m.starts_with("not done:")));
+    }
+
+    #[test]
+    fn a_blocked_line_is_found_however_it_is_dressed() {
+        assert_eq!(
+            blocked_line("Blocked: no database here"),
+            Some("no database here")
+        );
+        assert_eq!(
+            blocked_line("Done.\n\n**Blocked:** the port is taken"),
+            Some("the port is taken")
+        );
+        assert_eq!(blocked_line("BLOCKED:  needs root"), Some("needs root"));
+        assert_eq!(blocked_line("nothing blocked here"), None);
+    }
+
+    /// A `run_project test` hands the model the tests that failed, each
+    /// with its assertion, and the runner's totals; not the last lines,
+    /// which carried the names and the totals and not what went wrong.
+    #[tokio::test]
+    async fn a_test_run_reaches_the_model_as_its_failures_not_its_tail() {
+        let (home, cwd, mut agent) = build_agent(vec![
+            call("run_project", serde_json::json!({"action": "test"})),
+            say("done"),
+        ]);
+        let mut script = String::from("printf 'running 81 tests\\n'\n");
+        for i in 0..80 {
+            script.push_str(&format!("printf 'test x_{i} ... ok\\n'\n"));
+        }
+        script.push_str(
+            "printf 'test tests::a ... FAILED\\n\\nfailures:\\n\\n---- tests::a stdout ----\\n'\n\
+             printf \"thread 'tests::a' panicked at src/lib.rs:10:9:\\n\"\n\
+             printf 'assertion `left == right` failed\\n  left: 1\\n right: 2\\n\\n\\nfailures:\\n    tests::a\\n\\n'\n\
+             printf 'test result: FAILED. 80 passed; 1 failed; 0 ignored\\n'\n\
+             exit 101\n",
+        );
+        std::fs::write(cwd.path().join("t.sh"), script).unwrap();
+        let run = crate::run::RunFile {
+            test: vec!["sh t.sh".into()],
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        let r = agent.turn("run the tests").await.unwrap();
+        assert_eq!(r.text, "done");
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool" && m.content.starts_with("$ sh t.sh\n"))
+            .map(|m| m.content.clone())
+            .expect("the tool result");
+        assert!(
+            result.starts_with(
+                "$ sh t.sh\n1 failed\n\n✗ tests::a\nthread 'tests::a' panicked at src/lib.rs:10:9:\n\
+                 assertion `left == right` failed\n  left: 1\n right: 2\n\n\
+                 test result: FAILED. 80 passed; 1 failed; 0 ignored"
+            ),
+            "{result}"
+        );
+        assert!(!result.contains("x_5 ... ok"), "{result}");
     }
 
     /// A `run_project test` that ran nothing, here for want of a run file,
@@ -8417,6 +9263,7 @@ mod tests {
         agent.ctx.sandbox = Some(scope);
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "hello.txt");
         agent.turn("change hello").await.unwrap();
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),

@@ -74,6 +74,7 @@ async fn approved_plan_build_review_test_resume_undo_and_commit_receipt() {
         .map(billed)
         .collect(),
     ));
+    super::seen(&agent, "greeting.txt");
     agent
         .turn("Plan and build the greeting; preserve sibling files.")
         .await

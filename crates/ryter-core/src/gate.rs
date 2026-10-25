@@ -314,6 +314,16 @@ impl Agent {
                      asked for in this conversation."
                 .to_string(),
         };
+        let plan = {
+            let root = self
+                .project_root
+                .clone()
+                .unwrap_or_else(|| self.ctx.workspace.clone());
+            match crate::decisions::choices_pointer(&root) {
+                Some(p) => format!("{plan} {p}"),
+                None => plan,
+            }
+        };
         format!(
             "[Ryter] Audit the uncommitted changes before they are committed: {} file{}, \
              +{} −{}. {plan} Start from `git status --short` and `git diff HEAD`. Run \

@@ -996,10 +996,7 @@ fn session_event(a: &Agent) -> AgentEvent {
 }
 
 fn swap_session(a: &mut Agent, s: Session) {
-    a.session = s;
-    a.seed_prompt_tokens();
-    a.announce_recovery();
-    a.ctx.notes_dir = a.session.notes_dir();
+    a.swap_session(s);
 }
 
 fn enrich(m: &mut ryter_core::ModelInfo, book: &PriceBook) {
@@ -1110,6 +1107,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: ryter_core::tools::Search::from_config(&b.cfg.search),
+            seen: Default::default(),
         },
         connection: b.conn_name,
         model: b.model,
@@ -1129,6 +1127,11 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,
+        project_map: None,
+        observed: None,
+        session_edits: Vec::new(),
+        last_check: None,
+        session_turns: 0,
     }
 }
 

@@ -46,6 +46,24 @@ pub(crate) fn bash_as_root(
     Ok(out)
 }
 
+/// A failed test run too long to be kept whole is cut to its head and
+/// tail (`cap_output`), and its failures sat in the middle: the model saw
+/// the totals and had to run one test again to read the assertion. Such an
+/// output leads with its failures, digested (`failures::digest`); one that
+/// fits is left as the command printed it.
+fn with_failures_first(text: String) -> String {
+    if text.len() <= super::MAX_TOOL_OUTPUT_BYTES {
+        return text;
+    }
+    match crate::failures::digest(&text).filter(|d| !d.failures.is_empty()) {
+        Some(d) => format!(
+            "{}\n\n--- the output, cut to its head and tail ---\n{text}",
+            d.text()
+        ),
+        None => text,
+    }
+}
+
 fn run_bash(args: &Value, ctx: &ToolContext, env: &[(String, String)]) -> Result<ToolOutput> {
     let cmd = args
         .get("command")
@@ -62,7 +80,7 @@ fn run_bash(args: &Value, ctx: &ToolContext, env: &[(String, String)]) -> Result
             env,
         )? {
             Run::Ok(text) => ToolOutput::ok(text),
-            Run::Failed(text) => ToolOutput::err(text),
+            Run::Failed(text) => ToolOutput::err(with_failures_first(text)),
             Run::Cancelled => ToolOutput::err("cancelled"),
             // "Pass a larger timeout" alone sent models back with the same
             // interactive command and a ten-minute wait.
@@ -447,9 +465,15 @@ impl Drain {
     }
 }
 
+/// How much of a command's output is kept while it runs, head and tail. A
+/// tool result is cut to `MAX_TOOL_OUTPUT_BYTES` afterwards; this is larger
+/// so that the failures digest reads a test run whole, failures in the
+/// middle included, before that cut.
+pub(crate) const CAPTURE_BYTES: usize = 1 << 20;
+
 fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
     let buf = std::sync::Arc::new(std::sync::Mutex::new(super::bounded::Capture::new(
-        super::MAX_TOOL_OUTPUT_BYTES,
+        CAPTURE_BYTES,
     )));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopped = stop.clone();
@@ -495,6 +519,68 @@ pub(crate) fn group_alive(pgid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Through a real command: a test run longer than a tool result may
+    /// be, its one failure in the middle, is captured whole and the digest
+    /// leads with that failure.
+    #[test]
+    fn a_long_real_test_run_keeps_its_failure_in_the_middle() {
+        let (r, _) = run(
+            "i=0; while [ $i -lt 2500 ]; do echo \"test x_$i ... ok\"; i=$((i+1)); done; \
+             printf 'failures:\\n\\n---- tests::a stdout ----\\n'; \
+             printf \"thread 'tests::a' panicked at src/lib.rs:1:1:\\nno\\n\\n\"; \
+             i=0; while [ $i -lt 2500 ]; do echo \"test y_$i ... ok\"; i=$((i+1)); done; \
+             echo 'test result: FAILED. 5000 passed; 1 failed; 0 ignored'; exit 101",
+            60,
+        );
+        let Run::Failed(text) = r else {
+            panic!("{r:?}");
+        };
+        assert!(
+            text.len() > super::super::MAX_TOOL_OUTPUT_BYTES,
+            "{}",
+            text.len()
+        );
+        assert!(
+            text.contains("panicked at src/lib.rs:1:1"),
+            "the capture dropped the failure"
+        );
+        let led = with_failures_first(text);
+        assert!(
+            led.starts_with(
+                "1 failed\n\n✗ tests::a\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n"
+            ),
+            "{}",
+            &led[..200]
+        );
+    }
+
+    /// A failed test run too long to keep whole leads with its failures,
+    /// which the cut to head and tail would have dropped; one that fits is
+    /// left as printed.
+    #[test]
+    fn a_cut_test_output_leads_with_its_failures() {
+        let noise: String = (0..3000).map(|i| format!("test x_{i} ... ok\n")).collect();
+        let long = format!(
+            "{noise}failures:\n\n---- tests::a stdout ----\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n\n{noise}\
+             test result: FAILED. 6000 passed; 1 failed; 0 ignored\n[exit 101]"
+        );
+        assert!(long.len() > super::super::MAX_TOOL_OUTPUT_BYTES);
+        let led = with_failures_first(long.clone());
+        assert!(
+            led.starts_with(
+                "1 failed\n\n✗ tests::a\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n\n\
+                 test result: FAILED. 6000 passed; 1 failed; 0 ignored\n\n\
+                 --- the output, cut to its head and tail ---\ntest x_0 ... ok"
+            ),
+            "{}",
+            &led[..300]
+        );
+        let short = "---- tests::a stdout ----\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n[exit 101]".to_string();
+        assert_eq!(with_failures_first(short.clone()), short);
+        let plain: String = (0..3000).map(|i| format!("line {i}\n")).collect();
+        assert_eq!(with_failures_first(plain.clone()), plain);
+    }
 
     /// `cd -` goes to `OLDPWD`, which was the folder the user's shell was
     /// in before Ryter started: outside the project, where the gate had
@@ -547,6 +633,7 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {
@@ -659,12 +746,12 @@ mod tests {
 
     #[test]
     fn large_output_does_not_block() {
-        let (r, took) = run("head -c 1000000 /dev/zero | tr '\\0' x", 20);
+        let (r, took) = run("head -c 3000000 /dev/zero | tr '\\0' x", 20);
         assert!(took < Duration::from_secs(5), "took {took:?}");
         match r {
             Run::Ok(text) => {
-                assert!(text.len() < super::super::MAX_TOOL_OUTPUT_BYTES + 128);
-                assert!(text.contains("968000 bytes elided"));
+                assert!(text.len() < CAPTURE_BYTES + 128);
+                assert!(text.contains("1951424 bytes elided"));
                 assert!(text.starts_with('x') && text.ends_with('x'));
             }
             other => panic!("{other:?}"),

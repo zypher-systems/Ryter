@@ -14,6 +14,52 @@ use crate::tools::{ToolContext, ToolOutput};
 const DEFAULT_LINE_LIMIT: usize = 2_000;
 const MAX_EDIT_BYTES: usize = 2_000_000;
 
+/// A file as the model last saw it: its size and modification time. Not
+/// its content, which would mean reading every file twice; a change that
+/// keeps both is one no edit here makes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Seen {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl Seen {
+    /// `path` as it is now; `None` when it is gone.
+    pub fn of(path: &std::path::Path) -> Option<Seen> {
+        fs::metadata(path).ok().map(|m| Seen {
+            len: m.len(),
+            modified: m.modified().ok(),
+        })
+    }
+}
+
+fn stamp(path: &std::path::Path) -> Option<Seen> {
+    Seen::of(path)
+}
+
+/// The model has seen `path` as it is now: after a read, or an edit of
+/// its own.
+fn note_seen(ctx: &ToolContext, path: &std::path::Path) {
+    if let Some(seen) = stamp(path) {
+        ctx.seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(path.to_path_buf(), seen);
+    }
+}
+
+/// Whether the model has seen `path` as it is now: `Some(true)` seen and
+/// unchanged since, `Some(false)` seen but changed since, `None` never
+/// seen this session (or the file is gone).
+fn seen_current(ctx: &ToolContext, path: &std::path::Path) -> Option<bool> {
+    let now = stamp(path)?;
+    ctx.seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(path)
+        .map(|then| *then == now)
+}
+
 fn edit_text(path: &std::path::Path) -> Result<Option<String>> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
@@ -89,11 +135,16 @@ pub fn read_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         }
     }
     if number <= offset && number > 0 {
-        out = format!(
+        // None of the file came back: not a read, for the rewrite guard.
+        return Ok(ToolOutput::err(format!(
             "offset {} is past the end of the file ({number} lines)",
             offset.saturating_add(1)
-        );
-    } else if !reader
+        )));
+    }
+    // Seen as it is now, once some of it has been returned (a file with no
+    // lines included); a read that erred or was cancelled has returned.
+    note_seen(ctx, &path);
+    if !reader
         .fill_buf()
         .map_err(|e| Error::Config(e.to_string()))?
         .is_empty()
@@ -118,6 +169,30 @@ pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
         ));
     }
     let old = edit_text(&path)?;
+    // A rewrite of a file the model has not seen as it is now would lose
+    // what it has not read: the user's edit, a formatter's, a file it
+    // never looked at. Read first; the rule the prompt states, held here.
+    if old.is_some() {
+        let lines = old.as_deref().map_or(0, |t| t.lines().count());
+        match seen_current(ctx, &path) {
+            Some(true) => {}
+            Some(false) => {
+                return Ok(ToolOutput::err(format!(
+                    "{} changed since you last read it (now {lines} lines): a command, a \
+                     formatter or the user. Read it again before rewriting it, so what \
+                     changed is not lost.",
+                    shown(&path, ctx)
+                )));
+            }
+            None => {
+                return Ok(ToolOutput::err(format!(
+                    "{} exists ({lines} lines) and you have not read it this session. Read \
+                     it before rewriting it, or change it with search_replace.",
+                    shown(&path, ctx)
+                )));
+            }
+        }
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| Error::Config(e.to_string()))?;
     }
@@ -127,6 +202,8 @@ pub fn write_file(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let mut f = fs::File::create(&path).map_err(|e| Error::Config(e.to_string()))?;
     f.write_all(content.as_bytes())
         .map_err(|e| Error::Config(e.to_string()))?;
+    drop(f);
+    note_seen(ctx, &path);
     let lines = content.lines().count();
     let diff = FileDiff::new(shown(&path, ctx), old.as_deref(), content);
     Ok(ToolOutput::ok(match before {
@@ -180,6 +257,14 @@ pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     let (old, new) = (old.as_str(), new.as_str());
     let count = text.matches(old).count();
     if count == 0 {
+        // Seen, but not as it is now: say so, instead of "may have changed".
+        if seen_current(ctx, &path) == Some(false) {
+            return Ok(ToolOutput::err(format!(
+                "old_string not found: {} changed since you last read it (a command, a \
+                 formatter or the user). Read it again and quote the current lines exactly.",
+                shown(&path, ctx)
+            )));
+        }
         return Ok(ToolOutput::err(not_found(&text, old)));
     }
     if count > 1 {
@@ -196,6 +281,7 @@ pub fn search_replace(args: &Value, ctx: &ToolContext) -> Result<ToolOutput> {
     }
     let updated = text.replacen(old, new, 1);
     fs::write(&path, &updated).map_err(|e| Error::Config(e.to_string()))?;
+    note_seen(ctx, &path);
     let (removed, added) = changed_lines(old, new);
     let diff = FileDiff::new(shown(&path, ctx), Some(&text), &updated);
     Ok(ToolOutput::ok(format!(

@@ -25,7 +25,7 @@ pub(super) fn is_dotenv(path: &Path) -> bool {
 }
 
 /// Classify a workspace-relative path (or an absolute path outside it).
-pub(super) fn is_secret(path: &Path) -> bool {
+pub(crate) fn is_secret(path: &Path) -> bool {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())

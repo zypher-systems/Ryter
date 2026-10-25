@@ -5,6 +5,12 @@
 //! followed as written, the difference and its reason are recorded here,
 //! under the plan they belong to. A review reads them, so a difference that
 //! was decided is not reported as a defect.
+//!
+//! The choices made in the work are recorded here too, under `## work`: a
+//! library, a data model, a structure, a workaround, picked among others,
+//! with the reason. They used to live in the chat alone, so the next
+//! session, or the next hat, did not know them and redid or undid them.
+//! Every hat is shown the file at the start of a session.
 
 use std::path::{Path, PathBuf};
 
@@ -17,8 +23,15 @@ pub const FILE: &str = ".ryter/decisions.md";
 const MAX_LINE: usize = 400;
 
 const HEADER: &str = "# Decisions\n\n\
-Where the work differs from a plan you approved, and why. Ryter adds an entry \
-when that is decided, and a review reads them. Remove an entry you don't agree with.\n";
+Where the work differs from a plan you approved, and the choices made in the work, \
+each with its reason. Ryter adds an entry when one is decided; every hat reads them at \
+the start of a session, and an audit reads them. Remove an entry you don't agree with.\n";
+
+/// The heading the work's own choices are filed under.
+pub const WORK: &str = "## work";
+
+/// The most of the file a prompt carries.
+pub const SHOWN_CHARS: usize = 6_000;
 
 /// One difference from the plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,10 +70,28 @@ fn heading(plan_file: &str) -> String {
     format!("## plan: {}", plan_name(plan_file))
 }
 
+/// A choice made in the work, filed under [`WORK`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    /// A few words: what was decided.
+    pub title: String,
+    /// What was chosen, and over what.
+    pub chose: String,
+    /// The reason.
+    pub why: String,
+    /// Who decided: `you`, or the hat and its model.
+    pub by: String,
+}
+
 /// The lines of `text` that are the section for `plan_file`: the index after
 /// its heading, and the index of the next plan's heading (or the end).
 fn section(lines: &[&str], plan_file: &str) -> Option<(usize, usize)> {
-    let head = heading(plan_file);
+    section_under(lines, &heading(plan_file))
+}
+
+/// The lines of `text` under `head`: the index after it, and the index of
+/// the next `## ` heading (or the end).
+fn section_under(lines: &[&str], head: &str) -> Option<(usize, usize)> {
     let start = lines.iter().position(|l| l.trim_end() == head)? + 1;
     let end = lines[start..]
         .iter()
@@ -86,10 +117,14 @@ pub fn record_at(root: &Path, plan_file: &str, entry: &Entry, stamp: &str) -> Re
         format!("- Why: {}", line(&entry.why)),
         format!("- Decided by: {} · {stamp}", line(&entry.by)),
     ];
+    crate::plan::write_own(root, FILE, &with_entry(&old, &heading(plan_file), &block))
+}
+
+/// `old` with `block` added at the end of the section under `head`, which
+/// is made at the end of the file if it isn't there yet.
+fn with_entry(old: &str, head: &str, block: &[String]) -> String {
     let lines: Vec<&str> = old.lines().collect();
-    // Where the entry goes: the end of this plan's section, which is made
-    // at the end of the file if it isn't there yet.
-    let (mut before, after): (Vec<String>, Vec<String>) = match section(&lines, plan_file) {
+    let (mut before, after): (Vec<String>, Vec<String>) = match section_under(&lines, head) {
         Some((_, end)) => (
             lines[..end].iter().map(|l| l.to_string()).collect(),
             lines[end..].iter().map(|l| l.to_string()).collect(),
@@ -100,7 +135,7 @@ pub fn record_at(root: &Path, plan_file: &str, entry: &Entry, stamp: &str) -> Re
                 b.pop();
             }
             b.push(String::new());
-            b.push(heading(plan_file));
+            b.push(head.to_string());
             (b, Vec::new())
         }
     };
@@ -108,14 +143,102 @@ pub fn record_at(root: &Path, plan_file: &str, entry: &Entry, stamp: &str) -> Re
         before.pop();
     }
     before.push(String::new());
-    before.extend(block);
+    before.extend(block.iter().cloned());
     if !after.is_empty() {
         before.push(String::new());
         before.extend(after);
     }
     let mut text = before.join("\n");
     text.push('\n');
-    crate::plan::write_own(root, FILE, &text)
+    text
+}
+
+/// Record a choice made in the work under [`WORK`], at `stamp`.
+pub fn record_choice_at(root: &Path, choice: &Choice, stamp: &str) -> Result<PathBuf> {
+    let path = root.join(FILE);
+    let io = |e: std::io::Error| Error::Io(format!("{}: {e}", path.display()));
+    let old = match crate::plan::read_own(root, FILE) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => HEADER.to_string(),
+        Err(e) => return Err(io(e)),
+    };
+    let block = [
+        format!("### {}", line(&choice.title)),
+        format!("- Chose: {}", line(&choice.chose)),
+        format!("- Why: {}", line(&choice.why)),
+        format!("- Decided by: {} · {stamp}", line(&choice.by)),
+    ];
+    crate::plan::write_own(root, FILE, &with_entry(&old, WORK, &block))
+}
+
+/// [`record_choice_at`] now, in local time.
+pub fn record_choice(root: &Path, choice: &Choice) -> Result<PathBuf> {
+    record_choice_at(root, choice, &crate::clock::stamp())
+}
+
+/// How many choices are recorded under [`WORK`].
+pub fn count_choices(root: &Path) -> usize {
+    let Ok(text) = crate::plan::read_own(root, FILE) else {
+        return 0;
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    section_under(&lines, WORK).map_or(0, |(start, end)| {
+        lines[start..end]
+            .iter()
+            .filter(|l| l.starts_with("### "))
+            .count()
+    })
+}
+
+/// The file as a prompt carries it: whole when it fits `cap`, otherwise its
+/// newest `cap` characters from an entry's start, with a line saying so.
+/// `None` when there is no entry to show.
+pub fn shown(root: &Path, cap: usize) -> Option<String> {
+    let text = crate::plan::read_own(root, FILE).ok()?;
+    if !text.contains("\n### ") {
+        return None;
+    }
+    // From the first section on: the file's own title and the line under
+    // it say what the prompt's introduction says.
+    let text = text
+        .find("\n## ")
+        .map_or(text.as_str(), |i| &text[i + 1..])
+        .trim_end();
+    Some(newest(text, cap))
+}
+
+/// `text` whole when it fits `cap`, otherwise its newest `cap` bytes from
+/// an entry's start, with a line saying so. The cut is moved onto a
+/// character boundary: the file is Unicode (every entry has a `·`, and the
+/// user writes what they like), and a byte index inside a character is a
+/// panic, on every turn, until the file is edited by hand.
+fn newest(text: &str, cap: usize) -> String {
+    if text.len() <= cap {
+        return text.to_string();
+    }
+    let mut cut = text.len() - cap;
+    while !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let tail = &text[cut..];
+    let from = tail.find("\n### ").map_or(0, |i| i + 1);
+    format!(
+        "…(earlier entries left out; the whole file is `{FILE}`)\n\n{}",
+        tail[from..].trim_end()
+    )
+}
+
+/// What a reader of the work is told about the choices made in it:
+/// nothing when there are none.
+pub fn choices_pointer(root: &Path) -> Option<String> {
+    let n = count_choices(root);
+    (n > 0).then(|| {
+        format!(
+            "The choices made in the work ({n}) are under `{WORK}` in `{FILE}`, each with \
+             its reason: a choice recorded there was decided, and is not a finding unless \
+             its reason is wrong or it breaks something."
+        )
+    })
 }
 
 /// [`record_at`] now, in local time.
@@ -277,6 +400,91 @@ mod tests {
             why.ends_with('…') && why.chars().count() <= 7 + MAX_LINE,
             "{why}"
         );
+    }
+
+    #[test]
+    fn a_choice_is_filed_under_work_beside_the_plans_entries() {
+        let root = TempDir::new().unwrap();
+        let choice = Choice {
+            title: "SQLite through better-sqlite3".into(),
+            chose: "better-sqlite3 over an ORM".into(),
+            why: "one file, synchronous, nothing to configure".into(),
+            by: "build hat (grok-4.6)".into(),
+        };
+        record_choice_at(root.path(), &choice, "2026-10-01 14:30").unwrap();
+        record_at(
+            root.path(),
+            CMS,
+            &entry("No export button"),
+            "2026-10-01 14:40",
+        )
+        .unwrap();
+        let second = Choice {
+            title: "Dates as ISO strings".into(),
+            chose: "ISO-8601 text columns over epoch integers".into(),
+            why: "readable in the database and sorted by the collation".into(),
+            by: "you".into(),
+        };
+        record_choice_at(root.path(), &second, "2026-10-01 14:50").unwrap();
+        let text = std::fs::read_to_string(root.path().join(FILE)).unwrap();
+        assert!(
+            text.starts_with("# Decisions\n\nWhere the work differs"),
+            "{text}"
+        );
+        let work = text.find("## work").unwrap();
+        let plan = text.find("## plan: 2026-10-01-cms.md").unwrap();
+        assert!(work < plan, "{text}");
+        assert!(
+            text[work..plan].contains(
+                "### SQLite through better-sqlite3\n- Chose: better-sqlite3 over an ORM\n\
+                 - Why: one file, synchronous, nothing to configure\n\
+                 - Decided by: build hat (grok-4.6) · 2026-10-01 14:30\n\n\
+                 ### Dates as ISO strings\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(count_choices(root.path()), 2);
+        assert_eq!(count_for(root.path(), CMS), 1);
+        assert!(
+            choices_pointer(root.path())
+                .unwrap()
+                .starts_with("The choices made in the work (2)")
+        );
+        assert_eq!(choices_pointer(TempDir::new().unwrap().path()), None);
+        // Shown whole when it fits, newest entries when it does not.
+        let whole = shown(root.path(), 10_000).unwrap();
+        assert!(whole.starts_with("## work\n\n### SQLite"), "{whole}");
+        assert!(
+            whole.ends_with("- Decided by: you · 2026-10-01 14:40"),
+            "{whole}"
+        );
+        let cut = shown(root.path(), 260).unwrap();
+        assert!(cut.starts_with("…(earlier entries left out"), "{cut}");
+        assert!(cut.contains("### No export button"), "{cut}");
+        assert!(!cut.contains("SQLite"), "{cut}");
+        assert_eq!(shown(TempDir::new().unwrap().path(), 10_000), None);
+    }
+
+    /// The cut of a long file can land inside a character (`·`, `é`): it is
+    /// moved onto a boundary instead of panicking in the prompt.
+    #[test]
+    fn a_cut_inside_a_character_does_not_panic() {
+        let text = format!(
+            "## work\n\n### première\n- Chose: {}\n\n### b\n- Why: fin · 2026-10-25 02:26",
+            "é".repeat(40)
+        );
+        // Every cut, boundary or not: no panic, the end kept, the marker on.
+        for cut in 1..text.len() {
+            let shown = newest(&text, text.len() - cut);
+            assert!(shown.starts_with("…(earlier entries left out"), "{shown}");
+            let kept = shown.rsplit("\n\n").next().unwrap();
+            assert!(text.ends_with(kept), "{shown}");
+        }
+        let i = text.find('é').unwrap() + 1;
+        assert!(!text.is_char_boundary(i));
+        let shown = newest(&text, text.len() - i);
+        assert!(shown.contains("### b"), "{shown}");
+        assert_eq!(newest(&text, text.len()), text);
     }
 
     #[test]
