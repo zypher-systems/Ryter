@@ -553,6 +553,17 @@ fn strip_positional_paths(
             previous = None;
             continue;
         }
+        // A word the shell expands (`${DIR:-tests}`, `"$DIR"`, `$(…)`,
+        // `{a,b}`, `~`) is a test path Ryter can't see: kept, it widens the
+        // run beyond the files.
+        if expands(&word.raw) || w.starts_with('~') {
+            return Err(format!(
+                "`{}` in the command is expanded by the shell into tests of its own, which a \
+                 file list can't take out; write it out in the run file, or run the runner \
+                 with bash",
+                word.raw
+            ));
+        }
         if root.join(w).is_dir() {
             // After a flag Ryter does not know, a folder may be the flag's
             // value (`--html reports`) or a test path: dropping it either
@@ -831,6 +842,12 @@ fn substitution(chars: &mut Peekable<CharIndices>, c: char, word: &mut String) -
     };
     let mut depth = 1;
     while let Some((_, c)) = chars.next() {
+        // A substitution inside this one ends on its own mark, so its
+        // closer can't end this one: `${X:-$(echo a} b)}` is one word.
+        if c == '$' || (c == '`' && open != '`') {
+            substitution(chars, c, word)?;
+            continue;
+        }
         word.push(c);
         match c {
             '\\' => word.push(chars.next()?.1),
@@ -843,6 +860,10 @@ fn substitution(chars: &mut Peekable<CharIndices>, c: char, word: &mut String) -
             },
             '"' if open != '`' => loop {
                 let (_, c) = chars.next()?;
+                if c == '$' || c == '`' {
+                    substitution(chars, c, word)?;
+                    continue;
+                }
                 word.push(c);
                 match c {
                     '\\' => word.push(chars.next()?.1),
@@ -861,6 +882,12 @@ fn substitution(chars: &mut Peekable<CharIndices>, c: char, word: &mut String) -
         }
     }
     None
+}
+
+/// Whether a word as written is expanded by the shell before the program
+/// sees it: a `$…`, a `` `…` `` or a `{a,b}`.
+fn expands(raw: &str) -> bool {
+    raw.contains(['$', '`', '{'])
 }
 
 /// Words back into one command line, each as it was written.
@@ -1207,8 +1234,18 @@ fn go(
             continue;
         }
         // Every other word names packages (`./...`, `all`, `...`, a
-        // directory, an import path); the files' own take their place.
+        // directory, an import path); the files' own take their place. One
+        // the shell expands (`${FLAGS:--race}`, `$(…)`, `{a,b}`) may be
+        // flags as well as packages: it can't be dropped, nor kept.
         if !dirs.is_empty() {
+            if expands(&word.raw) {
+                return Err(format!(
+                    "`{}` in the command is expanded by the shell, so Ryter can't tell its \
+                     flags from its packages; write it out in the run file, or run the \
+                     runner with bash",
+                    word.raw
+                ));
+            }
             continue;
         }
         out.push(word.clone());
@@ -2202,13 +2239,119 @@ mod tests {
         ));
         assert_eq!(n.cmd, "go test -run 'Test$' ./pkg");
         // An unclosed substitution is said, like an unclosed quote.
-        for cmd in ["go test -tags $(cat ./...", "go test -tags `cat ./..."] {
+        for cmd in [
+            "go test -tags $(cat ./...",
+            "go test -tags `cat ./...",
+            "go test -skip ${SKIP:-$(echo Test} ./...",
+        ] {
             let why = cannot(narrow(cmd, None, &strings(&["pkg/a.go"]), root.path()));
             assert!(
                 why.contains("unclosed quote or substitution"),
                 "{cmd}: {why}"
             );
         }
+        // A substitution inside another ends on its own mark.
+        for (cmd, want) in [
+            (
+                "go test -skip ${SKIP:-$(echo Test} More)} ./...",
+                "go test -skip ${SKIP:-$(echo Test} More)} ./pkg",
+            ),
+            (
+                "go test -tags \"$(echo \"${X:-a b}\")\" ./...",
+                "go test -tags \"$(echo \"${X:-a b}\")\" ./pkg",
+            ),
+            (
+                "go test -tags `echo $(echo a b)` ./...",
+                "go test -tags `echo $(echo a b)` ./pkg",
+            ),
+            (
+                "go test -count $((1+2)) ./...",
+                "go test -count $((1+2)) ./pkg",
+            ),
+            (
+                "go test -count $((${X:-1}+2)) ./...",
+                "go test -count $((${X:-1}+2)) ./pkg",
+            ),
+        ] {
+            assert_eq!(run(cmd, &["pkg/a.go"]), want, "{cmd}");
+        }
+    }
+
+    #[test]
+    fn a_positional_word_the_shell_expands_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                ("pkg/a.go", ""),
+                ("go.mod", ""),
+                ("pkg/mod.py", ""),
+                ("pkg/test_mod.py", ""),
+                ("tests/test_mod.py", ""),
+                ("tests/test_other.py", ""),
+                ("src/sum.ts", ""),
+                ("src/sum.test.ts", ""),
+            ],
+        );
+        // A test path Ryter can't see would widen the files' run.
+        for cmd in [
+            "pytest ${TEST_DIR:-tests}",
+            "pytest \"$DIR\"",
+            "pytest $(echo tests)",
+            "pytest `echo tests`",
+            "pytest {tests,other}",
+            "pytest ~",
+        ] {
+            let why = cannot(narrow(cmd, None, &strings(&["pkg/mod.py"]), root.path()));
+            assert!(why.contains("expanded by the shell"), "{cmd}: {why}");
+        }
+        let why = cannot(narrow(
+            "npx vitest run ${DIR:-src}",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert!(why.contains("expanded by the shell"), "{why}");
+        // A Go word that may be flags as well as packages can't be dropped.
+        for cmd in [
+            "go test ${FLAGS:--race} ./...",
+            "go test $(echo -race) ./...",
+            "go test $(echo -race -count=1) ./...",
+            "go test {-race,-count=1} ./...",
+        ] {
+            let why = cannot(narrow(cmd, None, &strings(&["pkg/a.go"]), root.path()));
+            assert!(why.contains("expanded by the shell"), "{cmd}: {why}");
+        }
+        // A filter alone keeps every word as written; a flag's value is a
+        // value; a literal folder still gives way.
+        let n = narrowed(narrow(
+            "go test ${FLAGS:--race} ./...",
+            Some("TestX"),
+            &[],
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "go test ${FLAGS:--race} ./... -run TestX");
+        let n = narrowed(narrow(
+            "pytest ${TEST_DIR:-tests}",
+            Some("x"),
+            &[],
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest ${TEST_DIR:-tests} -k x");
+        let n = narrowed(narrow(
+            "go test -tags ${TAGS:-a b} ./...",
+            None,
+            &strings(&["pkg/a.go"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "go test -tags ${TAGS:-a b} ./pkg");
+        let n = narrowed(narrow(
+            "pytest -k \"$NAME\" tests",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest -k \"$NAME\" pkg/test_mod.py");
     }
 
     #[test]
