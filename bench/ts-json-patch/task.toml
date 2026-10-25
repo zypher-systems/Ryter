@@ -1,0 +1,41 @@
+title = "Make the JSON Patch apply every operation, atomically, with escapes and errors that say which"
+level = "hard"
+brief = """
+A small TypeScript library, run by Node itself (`node --test`; no build step
+and no packages; imports name the `.ts` file). `src/patch.ts` has `resolve`
+(a JSON Pointer lookup that knows no escapes) and `applyPatch`, which changes
+the document it is given, knows `add`, `remove` and `replace` only, and
+cannot append to an array. Make them RFC 6901 and RFC 6902:
+
+- A pointer is `""` (the whole document) or starts with `/`; its tokens are
+  split on `/`, then `~1` becomes `/` and `~0` becomes `~`, in that order.
+  Anything else is `invalid pointer: abc`. In an array a token is a decimal
+  index; `-` is one past the end, for `add` only.
+- `applyPatch(doc, ops)` returns a new document and never changes `doc`,
+  even when an operation fails: then it throws and `doc` is as it was.
+  Operations apply in order, each seeing the previous ones' result.
+  - `add`: sets an object member, or inserts into an array at the index
+    (shifting what follows) or at `-` (appending). With path `""` it replaces
+    the whole document.
+  - `remove`, `replace`: the path must exist (`replace` of `""` replaces the
+    whole document).
+  - `move`: removes `from` and adds it at `path`; `copy`: adds a deep copy of
+    `from` at `path`, so later changes to one do not show in the other.
+  - `test`: `value` must deeply equal what is at `path`: objects by members
+    whatever their order, arrays in order, numbers by value.
+- Errors are `PatchError` with `message` and `index` (the operation's index
+  in `ops`), messages exactly: `path not found: /a/b` (a missing member, a
+  missing array index, or a `from` that does not exist); `index out of
+  range: /arr/5` (an array index beyond the end, or `-` outside `add`, or a
+  token that is not an index); `test failed at /a`; `cannot move into own
+  child: /a -> /a/b`; `unknown op: foo`; `missing value in add` (also for
+  `replace` and `test`); `missing from in move` (also for `copy`);
+  `invalid pointer: abc`. `resolve` throws the same with index `-1`.
+
+Done when `node --test test/basic.test.ts` passes.
+"""
+files = ["src/patch.ts"]
+checks = ["node --test test/basic.test.ts"]
+accept = ["node --test test/hidden.test.ts"]
+# Whether this Node runs TypeScript as it is: one of the fixture's own modules.
+needs = ["node repo/src/patch.ts"]

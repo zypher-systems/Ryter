@@ -1,0 +1,37 @@
+title = "Make the glob matcher know segments, `**`, classes, escapes and options"
+level = "hard"
+brief = """
+`globlite` matches paths against glob patterns. Today `*` swallows `/`, `?`
+is any character, `[` is a literal, there is no `**`, no escaping, and the
+`Options` do nothing. Make `Pattern` a real matcher of whole paths:
+
+- `*` matches any run of characters within one path segment (no `/`), the
+  empty run included; `?` matches exactly one character that is not `/`.
+- `**` standing alone as a segment matches zero or more whole segments:
+  `a/**/b` matches `a/b`, `a/x/b` and `a/x/y/b`; `**/b` matches `b` and
+  `x/y/b`; `a/**` matches `a` and everything under it; `**` alone matches
+  everything. A `**` with other characters in its segment is an ordinary `*`
+  (`a**b` is `a*b`).
+- `[abc]` matches one of the characters, `[a-z]` a range, and `!` or `^`
+  first negates the class. A `]` right after the opening (or after the
+  negation) is a literal, as is a `-` first or last. A class never matches
+  `/`. A class with no closing `]` is `Error::UnterminatedClass { position }`,
+  `position` the index of its `[`.
+- `\\` makes the next character literal (`\\*` is a star). A pattern ending in
+  `\\` is `Error::TrailingEscape { position }`, `position` the index of the
+  `\\`.
+- `Options::case_insensitive`: ASCII letters match either case, in literals
+  and in classes (`[a-c]` also matches `B`).
+- `Options::require_literal_leading_dot`: `*`, `?`, a class and the segments
+  `**` skips do not match a segment that starts with `.`; a literal `.` in the
+  pattern does (`.*` matches `.git`; `*` does not).
+- `Pattern::new(text)` is `with_options(text, Options::default())`;
+  `as_str()` is the pattern as given. Errors come from construction, never
+  from matching.
+
+Done when `cargo test -q --test basic` passes.
+"""
+files = ["src/lib.rs"]
+checks = ["cargo test -q --test basic"]
+accept = ["cargo test -q --test hidden"]
+needs = ["cargo --version"]

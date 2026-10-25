@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-25 — Ten hard bench tasks
+
+Four hard tasks could only move the solve rate in steps of twenty-five points, so one flaky task read as a regression and one fix as a leap. The user asked whether the plan was to extend them to ten, matching the standard level; it was, and six were written: two per language the bench has. `config-interpolation` (reference scope, `$$`, cycle and unknown-key messages), `rate-limiter` (continuous refill, exactly enough is enough, retry-after rounded up to the millisecond, idle keys forgotten least-recently-used first), `rust-lru-ttl` (expiry at the boundary, `get` refreshing recency but not the TTL, expired entries evicted before the least recent, capacity zero), `rust-glob` (`*` within a segment, `**` as a whole segment, classes with literal `]` and `-`, escapes with error positions, case folding, the literal-leading-dot rule as the `glob` crate has it, applied to `**` too), `ts-json-patch` (pointer escapes in order, every operation, atomic and never touching the input, errors carrying the operation's index), `ts-cron` (steps over ranges and from a value, names in ranges, 7 as Sunday, the either-day rule when both day fields are restricted, the next run in UTC, five years as the horizon).
+
+Each follows the hard level's rule: the brief states the rules, the visible tests check the shape, and the hidden tests check the rules. Writing the references caught three wrong expectations of mine (a bare `**`, `a/**` under the dot rule, which the brief's own words settle against gitignore's habit, and a top-level JSON Pointer's parent), which is the point of proving every reference before a model sees the task. Still coarse: ten points a step. The number that moves meaningfully is cost per solved task, with repeat runs for the rate; the ten make the two levels comparable and the hard level worth a live run.
+
 ### 2026-10-25 — The edited files' tests run first
 
 A bare `test` call in the build hat, with files edited this session, now runs those files' own tests first (the same narrowing `files` does) and the whole suite only once they pass. A failure among them comes back in seconds, under the names the model just touched, and the whole suite is not run: the call says so in its last line. If they pass, the whole run follows in the same call and is the one that counts, so a green result still means the suite is green and done-means-checked reads it as before.

@@ -88,6 +88,12 @@ as `cargo --version`.
 | `migrate-dependencies` | hard | Python | dependency order with a stable tie-break, cycle reporting, a run that survives a failure, atomic state |
 | `rust-csv-borrow` | hard | Rust | a quoted-field CSV reader whose fields borrow from the input unless they must not |
 | `ts-debounce` | hard | TypeScript | debounce with leading, trailing and maxWait against an injected clock, and throttle on it |
+| `config-interpolation` | hard | Python | `${key}` references in config values with section scope, escapes, and cycle and unknown-key reports |
+| `rate-limiter` | hard | Python | a token bucket with continuous refill, retry-after rounded to the millisecond, and least-recently-used keys forgotten |
+| `rust-lru-ttl` | hard | Rust | an LRU cache with expiry against an injected clock: boundaries, recency, eviction order, capacity zero |
+| `rust-glob` | hard | Rust | a glob matcher with segments, `**`, classes, escapes, error positions and case and leading-dot options |
+| `ts-json-patch` | hard | TypeScript | JSON Pointer escapes and every JSON Patch operation, atomic, with errors that say which operation |
+| `ts-cron` | hard | TypeScript | a cron parser with steps, names and both day fields, and the next run in UTC |
 
 A task's level is `level` in its `task.toml`; a task that says none is
 standard. `--level standard` or `--level hard` picks one level on either
@@ -97,8 +103,12 @@ visible tests do not check, the kind of thing the published runs showed a
 model getting wrong (`ts-event-bus`, where every Mistral run broke `off` and
 emitted the wildcard twice): a parser's precedence and where an error points,
 an order that must be the same on every run and a run that must leave the
-state file consistent after a failure, a reader that must not copy, and the
-timing of leading, trailing and maxWait calls.
+state file consistent after a failure, a reader that must not copy, the
+timing of leading, trailing and maxWait calls, reference scope and cycle
+messages, a bucket's exact boundary and rounding, a cache's expiry at the
+boundary and its eviction order, `**` and a literal leading dot, a patch that
+must leave the document untouched when it fails, and cron's either-day rule.
+Ten tasks at each level: a solve-rate step is ten points, not twenty-five.
 
 Visible checks are deliberately weaker than the hidden tests. Work that passes
 the checks and its review but fails the hidden tests is a **false pass**: the

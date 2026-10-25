@@ -1,0 +1,5 @@
+{
+  "name": "jsonpatch",
+  "private": true,
+  "type": "module"
+}

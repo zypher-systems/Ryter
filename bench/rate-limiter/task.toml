@@ -1,0 +1,36 @@
+title = "Make the token bucket refill continuously, say when to retry, and forget idle keys"
+level = "hard"
+brief = """
+`limiter.py` has a `TokenBucket` that refills whole tokens once a whole
+second has passed, never says when a caller may retry, and keeps a bucket for
+every key it has ever seen. Make it the real thing:
+
+- `TokenBucket(capacity, rate, clock=time.monotonic, max_keys=1000)`:
+  `capacity` whole tokens, `rate` tokens per second (a float; `0` means no
+  refill), `clock()` the seconds now. A key never seen has `capacity` tokens.
+- Refill is continuous and fractional: on every call, a key's tokens become
+  `min(capacity, tokens + elapsed * rate)`, elapsed being the seconds since
+  that key was last looked at.
+- `allow(key, cost=1)` returns `Decision(allowed, retry_after, remaining)`.
+  With at least `cost` tokens, it takes them: `allowed` is `True`,
+  `retry_after` is `0.0`, and `remaining` is the whole tokens left (the
+  fraction dropped). With fewer, it takes nothing: `allowed` is `False`,
+  `remaining` is the whole tokens there are, and `retry_after` is the seconds
+  until there will be `cost`, rounded up to the millisecond
+  (`math.ceil(seconds * 1000) / 1000`), or `math.inf` when the rate is `0`.
+  Exactly `cost` tokens is enough.
+- A `cost` above `capacity` raises `ValueError('cost 5 exceeds capacity 3')`
+  (with the numbers), and creates or touches no bucket.
+- `peek(key)` is the whole tokens the key has now, taking nothing, creating
+  no bucket, and not counting as a use.
+- `reset(key)` forgets the key, so it is full again.
+- At most `max_keys` buckets are kept. When a new key needs one and that many
+  exist, the key least recently passed to `allow` is forgotten; it starts
+  full if it comes back. `len(limiter)` is the number of buckets kept.
+
+Done when `python3 -m unittest -q test_limiter` passes.
+"""
+files = ["limiter.py"]
+checks = ["python3 -m unittest -q test_limiter"]
+accept = ["python3 -m unittest -q hidden_test_limiter"]
+needs = ["python3 --version"]

@@ -1,0 +1,33 @@
+title = "Make the cache a real LRU with expiry, against an injected clock"
+level = "hard"
+brief = """
+`lrulite` is a `Cache<K, V>` that keeps its entries in a `Vec`, evicts the
+oldest insert when full, lets a key in twice, and ignores the TTL it is
+given. Make it a real least-recently-used cache with expiry. The API in
+`src/lib.rs` stays as it is (the tests use all of it); the behaviour becomes:
+
+- `Cache::new(capacity)` keeps at most `capacity` entries; `new(0)` keeps
+  none (every `insert` stores nothing and returns `None`). `with_ttl(d)` sets
+  how long an entry lives from its insert; `with_clock(c)` sets the `Clock`
+  (`now() -> Instant`) it reads, `SystemClock` by default.
+- An entry inserted at `t` with TTL `d` is expired once `now >= t + d`: at
+  the boundary it is already gone. Expired entries are never returned,
+  never counted by `len`/`is_empty`, never yielded by `iter`, and are
+  dropped whenever they are met.
+- `insert(k, v)`: an existing live key gets the new value, becomes the most
+  recently used, and its TTL restarts; the old value comes back. A new key
+  when the cache is full evicts an expired entry if there is one, otherwise
+  the least recently used; `None` comes back.
+- `get(&k)`: a live entry's value, and the entry becomes the most recently
+  used. It does not restart the TTL. `peek(&k)` is `get` without touching
+  recency. `remove(&k)` returns a live entry's value.
+- `get_or_insert_with(k, f)`: the live value, or `f()` inserted (with the
+  eviction rules) and returned; an expired entry is recomputed.
+- `iter()` yields live entries most recently used first, changing nothing.
+
+Done when `cargo test -q --test basic` passes.
+"""
+files = ["src/lib.rs"]
+checks = ["cargo test -q --test basic"]
+accept = ["cargo test -q --test hidden"]
+needs = ["cargo --version"]
