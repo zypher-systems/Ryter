@@ -4827,10 +4827,20 @@ mod tests {
             ..crate::run::RunFile::default()
         };
         crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        // Esc once the check is running, not after a fixed wait: on a slow
+        // runner the rounds before the check took longer than the wait,
+        // and the cancel landed before there was a row to answer.
         let cancel = agent.ctx.cancel.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
         let t = std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            cancel.cancel();
+            for event in rx {
+                if matches!(&event, AgentEvent::ToolCall { id, .. } if id.starts_with("check-")) {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    cancel.cancel();
+                    return;
+                }
+            }
         });
         let started = std::time::Instant::now();
         let r = agent.turn("write the notes").await.unwrap();
