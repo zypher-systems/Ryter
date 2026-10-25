@@ -484,8 +484,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
-             `test` runs the project's test commands and returns their output. `check` \
-             runs its fast check and returns the errors (Ryter also runs it by itself \
+             `test` runs the project's test commands and returns what failed: each failed \
+             test with its assertion and where, and the runner's totals (a run that passed, \
+             its totals). `check` runs its fast check and returns the errors (Ryter also runs it by itself \
              after each build round that edited files). `stop` stops what was started \
              (the user usually does this, with /stop: leave the product running when you \
              finish). `status` says whether it is up. With no run file yet, propose one \

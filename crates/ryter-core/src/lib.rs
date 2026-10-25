@@ -14,6 +14,7 @@ pub mod diff;
 pub mod doctor;
 pub mod error;
 pub mod event;
+pub mod failures;
 pub mod gate;
 pub mod git;
 pub mod hooks;

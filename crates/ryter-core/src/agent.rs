@@ -2507,9 +2507,12 @@ impl Agent {
                     if !ok {
                         failed += 1;
                     }
+                    // Its failures with what each said, its totals when it
+                    // passed; the last lines only when no runner is
+                    // recognised (`failures::report`).
                     text.push_str(&format!(
                         "$ {cmd}\n{}\n",
-                        crate::run::last_lines(body.trim_end(), 60)
+                        crate::failures::report(&body, ok, 60)
                     ));
                 }
                 Ok(if failed == 0 {
@@ -6939,6 +6942,52 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// A `run_project test` hands the model the tests that failed, each
+    /// with its assertion, and the runner's totals; not the last lines,
+    /// which carried the names and the totals and not what went wrong.
+    #[tokio::test]
+    async fn a_test_run_reaches_the_model_as_its_failures_not_its_tail() {
+        let (home, cwd, mut agent) = build_agent(vec![
+            call("run_project", serde_json::json!({"action": "test"})),
+            say("done"),
+        ]);
+        let mut script = String::from("printf 'running 81 tests\\n'\n");
+        for i in 0..80 {
+            script.push_str(&format!("printf 'test x_{i} ... ok\\n'\n"));
+        }
+        script.push_str(
+            "printf 'test tests::a ... FAILED\\n\\nfailures:\\n\\n---- tests::a stdout ----\\n'\n\
+             printf \"thread 'tests::a' panicked at src/lib.rs:10:9:\\n\"\n\
+             printf 'assertion `left == right` failed\\n  left: 1\\n right: 2\\n\\n\\nfailures:\\n    tests::a\\n\\n'\n\
+             printf 'test result: FAILED. 80 passed; 1 failed; 0 ignored\\n'\n\
+             exit 101\n",
+        );
+        std::fs::write(cwd.path().join("t.sh"), script).unwrap();
+        let run = crate::run::RunFile {
+            test: vec!["sh t.sh".into()],
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        let r = agent.turn("run the tests").await.unwrap();
+        assert_eq!(r.text, "done");
+        let result = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool" && m.content.starts_with("$ sh t.sh\n"))
+            .map(|m| m.content.clone())
+            .expect("the tool result");
+        assert!(
+            result.starts_with(
+                "$ sh t.sh\n1 failed\n\n✗ tests::a\nthread 'tests::a' panicked at src/lib.rs:10:9:\n\
+                 assertion `left == right` failed\n  left: 1\n right: 2\n\n\
+                 test result: FAILED. 80 passed; 1 failed; 0 ignored"
+            ),
+            "{result}"
+        );
+        assert!(!result.contains("x_5 ... ok"), "{result}");
     }
 
     /// A `run_project test` that ran nothing, here for want of a run file,

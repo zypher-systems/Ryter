@@ -46,6 +46,24 @@ pub(crate) fn bash_as_root(
     Ok(out)
 }
 
+/// A failed test run too long to be kept whole is cut to its head and
+/// tail (`cap_output`), and its failures sat in the middle: the model saw
+/// the totals and had to run one test again to read the assertion. Such an
+/// output leads with its failures, digested (`failures::digest`); one that
+/// fits is left as the command printed it.
+fn with_failures_first(text: String) -> String {
+    if text.len() <= super::MAX_TOOL_OUTPUT_BYTES {
+        return text;
+    }
+    match crate::failures::digest(&text).filter(|d| !d.failures.is_empty()) {
+        Some(d) => format!(
+            "{}\n\n--- the output, cut to its head and tail ---\n{text}",
+            d.text()
+        ),
+        None => text,
+    }
+}
+
 fn run_bash(args: &Value, ctx: &ToolContext, env: &[(String, String)]) -> Result<ToolOutput> {
     let cmd = args
         .get("command")
@@ -62,7 +80,7 @@ fn run_bash(args: &Value, ctx: &ToolContext, env: &[(String, String)]) -> Result
             env,
         )? {
             Run::Ok(text) => ToolOutput::ok(text),
-            Run::Failed(text) => ToolOutput::err(text),
+            Run::Failed(text) => ToolOutput::err(with_failures_first(text)),
             Run::Cancelled => ToolOutput::err("cancelled"),
             // "Pass a larger timeout" alone sent models back with the same
             // interactive command and a ten-minute wait.
@@ -495,6 +513,33 @@ pub(crate) fn group_alive(pgid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed test run too long to keep whole leads with its failures,
+    /// which the cut to head and tail would have dropped; one that fits is
+    /// left as printed.
+    #[test]
+    fn a_cut_test_output_leads_with_its_failures() {
+        let noise: String = (0..3000).map(|i| format!("test x_{i} ... ok\n")).collect();
+        let long = format!(
+            "{noise}failures:\n\n---- tests::a stdout ----\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n\n{noise}\
+             test result: FAILED. 6000 passed; 1 failed; 0 ignored\n[exit 101]"
+        );
+        assert!(long.len() > super::super::MAX_TOOL_OUTPUT_BYTES);
+        let led = with_failures_first(long.clone());
+        assert!(
+            led.starts_with(
+                "1 failed\n\n✗ tests::a\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n\n\
+                 test result: FAILED. 6000 passed; 1 failed; 0 ignored\n\n\
+                 --- the output, cut to its head and tail ---\ntest x_0 ... ok"
+            ),
+            "{}",
+            &led[..300]
+        );
+        let short = "---- tests::a stdout ----\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n[exit 101]".to_string();
+        assert_eq!(with_failures_first(short.clone()), short);
+        let plain: String = (0..3000).map(|i| format!("line {i}\n")).collect();
+        assert_eq!(with_failures_first(plain.clone()), plain);
+    }
 
     /// `cd -` goes to `OLDPWD`, which was the folder the user's shell was
     /// in before Ryter started: outside the project, where the gate had

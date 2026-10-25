@@ -90,10 +90,19 @@ pub fn blocks(output: &str) -> Vec<String> {
     out
 }
 
-/// A check's report: how many errors, and the text that says them. With
-/// no error block in a failed run, the output's last lines stand in; a
-/// run that passed says so in a word.
+/// A check's report: how many errors, and the text that says them. A
+/// check that is a test run (`cargo test`, `pytest`) reports its failed
+/// tests (`failures::digest`), counted the same. With neither in a failed
+/// run, the output's last lines stand in; a run that passed says so in a
+/// word.
 pub fn report(output: &str, ok: bool) -> (usize, String) {
+    // A test runner's failures first: its `path:line: message` lines
+    // would otherwise read as a compiler's.
+    if !ok {
+        if let Some(d) = crate::failures::digest(output).filter(|d| !d.failures.is_empty()) {
+            return (d.failures.len(), d.text());
+        }
+    }
     let blocks = blocks(output);
     if blocks.is_empty() {
         return if ok {
@@ -171,6 +180,23 @@ mod tests {
         );
         assert_eq!(n, 0);
         assert!(text.starts_with("failed\nmake: ***"), "{text}");
+    }
+
+    /// A check command that runs tests reports the tests that failed,
+    /// counted as the errors are, so the model is told what failed and not
+    /// the output's last lines.
+    #[test]
+    fn a_check_that_is_a_test_run_reports_its_failed_tests() {
+        let out = "=== FAILURES ===\n___ test_add ___\n>       assert add(1, 2) == 4\nE       assert 3 == 4\n\ntests/test_x.py:5: AssertionError\n=== 1 failed, 2 passed in 0.03s ===\n[exit 1]";
+        let (n, text) = report(out, false);
+        assert_eq!(n, 1);
+        assert!(
+            text.starts_with(
+                "1 failed\n\n✗ test_add\n>       assert add(1, 2) == 4\nE       assert 3 == 4"
+            ),
+            "{text}"
+        );
+        assert!(text.ends_with("1 failed, 2 passed in 0.03s"), "{text}");
     }
 
     #[test]
