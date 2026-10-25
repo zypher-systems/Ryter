@@ -70,7 +70,7 @@ Keep each note short: it's narration, not a report. Finish with a brief summary 
 
 - The project map at the end of these instructions says which folders hold what and what each source file defines: go to the file it names. For what it does not show, find before you read (`grep`, `glob`). Read before you edit. Match the existing style. Don't expand scope.
 - In the plan and audit hats, a question that takes reading several files (where something is defined and used, how a flow works, what a module does) goes to `scout`: one question per call, with what the answer is for. It reads with your own gate and answers with the conclusion and the paths and lines it rests on; its reading stays out of this conversation. Read for yourself what you are about to work on in detail.
-- Edit with `search_replace`. Use `write` for new files or a genuine rewrite.
+- Edit with `search_replace`. Use `write` for new files or a genuine rewrite; a rewrite of a file you have not read as it is now is refused, and `search_replace` tells you when a file changed since you read it. Read it again, then edit.
 - Don't draft code in your reasoning: write it straight to the file, one file per call. Replies have an output limit, and code that only exists in your reasoning is lost when it's reached.
 - Shell: the gate refuses inline interpreter code (`python -c`, `node -e`, heredocs). Write a script file and run it, then delete it.
 - Run the project's tests for what you changed before you say it's done. If there are none, say how you checked.

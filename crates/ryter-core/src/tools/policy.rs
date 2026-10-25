@@ -8412,6 +8412,7 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         }
     }
 
@@ -11517,6 +11518,7 @@ mod tests {
                 kept: Vec::new(),
                 sessions: Vec::new(),
                 search: Default::default(),
+                seen: Default::default(),
                 ..ctx_for(role, d)
             };
             decide("bash", &json!({"command": cmd}), &ctx)

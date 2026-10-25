@@ -2,6 +2,10 @@
 
 mod bounded;
 mod fs;
+pub use fs::Seen;
+/// A project path as the file tools resolve it, for the crate's tests.
+#[cfg(test)]
+pub(crate) use policy::resolve as resolve_path;
 mod packages;
 mod policy;
 mod secret;
@@ -166,6 +170,10 @@ pub struct ToolContext {
     pub sessions: Vec<String>,
     /// Where `web_search` looks, with its key read once.
     pub search: web::Search,
+    /// The files the model has read or written this session, each as it
+    /// was then ([`fs::Seen`]): a `write` over a file the model has not
+    /// seen as it is now is refused, so nothing is lost unread.
+    pub seen: Arc<Mutex<std::collections::HashMap<std::path::PathBuf, Seen>>>,
 }
 
 impl ToolContext {
@@ -354,7 +362,9 @@ fn spec(name: &str) -> Option<ToolSpec> {
         "write" => (
             "Create a new file, or replace one wholesale. To change part of an \
              existing file use search_replace: it is cheaper and cannot clobber \
-             lines you did not mean to touch.",
+             lines you did not mean to touch. A rewrite of an existing file is \
+             refused unless you have read the file as it is now (this session, and \
+             since anything changed it), so nothing is lost unread.",
             json!({"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         ),
         "search_replace" => (
@@ -1102,7 +1112,88 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         }
+    }
+
+    /// A `write` over a file the model has not seen as it is now is
+    /// refused: never read this session, or changed since it was read (by
+    /// the user, a formatter, a command). A read, or an edit of its own,
+    /// is seeing it; a new file needs no read.
+    #[test]
+    fn a_rewrite_of_a_file_not_seen_as_it_is_now_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();
+        let c = ctx(Role::Build, root);
+        let rewrite = |text: &str| json!({"path": "a.txt", "content": text});
+        // Never read: refused, with the way forward.
+        let out = execute("write", &rewrite("new\n"), &c).unwrap();
+        assert!(out.is_error, "{}", out.text);
+        assert!(
+            out.text
+                .contains("a.txt exists (2 lines) and you have not read it this session")
+                && out.text.contains("search_replace"),
+            "{}",
+            out.text
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("a.txt")).unwrap(),
+            "one\ntwo\n"
+        );
+        // Read, then rewritten: fine, and the rewrite counts as seeing it.
+        execute("read_file", &json!({"path": "a.txt"}), &c).unwrap();
+        let out = execute("write", &rewrite("new\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &rewrite("newer\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        // Changed since by someone else: refused until read again.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(
+            root.join("a.txt"),
+            "the user's line\nand another\nand a third\n",
+        )
+        .unwrap();
+        let out = execute("write", &rewrite("clobber\n"), &c).unwrap();
+        assert!(out.is_error, "{}", out.text);
+        assert!(
+            out.text
+                .contains("a.txt changed since you last read it (now 3 lines)"),
+            "{}",
+            out.text
+        );
+        assert!(
+            std::fs::read_to_string(root.join("a.txt"))
+                .unwrap()
+                .starts_with("the user's line")
+        );
+        // A search_replace that misses says the file changed, not "may have".
+        let out = execute(
+            "search_replace",
+            &json!({"path": "a.txt", "old_string": "newer", "new_string": "x"}),
+            &c,
+        )
+        .unwrap();
+        assert!(
+            out.text.contains("changed since you last read it"),
+            "{}",
+            out.text
+        );
+        // One that hits applies, and counts as seeing the file.
+        let out = execute(
+            "search_replace",
+            &json!({"path": "a.txt", "old_string": "and a third", "new_string": "third"}),
+            &c,
+        )
+        .unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &rewrite("after the edit\n"), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        // A new file needs no read, and a second write of it is its own.
+        let out = execute("write", &json!({"path": "b.txt", "content": "b\n"}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
+        let out = execute("write", &json!({"path": "b.txt", "content": "bb\n"}), &c).unwrap();
+        assert!(!out.is_error, "{}", out.text);
     }
 
     #[cfg(target_os = "linux")]

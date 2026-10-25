@@ -143,9 +143,14 @@ def simulate_responses(phase, task, spec, broken=False):
     if phase == 'build' and broken:
         return [reply('Intentional negative control: leave the task broken.')]
     if phase == 'build':
-        writes = [('write', {'path': str(file.relative_to(task / 'solution')), 'content': file.read_text()})
-                  for file in sorted((task / 'solution').rglob('*')) if file.is_file()]
-        return [reply('', writes), reply('Reference implementation written by simulated builder.')]
+        files = [f for f in sorted((task / 'solution').rglob('*')) if f.is_file()]
+        rels = [str(f.relative_to(task / 'solution')) for f in files]
+        # A rewrite needs a read: the stand-in reads the files the fixture
+        # already has before it writes them, as a model must.
+        reads = [('read_file', {'path': rel}) for rel in rels if (task / 'repo' / rel).exists()]
+        writes = [('write', {'path': rel, 'content': f.read_text()}) for rel, f in zip(rels, files)]
+        return ([reply('Reading the files the task already has.', reads)] if reads else []) + [
+            reply('', writes), reply('Reference implementation written by simulated builder.')]
     # The review hat runs the project's checks through the run file the
     # harness provided, as the design says it may.
     return [reply('', [('run_project', {'action': 'test'})]),

@@ -4175,6 +4175,7 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         };
         Agent {
             provider: Arc::new(provider),
@@ -4734,6 +4735,7 @@ mod tests {
             ..crate::run::RunFile::default()
         };
         crate::run::save_approved(cwd.path(), home.path(), &run).unwrap();
+        seen(&agent, "check.sh");
         let r = agent.turn("write the notes").await.unwrap();
         assert_eq!(r.text, "done");
         let notes: Vec<&str> = agent
@@ -4909,6 +4911,14 @@ mod tests {
         crate::git::init_repo(cwd.path()).unwrap();
         agent.cfg = Some(crate::config::Config::default());
         (home, cwd, agent)
+    }
+
+    /// The model has read `rel` as it is now, so a `write` over it is not
+    /// refused as a rewrite of a file it has not seen.
+    fn seen(agent: &Agent, rel: &str) {
+        let path = crate::tools::resolve_path(&agent.ctx, rel).expect("a project path");
+        let now = crate::tools::Seen::of(&path).expect("an existing file");
+        agent.ctx.seen.lock().unwrap().insert(path, now);
     }
 
     fn write(path: &str, content: &str) -> Vec<StreamDelta> {
@@ -5230,6 +5240,7 @@ mod tests {
         });
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "README.md");
         agent.turn("plan the readme, then do it").await.unwrap();
         agent.ctx.user_io = None;
         let asked = asked.join().unwrap();
@@ -5948,6 +5959,7 @@ mod tests {
         };
         let (tx, events) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "README.md");
         agent.turn("plan the readme").await.unwrap();
         agent.ctx.user_io = None;
         let shown = shown.map(|t| t.join().unwrap()).unwrap_or_default();
@@ -5978,6 +5990,7 @@ mod tests {
         agent.role = Role::Build;
         agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
+        seen(&agent, "README.md");
         agent.turn("write the readme").await.unwrap();
         let result = agent
             .session
@@ -6606,6 +6619,7 @@ mod tests {
         agent.ctx.always_approve = true;
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "README.md");
         let r = agent.turn("build it").await.unwrap();
         assert_eq!(r.reason, StopReason::Completed);
         assert_eq!(
@@ -6685,6 +6699,7 @@ mod tests {
         agent.role = Role::Build;
         agent.ctx.role = Role::Build;
         agent.ctx.always_approve = true;
+        seen(&agent, "README.md");
         agent.turn("rewrite the readme").await.unwrap();
         let readme = cwd.path().join("README.md");
         assert_eq!(std::fs::read_to_string(&readme).unwrap(), "rewritten\n");
@@ -6753,6 +6768,7 @@ mod tests {
     async fn undo_over_the_users_own_edit_asks_for_force_and_redo_reverses() {
         let (_home, cwd, mut agent) =
             build_agent(vec![write("README.md", "by the model\n"), say("done")]);
+        seen(&agent, "README.md");
         agent.turn("rewrite the readme").await.unwrap();
         let readme = cwd.path().join("README.md");
         std::fs::write(&readme, "by the model\nand then by me\n").unwrap();
@@ -6822,6 +6838,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(d.join("local.cfg"), "mine\n").unwrap();
+        seen(&agent, "local.cfg");
         agent.turn("set the config").await.unwrap();
         assert_eq!(
             std::fs::read_to_string(d.join("local.cfg")).unwrap(),
@@ -7356,6 +7373,66 @@ mod tests {
             "{section}"
         );
         assert!(!section.contains("and now"), "{section}");
+    }
+
+    /// Through a turn: a rewrite of a file the model has not read is
+    /// refused and the file kept; the user's edit between turns makes the
+    /// next rewrite a refusal too, until the model reads the file again.
+    #[tokio::test]
+    async fn the_model_cannot_rewrite_what_it_has_not_seen_as_it_is() {
+        let (_home, cwd, mut agent) = build_agent(vec![
+            write("README.md", "clobbered\n"),
+            say("first"),
+            vec![
+                StreamDelta::ToolCall {
+                    stream_key: None,
+                    id: "r".into(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({"path": "README.md"}).to_string(),
+                },
+                StreamDelta::Done,
+            ],
+            write("README.md", "by the model\n"),
+            say("second"),
+            write("README.md", "clobbered again\n"),
+            say("third"),
+        ]);
+        let readme = cwd.path().join("README.md");
+        agent.turn("rewrite the readme").await.unwrap();
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "repo\n");
+        let refusal = agent
+            .session
+            .transcript
+            .iter()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            refusal.contains("README.md exists (1 lines) and you have not read it this session"),
+            "{refusal}"
+        );
+        agent.turn("read it, then rewrite it").await.unwrap();
+        assert_eq!(std::fs::read_to_string(&readme).unwrap(), "by the model\n");
+        // The user edits it between turns.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&readme, "by the model\nand by me\n").unwrap();
+        agent.turn("rewrite it again").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            "by the model\nand by me\n"
+        );
+        let last = agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(
+            last.contains("README.md changed since you last read it (now 2 lines)"),
+            "{last}"
+        );
     }
 
     /// A `run_project test` hands the model the tests that failed, each
@@ -8880,6 +8957,7 @@ mod tests {
         agent.ctx.sandbox = Some(scope);
         let (tx, rx) = std::sync::mpsc::channel();
         agent.sink = Some(tx);
+        seen(&agent, "hello.txt");
         agent.turn("change hello").await.unwrap();
         assert_eq!(
             std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),

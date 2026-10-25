@@ -1107,6 +1107,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: ryter_core::tools::Search::from_config(&b.cfg.search),
+            seen: Default::default(),
         },
         connection: b.conn_name,
         model: b.model,

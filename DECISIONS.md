@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-24 — A rewrite needs a read: `write` over a file the model has not seen as it is now is refused
+
+`search_replace` cannot clobber: it replaces the quoted lines or fails. `write` can: a model that rewrites a file from its memory of it loses what it has not seen, the user's edit made in their editor between turns, a formatter's pass, a file it never opened because it "knew" what was in it. The prompt has said read before you edit since the start; the tool did not hold the model to it, and the loss was silent until the user noticed their line gone.
+
+The file tools now keep what the model has seen this session: each `read_file`, and each `write` or `search_replace` of the model's own, records the file's size and modification time. A `write` over an existing file is refused when the model has never seen it this session ("exists (N lines) and you have not read it this session; read it before rewriting it, or change it with search_replace") or when it has changed since ("changed since you last read it (now N lines): a command, a formatter or the user; read it again before rewriting it, so what changed is not lost"). A `search_replace` whose quoted lines are not found, on a file that changed since the read, says so plainly instead of "may have changed". Size and modification time, not content, so a read is not a second full read; a change that keeps both is one no editor makes. The record lives on the tool context (`seen`), per session, shared with the hooks' copy; `Agent::swap_session` starts afresh. Nine tests that rewrote `README.md` or `hello.txt` without a read were doing what the refusal is for; they mark the file read, as a test of something else should. The Python bench's simulated builder wrote every solution file without a read and was refused on all fourteen tasks: it now reads the files the fixture already has first, as a model must, which is also a truer stand-in.
+
+Set aside: holding `bash` redirects (`> file`) to the same rule, which the gate would have to parse; refusing an edit on a file the model read only in part, which would be a lie about its own reading rather than a clobber. Fifth of the "fewer redos" pieces, and the first that refuses rather than informs.
+
 ### 2026-10-24 — Ryter's own notes on the project: what ran, how it went, what the last sessions did
 
 Some of what a model rediscovers every session is not in any file: that the tests take forty seconds here (so a thirty-second timeout cuts them off and the model reads a cut log as a hang), that `npm test` is not found because the project uses pnpm, that the last session left the check failing on the same file it is about to touch. RYTER.md holds the user's rules and `.ryter/decisions.md` what was decided; neither holds what happened. The model was told none of it and found it out again, a round or a wrong turn at a time.

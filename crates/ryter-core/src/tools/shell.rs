@@ -592,6 +592,7 @@ mod tests {
             kept: Vec::new(),
             sessions: Vec::new(),
             search: Default::default(),
+            seen: Default::default(),
         };
         let waiter = cancel.clone();
         std::thread::spawn(move || {
