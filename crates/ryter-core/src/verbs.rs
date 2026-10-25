@@ -1447,10 +1447,18 @@ pub fn detect(root: &Path) -> Option<(crate::run::RunFile, &'static str)> {
         };
         return Some((run, source));
     }
-    // In the order GNU make reads them.
+    // In the order GNU make reads them, by the exact name: on a
+    // case-insensitive filesystem `exists("makefile")` is true of `Makefile`.
+    let entries: Vec<String> = std::fs::read_dir(root)
+        .map(|d| {
+            d.flatten()
+                .filter_map(|e| e.file_name().to_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     if let Some(name) = ["GNUmakefile", "makefile", "Makefile"]
         .into_iter()
-        .find(|n| has(n))
+        .find(|n| entries.iter().any(|e| e == n))
     {
         let makefile = read(name);
         let target = |name: &str| {
