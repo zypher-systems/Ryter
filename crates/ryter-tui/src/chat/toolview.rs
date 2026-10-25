@@ -296,7 +296,7 @@ pub fn result(tool: &str, output: &str, is_error: bool) -> (String, String) {
         // The project's own commands: its tests' totals when there are
         // any, otherwise that it went through. What Ryter told the model
         // about it is not the user's to read.
-        "run_project" => (
+        "run_project" | "test" => (
             match test_summary(output) {
                 Some(s) => format!("✓ {s}"),
                 None => "✓".into(),

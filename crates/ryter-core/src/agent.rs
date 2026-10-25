@@ -274,6 +274,24 @@ fn ordinal(n: u32) -> String {
 
 /// Short human label for a tool call (`read Cargo.toml`, `bash cargo test`).
 pub fn tool_summary(name: &str, args: &Value) -> String {
+    if name == "test" {
+        // The filter and the files, since the command itself comes from
+        // the run file (`Agent::run_summary` gives it when there is one).
+        let mut parts = Vec::new();
+        if let Some(f) = test_filter(args) {
+            parts.push(f.chars().take(40).collect::<String>());
+        }
+        match test_files(args).as_slice() {
+            [] => {}
+            [one] => parts.push(one.chars().take(40).collect()),
+            many => parts.push(format!("{} files", many.len())),
+        }
+        return if parts.is_empty() {
+            "test".to_string()
+        } else {
+            format!("test {}", parts.join(" · "))
+        };
+    }
     let arg = match name {
         "read_file" | "list_dir" | "write" | "search_replace" => args
             .get("path")
@@ -301,6 +319,55 @@ pub fn tool_summary(name: &str, args: &Value) -> String {
         verb.to_string()
     } else {
         format!("{verb} {arg}")
+    }
+}
+
+/// The `test` tool's filter: a name or pattern, trimmed; none when empty.
+fn test_filter(args: &Value) -> Option<&str> {
+    args.get("filter")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+}
+
+/// The `test` tool's files: a list of paths, or one path as a string.
+fn test_files(args: &Value) -> Vec<String> {
+    let Some(v) = args.get("files") else {
+        return Vec::new();
+    };
+    let items: Vec<&str> = match v {
+        Value::Array(a) => a.iter().filter_map(Value::as_str).collect(),
+        Value::String(one) => vec![one.as_str()],
+        _ => Vec::new(),
+    };
+    items
+        .into_iter()
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The test commands as they will run, for the chat row: the first, and
+/// how many more. A command that can't be narrowed is left out.
+fn tests_summary(
+    run: &crate::run::RunFile,
+    filter: Option<&str>,
+    files: &[String],
+    root: &std::path::Path,
+) -> String {
+    let cmds: Vec<String> = run
+        .test
+        .iter()
+        .filter_map(|c| match crate::verbs::narrow(c, filter, files, root) {
+            crate::verbs::Scope::Narrowed(n) => Some(n.cmd),
+            crate::verbs::Scope::Cannot(_) => None,
+        })
+        .collect();
+    match cmds.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, rest @ ..] => format!("{first} (+{} more)", rest.len()),
     }
 }
 
@@ -910,8 +977,8 @@ impl Agent {
                     args: args.clone(),
                     role: self.role,
                     // For the project's own commands, the command itself:
-                    // the call only says "start".
-                    summary: Some(if call.name == "run_project" {
+                    // the call only says "start", or a filter.
+                    summary: Some(if matches!(call.name.as_str(), "run_project" | "test") {
                         self.run_summary(&args)
                     } else {
                         tool_summary(&call.name, &args)
@@ -944,7 +1011,7 @@ impl Agent {
                 } else {
                     crate::tools::Effects::default()
                 };
-                // A long `bash` (or `run_project` shell step) looks alive:
+                // A long `bash` (or a `run_project`/`test` command) looks alive:
                 // newest lines go to the screen while it runs.
                 self.listen_for_live(&call.id, &call.name);
                 let out = match &parsed {
@@ -965,6 +1032,7 @@ impl Agent {
                                 | "record_decision"
                                 | "propose_run"
                                 | "run_project"
+                                | "test"
                                 | "file_audit"
                                 | "load_skill"
                                 | "show_page"
@@ -979,6 +1047,7 @@ impl Agent {
                                 "record_decision" => self.record_decision(&args),
                                 "propose_run" => self.propose_run(&args),
                                 "run_project" => self.run_project(&args),
+                                "test" => self.test_verb(&args),
                                 "file_audit" => Ok(self.file_audit(&args)),
                                 "load_skill" => Ok(self.load_skill(&args)),
                                 "update_rules" => self.update_rules(&args),
@@ -1702,14 +1771,145 @@ impl Agent {
         match args.get("action").and_then(Value::as_str) {
             Some("start") => run.start.unwrap_or_default(),
             Some("stop") => run.stop.unwrap_or_default(),
-            Some("test") => match run.test.as_slice() {
-                [] => String::new(),
-                [one] => one.clone(),
-                [first, rest @ ..] => format!("{first} (+{} more)", rest.len()),
-            },
+            Some("test") => tests_summary(&run, None, &[], &self.root()),
             Some("check") => run.check.unwrap_or_default(),
+            // The `test` tool: the commands as narrowed to its filter and
+            // files, as they will run.
+            None => tests_summary(&run, test_filter(args), &test_files(args), &self.root()),
             _ => String::new(),
         }
+    }
+
+    /// `test`: the project's tests, narrowed to a name or to files when
+    /// asked. The build and audit hats' tool.
+    fn test_verb(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
+        if let Some(refused) = self.not_the_plan_hat("test") {
+            return Ok(refused);
+        }
+        let files = test_files(args);
+        self.run_tests(test_filter(args), &files)
+    }
+
+    /// Run the run file's test commands, narrowed to `filter` and `files`
+    /// when either is given (`verbs::narrow`), and say what each came to:
+    /// its failures with what they said, or its totals. A command that
+    /// can't be narrowed is listed as not run; a narrowed run that passed
+    /// says the whole suite has not run, and does not count as a check.
+    fn run_tests(
+        &mut self,
+        filter: Option<&str>,
+        files: &[String],
+    ) -> Result<crate::tools::ToolOutput> {
+        use crate::run::COMMAND_TIMEOUT;
+        use crate::tools::ToolOutput;
+        use crate::tools::shell::Run;
+        use crate::verbs::Scope;
+        let run = match self.approved_run()? {
+            Ok(run) => run,
+            Err(reply) => return Ok(reply),
+        };
+        if run.test.is_empty() {
+            return Ok(ToolOutput::err(format!(
+                "`{}` has no test commands. Run the project's tests with bash, or propose \
+                 the file again with them.",
+                crate::run::FILE
+            )));
+        }
+        let root = self.root();
+        let narrowed = filter.is_some() || !files.is_empty();
+        let mut to_run = Vec::new();
+        let mut not_run = Vec::new();
+        for cmd in &run.test {
+            match crate::verbs::narrow(cmd, filter, files, &root) {
+                Scope::Narrowed(n) => to_run.push(n),
+                Scope::Cannot(why) => not_run.push(format!("not run: `{cmd}`: {why}")),
+            }
+        }
+        if to_run.is_empty() {
+            return Ok(ToolOutput::err(format!(
+                "Nothing ran.\n{}\nRun `test` with no arguments for the whole suite, or the \
+                 runner itself with bash.",
+                not_run.join("\n")
+            )));
+        }
+        let mut text = String::new();
+        let mut failed = 0;
+        for n in &to_run {
+            let cmd = n.cmd.as_str();
+            // A test command the audit starts used the product: whatever
+            // it wrote to the product's own data stays
+            // (`AuditLive::used_product`). A run file that is missing,
+            // unapproved or without tests ran nothing.
+            if let Some(live) = self.audit_live.as_mut() {
+                live.used_product = true;
+            }
+            let began = std::time::Instant::now();
+            let out = self.ctx.sandboxed(|| {
+                crate::tools::shell::run_command_live(
+                    cmd,
+                    &root,
+                    COMMAND_TIMEOUT,
+                    &self.ctx.cancel,
+                    self.ctx.live.as_ref(),
+                )
+            })?;
+            let timed_out = matches!(out, Run::TimedOut);
+            let (body, ok) = match out {
+                Run::Ok(o) => (o, true),
+                Run::Failed(o) => (o, false),
+                Run::TimedOut => (
+                    format!("[did not finish in {}s]", COMMAND_TIMEOUT.as_secs()),
+                    false,
+                ),
+                Run::Cancelled => return Err(Error::Cancelled),
+            };
+            if !ok {
+                failed += 1;
+            }
+            // The run file's own commands are the project's verbs, noted
+            // as they stand; a narrowed run is not a fact about them.
+            if !narrowed {
+                self.observe_command(
+                    cmd,
+                    crate::observed::Outcome::of(ok, timed_out, &body),
+                    began.elapsed(),
+                    true,
+                );
+            }
+            // Its failures with what each said, its totals when it passed;
+            // the last lines only when no runner is recognised
+            // (`failures::report`).
+            text.push_str(&format!(
+                "$ {cmd}\n{}\n",
+                crate::failures::report(&body, ok, 60)
+            ));
+            if narrowed && crate::verbs::ran_nothing(&body) {
+                text.push_str(&match filter {
+                    Some(f) => format!("Nothing matched `{f}`: no test ran.\n"),
+                    None => "No test ran for those files.\n".to_string(),
+                });
+            }
+            for u in &n.unmatched {
+                text.push_str(&format!("not covered: {u}\n"));
+            }
+        }
+        for line in &not_run {
+            text.push_str(line);
+            text.push('\n');
+        }
+        if narrowed {
+            text.push_str("[narrowed run: the whole suite has not run]\n");
+            if failed > 0 {
+                self.last_check = Some(false);
+            }
+        } else {
+            self.last_check = Some(failed == 0);
+        }
+        Ok(if failed == 0 {
+            ToolOutput::ok(text)
+        } else {
+            ToolOutput::err(text)
+        })
     }
 
     /// Run the project's fast check and say what it came to: the error
@@ -2499,9 +2699,8 @@ impl Agent {
     /// `run_project`: start the product, run the project's tests, or stop
     /// it, with the commands the user approved.
     fn run_project(&mut self, args: &Value) -> Result<crate::tools::ToolOutput> {
-        use crate::run::{COMMAND_TIMEOUT, START_TIMEOUT, Start};
+        use crate::run::{START_TIMEOUT, Start};
         use crate::tools::ToolOutput;
-        use crate::tools::shell::Run;
         if let Some(refused) = self.not_the_plan_hat("run_project") {
             return Ok(refused);
         }
@@ -2633,72 +2832,7 @@ impl Agent {
                     Start::Cancelled => Err(Error::Cancelled),
                 }
             }
-            "test" => {
-                let run = match self.approved_run()? {
-                    Ok(run) => run,
-                    Err(reply) => return Ok(reply),
-                };
-                if run.test.is_empty() {
-                    return Ok(ToolOutput::err(format!(
-                        "`{}` has no test commands. Run the project's tests with bash, or \
-                         propose the file again with them.",
-                        crate::run::FILE
-                    )));
-                }
-                let mut text = String::new();
-                let mut failed = 0;
-                for cmd in &run.test {
-                    // A test command the audit starts used the product:
-                    // whatever it wrote to the product's own data stays
-                    // (`AuditLive::used_product`). A run file that is
-                    // missing, unapproved or without tests ran nothing.
-                    if let Some(live) = self.audit_live.as_mut() {
-                        live.used_product = true;
-                    }
-                    let began = std::time::Instant::now();
-                    let out = self.ctx.sandboxed(|| {
-                        crate::tools::shell::run_command_live(
-                            cmd,
-                            &root,
-                            COMMAND_TIMEOUT,
-                            &self.ctx.cancel,
-                            self.ctx.live.as_ref(),
-                        )
-                    })?;
-                    let timed_out = matches!(out, Run::TimedOut);
-                    let (body, ok) = match out {
-                        Run::Ok(o) => (o, true),
-                        Run::Failed(o) => (o, false),
-                        Run::TimedOut => (
-                            format!("[did not finish in {}s]", COMMAND_TIMEOUT.as_secs()),
-                            false,
-                        ),
-                        Run::Cancelled => return Err(Error::Cancelled),
-                    };
-                    if !ok {
-                        failed += 1;
-                    }
-                    self.observe_command(
-                        cmd,
-                        crate::observed::Outcome::of(ok, timed_out, &body),
-                        began.elapsed(),
-                        true,
-                    );
-                    // Its failures with what each said, its totals when it
-                    // passed; the last lines only when no runner is
-                    // recognised (`failures::report`).
-                    text.push_str(&format!(
-                        "$ {cmd}\n{}\n",
-                        crate::failures::report(&body, ok, 60)
-                    ));
-                }
-                self.last_check = Some(failed == 0);
-                Ok(if failed == 0 {
-                    ToolOutput::ok(text)
-                } else {
-                    ToolOutput::err(text)
-                })
-            }
+            "test" => self.run_tests(None, &[]),
             "check" => {
                 let run = match self.approved_run()? {
                     Ok(run) => run,
@@ -4071,7 +4205,7 @@ impl Agent {
     /// Pass a running command's newest lines to the screen. Sink only — not
     /// the session log (several a second is noise; finished calls still log).
     fn listen_for_live(&mut self, id: &str, name: &str) {
-        if !matches!(name, "bash" | "run_project") {
+        if !matches!(name, "bash" | "run_project" | "test") {
             self.ctx.live = None;
             return;
         }
@@ -5522,6 +5656,162 @@ mod tests {
         assert!(!cwd.path().join("state").exists());
         assert!(agent.product.is_none());
         assert!(crate::run::remembered(&agent.home, cwd.path()).is_none());
+    }
+
+    /// A fake pytest in the project: it records its arguments and prints a
+    /// pytest total, or pytest's "no tests ran" (exit 5) for a name that
+    /// matches nothing.
+    #[cfg(unix)]
+    fn fake_pytest(cwd: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(cwd.join("bin")).unwrap();
+        let script = cwd.join("bin/pytest");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" > args\ncase \"$*\" in *ghost*) echo '===== no tests ran in 0.01s ====='; exit 5;; esac\necho '===== 1 passed in 0.01s ====='\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(cwd.join("pkg")).unwrap();
+        std::fs::create_dir_all(cwd.join("tests")).unwrap();
+        std::fs::write(cwd.join("pkg/mod.py"), "").unwrap();
+        std::fs::write(cwd.join("tests/test_mod.py"), "").unwrap();
+        std::fs::write(cwd.join("tests/test_other.py"), "").unwrap();
+    }
+
+    /// The `test` tool runs the run file's test command with the runner's
+    /// own filter for a name, and the test files named for the files it is
+    /// given; what the model gets says the command that ran, what the run
+    /// does not cover, and that the whole suite has not run. A whole run is
+    /// the project's check; a narrowed one is not.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_test_tool_narrows_to_the_runners_own_filter() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        fake_pytest(cwd.path());
+        let run = crate::run::RunFile {
+            test: vec!["bin/pytest -q".into()],
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let args = || std::fs::read_to_string(cwd.path().join("args")).unwrap();
+
+        // A name: the runner's flag, which the model did not write.
+        let out = agent
+            .test_verb(&serde_json::json!({"filter": " newest "}))
+            .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "$ bin/pytest -q -k newest\n1 passed in 0.01s\n[narrowed run: the whole suite has not run]\n"
+        );
+        assert_eq!(args(), "-q -k newest\n");
+        assert_eq!(agent.last_check, None, "a narrowed run is not the check");
+
+        // Files: the test file named for a source file; what has none is said.
+        let out = agent
+            .test_verb(&serde_json::json!({"files": ["pkg/mod.py", "docs/none.md"]}))
+            .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "$ bin/pytest -q tests/test_mod.py\n1 passed in 0.01s\nnot covered: `docs/none.md` is not a file in the project\n[narrowed run: the whole suite has not run]\n"
+        );
+        assert_eq!(args(), "-q tests/test_mod.py\n");
+
+        // A name that matches nothing is said in so many words.
+        let out = agent
+            .test_verb(&serde_json::json!({"filter": "ghost"}))
+            .unwrap();
+        assert!(out.is_error, "{out:?}");
+        assert!(
+            out.text.contains("Nothing matched `ghost`: no test ran."),
+            "{}",
+            out.text
+        );
+        assert_eq!(agent.last_check, Some(false));
+
+        // Nothing asked: the command as approved, and it is the check.
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(out.text, "$ bin/pytest -q\n1 passed in 0.01s\n");
+        assert_eq!(args(), "-q\n");
+        assert_eq!(agent.last_check, Some(true));
+
+        // The chat row names the command as it runs, filter included.
+        let (_, results, events) = build_turn(
+            &mut agent,
+            vec![call("test", serde_json::json!({"filter": "newest"}))],
+            Vec::new(),
+        )
+        .await;
+        assert!(
+            results[0].starts_with("$ bin/pytest -q -k newest\n"),
+            "{results:?}"
+        );
+        let summaries: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::ToolCall { name, summary, .. } if name == "test" => summary.clone(),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(summaries, ["bin/pytest -q -k newest"]);
+
+        // The plan hat starts nothing, tests included.
+        agent.role = Role::Plan;
+        agent.ctx.role = Role::Plan;
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert!(out.is_error);
+        assert!(
+            out.text.starts_with("test is the build and audit hats'"),
+            "{}",
+            out.text
+        );
+    }
+
+    /// A test command Ryter can't narrow is not run whole under the name of
+    /// a narrow run: it is listed as not run, and with nothing left to run
+    /// the call fails and says what to do. Asked for nothing in particular,
+    /// it runs as it stands.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_test_command_that_cannot_be_narrowed_is_said() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        agent.role = Role::Build;
+        agent.ctx.role = Role::Build;
+        fake_pytest(cwd.path());
+        let run = crate::run::RunFile {
+            test: vec!["echo 2 passed".into(), "bin/pytest".into()],
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let out = agent
+            .test_verb(&serde_json::json!({"filter": "x"}))
+            .unwrap();
+        assert!(!out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "$ bin/pytest -k x\n1 passed in 0.01s\nnot run: `echo 2 passed`: it is not a runner Ryter can narrow (cargo test, pytest, go test, jest, vitest, mocha, bun test)\n[narrowed run: the whole suite has not run]\n"
+        );
+        let run = crate::run::RunFile {
+            test: vec!["echo 2 passed".into()],
+            ..Default::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let out = agent
+            .test_verb(&serde_json::json!({"files": ["pkg/mod.py"]}))
+            .unwrap();
+        assert!(out.is_error, "{out:?}");
+        assert_eq!(
+            out.text,
+            "Nothing ran.\nnot run: `echo 2 passed`: it is not a runner Ryter can narrow (cargo test, pytest, go test, jest, vitest, mocha, bun test)\nRun `test` with no arguments for the whole suite, or the runner itself with bash."
+        );
+        let out = agent.test_verb(&serde_json::json!({})).unwrap();
+        assert_eq!(out.text, "$ echo 2 passed\n2 passed\n");
+        assert!(!out.is_error);
     }
 
     /// The tester proposes how the project runs, the user approves it on a

@@ -32,7 +32,7 @@ const SIGNATURE_CHARS: usize = 100;
 const NAMED: usize = 24;
 /// Folders that hold build output or other people's code, skipped even
 /// when nothing ignores them.
-const SKIP_DIRS: &[&str] = &[
+pub(crate) const SKIP_DIRS: &[&str] = &[
     "target",
     "node_modules",
     "dist",

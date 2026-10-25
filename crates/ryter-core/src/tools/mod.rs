@@ -485,8 +485,8 @@ fn spec(name: &str) -> Option<ToolSpec> {
              package.json, Makefile, scripts). Use the commands the project itself uses. \
              The start command may return (`docker compose up -d --wait`) or stay in the \
              foreground (`npm run dev`): Ryter runs it and keeps it up. Approved, it is \
-             saved as `.ryter/run.toml` and Ryter runs these commands with run_project, \
-             without asking again. `check` is the project's fast check (`cargo check`, \
+             saved as `.ryter/run.toml` and Ryter runs these commands with run_project and \
+             test, without asking again. `check` is the project's fast check (`cargo check`, \
              `tsc --noEmit`, `pyright`, `go vet`): Ryter runs it itself after each build \
              round that edited files and hands you the errors, so you need not run it. \
              Leave out what the project doesn't have.",
@@ -501,10 +501,10 @@ fn spec(name: &str) -> Option<ToolSpec> {
         "run_project" => (
             "Run the project's own approved commands from `.ryter/run.toml`. `start` \
              starts the product and waits until it is up; it stays up after your turn. \
-             `test` runs the project's test commands and returns what failed: each failed \
-             test with its assertion and where, and the runner's totals (a run that passed, \
-             its totals). `check` runs its fast check and returns the errors (Ryter also runs it by itself \
-             after each build round that edited files). `stop` stops what was started \
+             `test` runs every test command whole (the `test` tool does the same and can \
+             narrow the run to a name or to files). `check` runs its fast check and \
+             returns the errors (Ryter also runs it by itself after each build round that \
+             edited files). `stop` stops what was started \
              (the user usually does this, with /stop: leave the product running when you \
              finish). `status` says whether it is up. With no run file yet, propose one \
              with propose_run. The build and audit hats run these; the plan hat starts \
@@ -512,6 +512,27 @@ fn spec(name: &str) -> Option<ToolSpec> {
             json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["start","test","check","stop","status"]}
             },"required":["action"]}),
+        ),
+        "test" => (
+            "Run the project's tests, with the commands in the approved `.ryter/run.toml`, \
+             and get back what failed: each failed test with its assertion and where, and \
+             the runner's totals (a run that passed, its totals). With no arguments it \
+             runs every test command whole. `filter` runs the tests whose name matches, \
+             as the runner matches names (cargo test: a substring of the test's path, \
+             `decisions::newest`; pytest: a -k expression; go test: a -run regex; jest, \
+             vitest, bun test: -t; mocha: --grep): Ryter adds the runner's flag, so give \
+             the name alone. `files` runs the tests that cover those files (cargo: their \
+             packages; pytest, vitest, mocha: the test file named for each; jest: \
+             --findRelatedTests; go test: their directories): give the files you edited \
+             for a quick round. A narrowed run says nothing about the rest: run `test` \
+             with no arguments before you finish. A command Ryter can't narrow (make \
+             test, several commands in one) is listed as not run. With no run file yet, \
+             propose one with propose_run. The build and audit hats run tests; the plan \
+             hat starts nothing.",
+            json!({"type":"object","properties":{
+                "filter":{"type":"string","description":"a test name or pattern, as the runner matches it, without its flag"},
+                "files":{"type":"array","items":{"type":"string"},"description":"paths under the project whose tests should run, e.g. the files you edited"}
+            }}),
         ),
         "request_hat" => (
             "Ask the user to switch your hat, e.g. to build once a plan is ready or once a \
@@ -592,6 +613,7 @@ pub fn tools_for(role: Role) -> &'static [&'static str] {
             "update_rules",
             "propose_run",
             "run_project",
+            "test",
             "file_audit",
             "search_tool",
             "use_tool",
@@ -624,7 +646,7 @@ fn execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutp
         "ask_user" => ask_user(args, ctx),
         // The agent loop answers this itself: it changes who the agent is.
         "request_hat" | "present_plan" | "record_decision" | "load_skill" | "show_page"
-        | "update_rules" | "propose_run" | "run_project" | "file_audit" | "scout" => Ok(
+        | "update_rules" | "propose_run" | "run_project" | "test" | "file_audit" | "scout" => Ok(
             ToolOutput::err(format!("{name} is handled by the agent loop")),
         ),
         "check_package" => packages::check_package(args, ctx),
