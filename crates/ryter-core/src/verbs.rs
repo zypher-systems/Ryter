@@ -114,7 +114,7 @@ pub fn narrow(cmd: &str, filter: Option<&str>, files: &[String], root: &Path) ->
     let scoped = match found.runner {
         Runner::Cargo => Ok(cargo(cmd, filter, &matched, root, &mut unmatched)),
         Runner::Pytest => pytest(cmd, &found, filter, &matched, root, &mut unmatched),
-        Runner::Go => go(cmd, filter, &matched, &mut unmatched),
+        Runner::Go => go(cmd, filter, &matched, root, &mut unmatched),
         Runner::Jest => jest(cmd, &found, filter, &matched, root, &mut unmatched),
         Runner::Vitest | Runner::Bun => {
             by_test_file(cmd, &found, "-t", filter, &matched, root, &mut unmatched)
@@ -327,7 +327,7 @@ fn script_runner(root: &Path, script: &str, depth: u8, joint: &'static str) -> O
     // -- …`: a file list would widen to it.
     let positional = inner.positional
         || match strip_positional_paths(line, inner.runner, root) {
-            Ok(stripped) => stripped != line,
+            Ok((_, dropped)) => dropped,
             Err(_) => true,
         };
     Some(Recognised {
@@ -513,29 +513,48 @@ fn strip_positional_paths(
     cmd: &str,
     runner: Runner,
     root: &Path,
-) -> std::result::Result<String, String> {
-    let words: Vec<&str> = cmd.split_whitespace().collect();
-    let Some(start) = arguments_start(&words, runner) else {
-        return Ok(cmd.to_string());
+) -> std::result::Result<(String, bool), String> {
+    let words = shell_words(cmd).ok_or_else(|| "the command has an unclosed quote".to_string())?;
+    let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    let Some(start) = arguments_start(&refs, runner) else {
+        return Ok((cmd.to_string(), false));
     };
-    let mut out: Vec<&str> = words[..start.min(words.len())].to_vec();
+    let start = start.min(words.len());
+    let mut out: Vec<String> = words[..start].to_vec();
+    let mut dropped = false;
     let mut value_next = false;
-    for w in &words[start.min(words.len())..] {
+    let mut previous: Option<&str> = None;
+    for w in &words[start..] {
+        let w = w.as_str();
         if value_next {
-            out.push(w);
+            out.push(w.to_string());
             value_next = false;
+            previous = None;
             continue;
         }
         if w.starts_with('-') {
-            out.push(w);
+            out.push(w.to_string());
             value_next = !w.contains('=') && takes_value(runner, w);
+            previous = Some(w);
             continue;
         }
         if is_subcommand(runner, w) {
-            out.push(w);
+            out.push(w.to_string());
+            previous = None;
             continue;
         }
         if root.join(w).is_dir() {
+            // After a flag Ryter does not know, a folder may be the flag's
+            // value (`--html reports`) or a test path: dropping it either
+            // way turns the narrow run into the suite or breaks the flag.
+            if let Some(flag) = previous.filter(|f| !f.contains('=') && !boolean_flag(runner, f)) {
+                return Err(format!(
+                    "`{flag} {w}` in the command: Ryter can't tell the flag's value from a test \
+                     folder; write it as `{flag}={w}`, or run the runner with bash"
+                ));
+            }
+            dropped = true;
+            previous = None;
             continue;
         }
         if path_like(w) {
@@ -544,9 +563,213 @@ fn strip_positional_paths(
                  take it out of the run file, or run the runner with bash"
             ));
         }
-        out.push(w);
+        out.push(w.to_string());
+        previous = None;
     }
-    Ok(out.join(" "))
+    Ok((join_words(&out), dropped))
+}
+
+/// Flags the runners take without a value, so a folder after one is a
+/// test path and not the flag's value.
+fn boolean_flag(runner: Runner, flag: &str) -> bool {
+    let list: &[&str] = match runner {
+        Runner::Pytest => &[
+            "-q",
+            "-qq",
+            "-v",
+            "-vv",
+            "-s",
+            "-x",
+            "-l",
+            "--lf",
+            "--ff",
+            "--nf",
+            "--sw",
+            "--co",
+            "--collect-only",
+            "--quiet",
+            "--verbose",
+            "--no-header",
+            "--no-summary",
+            "--strict",
+            "--strict-markers",
+            "--exitfirst",
+            "--pdb",
+            "--trace",
+            "--runxfail",
+            "--disable-warnings",
+            "--cache-clear",
+            "--last-failed",
+            "--failed-first",
+            "--new-first",
+            "--stepwise",
+            "--showlocals",
+            "--full-trace",
+            "--color",
+        ],
+        Runner::Vitest => &[
+            "--run",
+            "--watch",
+            "-w",
+            "--coverage",
+            "--ui",
+            "--silent",
+            "--passWithNoTests",
+            "--update",
+            "-u",
+            "--changed",
+            "--no-color",
+            "--globals",
+            "--isolate",
+            "--dom",
+            "--browser",
+            "--standalone",
+            "--no-file-parallelism",
+            "--typecheck",
+        ],
+        Runner::Mocha => &[
+            "--exit",
+            "--bail",
+            "-b",
+            "--recursive",
+            "--watch",
+            "-w",
+            "--parallel",
+            "--forbid-only",
+            "--forbid-pending",
+            "--check-leaks",
+            "--color",
+            "--no-colors",
+            "--dry-run",
+            "--fail-zero",
+            "--allow-uncaught",
+            "--async-only",
+            "-A",
+            "--delay",
+            "--diff",
+            "--full-trace",
+            "--inline-diffs",
+            "--list-interfaces",
+            "--list-reporters",
+            "--sort",
+            "-S",
+            "--invert",
+            "-i",
+        ],
+        Runner::Bun => &[
+            "--watch",
+            "--coverage",
+            "--only",
+            "--todo",
+            "--update-snapshots",
+            "-u",
+            "--bail",
+            "--hot",
+            "--no-clear-screen",
+        ],
+        Runner::Jest => &[
+            "--ci",
+            "--coverage",
+            "--watch",
+            "--watchAll",
+            "--bail",
+            "-b",
+            "--verbose",
+            "--silent",
+            "--runInBand",
+            "-i",
+            "--passWithNoTests",
+            "--detectOpenHandles",
+            "--forceExit",
+            "--onlyChanged",
+            "-o",
+            "--lastCommit",
+            "--listTests",
+            "--json",
+            "--useStderr",
+            "--noStackTrace",
+            "--updateSnapshot",
+            "-u",
+            "--expand",
+            "-e",
+            "--clearCache",
+            "--showConfig",
+            "--debug",
+            "--no-cache",
+            "--colors",
+            "--no-colors",
+            "--findRelatedTests",
+            "--onlyFailures",
+            "-f",
+        ],
+        Runner::Cargo | Runner::Go => &[],
+    };
+    list.contains(&flag)
+}
+
+/// `cmd` split as a shell would: whitespace between words, single and
+/// double quotes grouping, a backslash escaping the next character outside
+/// single quotes. `None` for an unclosed quote.
+fn shell_words(cmd: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut chars = cmd.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(c) => word.push(c),
+                        None => return None,
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.next() {
+                        Some('"') => break,
+                        Some('\\') => match chars.next() {
+                            Some(c @ ('"' | '\\' | '$' | '`')) => word.push(c),
+                            Some(c) => {
+                                word.push('\\');
+                                word.push(c);
+                            }
+                            None => return None,
+                        },
+                        Some(c) => word.push(c),
+                        None => return None,
+                    }
+                }
+            }
+            '\\' => {
+                in_word = true;
+                word.push(chars.next()?);
+            }
+            c if c.is_whitespace() => {
+                if in_word {
+                    words.push(std::mem::take(&mut word));
+                    in_word = false;
+                }
+            }
+            c => {
+                in_word = true;
+                word.push(c);
+            }
+        }
+    }
+    if in_word {
+        words.push(word);
+    }
+    Some(words)
+}
+
+/// Words back into one command line, each quoted as it needs.
+fn join_words(words: &[String]) -> String {
+    words.iter().map(|w| quote(w)).collect::<Vec<_>>().join(" ")
 }
 
 /// `cmd` ready for a file list: its own test paths taken out, or why it
@@ -563,7 +786,7 @@ fn without_own_paths(
                 .into(),
         );
     }
-    strip_positional_paths(cmd, found.runner, root)
+    strip_positional_paths(cmd, found.runner, root).map(|(cmd, _)| cmd)
 }
 
 /// The test files for a source file, by name: `test_{stem}.py` and
@@ -650,9 +873,9 @@ fn append(cmd: &str, found: &Recognised, args: &[String]) -> String {
 /// `arg` as one shell word.
 fn quote(arg: &str) -> String {
     if !arg.is_empty()
-        && arg
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '@'))
+        && arg.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':' | '@' | '=' | ',')
+        })
     {
         return arg.to_string();
     }
@@ -816,6 +1039,7 @@ fn go(
     cmd: &str,
     filter: Option<&str>,
     files: &[PathBuf],
+    root: &Path,
     unmatched: &mut Vec<String>,
 ) -> std::result::Result<Option<String>, String> {
     let mut dirs = BTreeSet::new();
@@ -837,24 +1061,45 @@ fn go(
     if dirs.is_empty() && !files.is_empty() {
         return Ok(None);
     }
-    let words: Vec<&str> = cmd.split_whitespace().collect();
-    let start = arguments_start(&words, Runner::Go).unwrap_or(words.len());
-    let mut out: Vec<String> = words[..start.min(words.len())]
+    let words = shell_words(cmd).ok_or_else(|| "the command has an unclosed quote".to_string())?;
+    let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+    let start = arguments_start(&refs, Runner::Go)
+        .unwrap_or(words.len())
+        .min(words.len());
+    let mut out: Vec<String> = words[..start].to_vec();
+    // Everything from `-args` on belongs to the test binary: the packages,
+    // and a `-run`, go before it.
+    let args_at = words[start..]
         .iter()
-        .map(|w| w.to_string())
-        .collect();
+        .position(|w| matches!(w.as_str(), "-args" | "--args" | "-test.args"))
+        .map(|i| start + i)
+        .unwrap_or(words.len());
+    let own = &words[start..args_at];
     let mut value_next = false;
-    for w in &words[start.min(words.len())..] {
+    for (i, w) in own.iter().enumerate() {
+        let w = w.as_str();
         if value_next {
-            out.push((*w).to_string());
+            out.push(w.to_string());
             value_next = false;
             continue;
         }
         if w.starts_with('-') {
-            out.push((*w).to_string());
+            out.push(w.to_string());
+            if w.contains('=') {
+                continue;
+            }
             // Go's flags take their value as the next word unless they are
-            // boolean or written `-flag=value`.
-            value_next = !w.contains('=') && !go_boolean_flag(w);
+            // boolean. For a flag Ryter does not know, the next word is a
+            // value unless it reads as a package pattern.
+            let name = go_flag_name(w);
+            value_next = if go_value_flag(&name) {
+                true
+            } else if go_boolean_flag(&name) {
+                false
+            } else {
+                !own.get(i + 1)
+                    .is_some_and(|next| go_package_word(next, root))
+            };
             continue;
         }
         // Every other word names packages (`./...`, `all`, `...`, a
@@ -862,38 +1107,106 @@ fn go(
         if !dirs.is_empty() {
             continue;
         }
-        out.push((*w).to_string());
+        out.push(w.to_string());
     }
     if let Some(f) = filter {
         out.push("-run".into());
-        out.push(quote(f));
+        out.push(f.to_string());
     }
-    out.extend(dirs.iter().map(|d| quote(d)));
-    Ok(Some(out.join(" ")))
+    out.extend(dirs.iter().cloned());
+    out.extend(words[args_at..].iter().cloned());
+    Ok(Some(join_words(&out)))
 }
 
-/// `go test`'s flags that take no value.
-fn go_boolean_flag(flag: &str) -> bool {
+/// A Go flag's bare name: `--race` and `-test.race` are `race`.
+fn go_flag_name(flag: &str) -> String {
+    let name = flag.trim_start_matches('-');
+    name.strip_prefix("test.").unwrap_or(name).to_string()
+}
+
+/// `go test`'s flags that take no value (`go help testflag`, `go help build`).
+fn go_boolean_flag(name: &str) -> bool {
     matches!(
-        flag,
-        "-v" | "-race"
-            | "-cover"
-            | "-short"
-            | "-json"
-            | "-failfast"
-            | "-benchmem"
-            | "-msan"
-            | "-asan"
-            | "-a"
-            | "-n"
-            | "-x"
-            | "-work"
-            | "-trimpath"
-            | "-linkshared"
-            | "-c"
-            | "-i"
-            | "-fullpath"
+        name,
+        "v" | "race"
+            | "cover"
+            | "short"
+            | "json"
+            | "failfast"
+            | "benchmem"
+            | "msan"
+            | "asan"
+            | "a"
+            | "n"
+            | "x"
+            | "work"
+            | "trimpath"
+            | "linkshared"
+            | "c"
+            | "i"
+            | "fullpath"
+            | "buildvcs"
+            | "artifacts"
+            | "modcacherw"
+            | "paniconexit0"
     )
+}
+
+/// `go test`'s flags whose value is a path or free text, kept whatever it
+/// looks like.
+fn go_value_flag(name: &str) -> bool {
+    matches!(
+        name,
+        "coverprofile"
+            | "exec"
+            | "o"
+            | "outputdir"
+            | "C"
+            | "pkgdir"
+            | "toolexec"
+            | "ldflags"
+            | "gcflags"
+            | "asmflags"
+            | "gccgoflags"
+            | "tags"
+            | "mod"
+            | "modfile"
+            | "overlay"
+            | "run"
+            | "bench"
+            | "skip"
+            | "timeout"
+            | "count"
+            | "cpu"
+            | "parallel"
+            | "shuffle"
+            | "coverpkg"
+            | "covermode"
+            | "benchtime"
+            | "blockprofile"
+            | "cpuprofile"
+            | "memprofile"
+            | "mutexprofile"
+            | "trace"
+            | "fuzz"
+            | "fuzztime"
+            | "list"
+            | "p"
+            | "vet"
+            | "installsuffix"
+            | "compiler"
+            | "buildmode"
+            | "pgo"
+            | "cache"
+    )
+}
+
+/// Whether a word in `go test` names packages rather than a flag's value.
+fn go_package_word(word: &str, root: &Path) -> bool {
+    matches!(word, "..." | "all" | "std" | "cmd" | "." | "./...")
+        || word.ends_with("/...")
+        || (word.starts_with("./") && root.join(word).is_dir())
+        || (!word.contains('.') && root.join(word).is_dir())
 }
 
 /// `jest`: `-t` for the filter, `--findRelatedTests` for the files, which
@@ -1134,7 +1447,8 @@ pub fn detect(root: &Path) -> Option<(crate::run::RunFile, &'static str)> {
         };
         return Some((run, source));
     }
-    if let Some(name) = ["Makefile", "makefile", "GNUmakefile"]
+    // In the order GNU make reads them.
+    if let Some(name) = ["GNUmakefile", "makefile", "Makefile"]
         .into_iter()
         .find(|n| has(n))
     {
@@ -1603,6 +1917,157 @@ mod tests {
             .cmd,
             "go test './my pkg'"
         );
+        // `-args` and everything after it belong to the test binary: the
+        // packages and a `-run` go before it.
+        assert_eq!(
+            run("go test ./... -args -update -golden", &["pkg/a.go"]),
+            "go test ./pkg -args -update -golden"
+        );
+        assert_eq!(
+            narrowed(narrow(
+                "go test ./... -args -update",
+                Some("TestX"),
+                &strings(&["pkg/a.go"]),
+                root.path()
+            ))
+            .cmd,
+            "go test -run TestX ./pkg -args -update"
+        );
+        // A quoted value is one word and comes back quoted.
+        assert_eq!(
+            run("go test -ldflags \"-s -w\" ./...", &["pkg/a.go"]),
+            "go test -ldflags '-s -w' ./pkg"
+        );
+        assert_eq!(
+            run("go test -gcflags 'all=-N -l' ./...", &["pkg/a.go"]),
+            "go test -gcflags 'all=-N -l' ./pkg"
+        );
+        // Boolean flags, a doubled dash and the `test.` prefix.
+        for flag in [
+            "-buildvcs",
+            "-artifacts",
+            "-modcacherw",
+            "-paniconexit0",
+            "--race",
+            "-test.v",
+            "--test.short",
+        ] {
+            assert_eq!(
+                run(&format!("go test {flag} ./..."), &["pkg/a.go"]),
+                format!("go test {flag} ./pkg"),
+                "{flag}"
+            );
+        }
+        // A flag Ryter does not know keeps a value that is not a package,
+        // and drops a package that follows it.
+        assert_eq!(
+            run("go test -newflag value ./...", &["pkg/a.go"]),
+            "go test -newflag value ./pkg"
+        );
+        assert_eq!(
+            run("go test -newbool ./...", &["pkg/a.go"]),
+            "go test -newbool ./pkg"
+        );
+        assert_eq!(
+            run("go test -outputdir ./pkg ./...", &["pkg/a.go"]),
+            "go test -outputdir ./pkg ./pkg"
+        );
+    }
+
+    #[test]
+    fn quoted_folders_and_unknown_flags_in_the_command() {
+        let root = tempfile::tempdir().unwrap();
+        files(
+            root.path(),
+            &[
+                ("pkg/mod.py", ""),
+                ("tests/test_mod.py", ""),
+                ("reports/.keep", ""),
+                ("coverage/.keep", ""),
+                ("src/sum.ts", ""),
+                ("src/sum.test.ts", ""),
+                (
+                    "package.json",
+                    r#"{"scripts":{"test":"vitest run \"test\""}}"#,
+                ),
+                ("test/.keep", ""),
+            ],
+        );
+        // A quoted folder is still a folder.
+        let n = narrowed(narrow(
+            "pytest -q \"tests\"",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest -q tests/test_mod.py");
+        let n = narrowed(narrow(
+            "npx vitest run 'test'",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "npx vitest run src/sum.test.ts");
+        let why = cannot(narrow(
+            "npm test",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert!(why.contains("already names test paths"), "{why}");
+        // Other quoted words keep their meaning.
+        let n = narrowed(narrow(
+            "pytest -k 'a and b' tests",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest -k 'a and b' tests/test_mod.py");
+        assert!(
+            cannot(narrow(
+                "pytest 'tests",
+                None,
+                &strings(&["pkg/mod.py"]),
+                root.path()
+            ))
+            .contains("unclosed quote")
+        );
+        // A flag Ryter does not know, followed by a folder: refused, not
+        // dropped; a known boolean flag before a folder is not a value.
+        let why = cannot(narrow(
+            "pytest --html reports",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert!(why.contains("`--html reports` in the command"), "{why}");
+        let why = cannot(narrow(
+            "npx vitest run --coverage.reportsDirectory ./coverage",
+            None,
+            &strings(&["src/sum.ts"]),
+            root.path(),
+        ));
+        assert!(
+            why.contains("--coverage.reportsDirectory ./coverage"),
+            "{why}"
+        );
+        let n = narrowed(narrow(
+            "pytest --html=reports tests",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest --html=reports tests/test_mod.py");
+        let n = narrowed(narrow(
+            "pytest -x tests",
+            None,
+            &strings(&["pkg/mod.py"]),
+            root.path(),
+        ));
+        assert_eq!(n.cmd, "pytest -x tests/test_mod.py");
+        // A filter alone touches none of it.
+        let n = narrowed(narrow("pytest --html reports", Some("x"), &[], root.path()));
+        assert_eq!(n.cmd, "pytest --html reports -k x");
     }
 
     #[test]
@@ -1858,6 +2323,13 @@ mod tests {
         assert_eq!(
             (from, run.test),
             ("GNUmakefile", vec!["make test".to_string()])
+        );
+        // With both, the one make reads.
+        files(lower.path(), &[("Makefile", "check:\n\t./c\n")]);
+        let (run, from) = detect(lower.path()).unwrap();
+        assert_eq!(
+            (from, run.test, run.check),
+            ("GNUmakefile", vec!["make test".to_string()], None)
         );
     }
 
