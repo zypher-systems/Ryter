@@ -465,9 +465,15 @@ impl Drain {
     }
 }
 
+/// How much of a command's output is kept while it runs, head and tail. A
+/// tool result is cut to `MAX_TOOL_OUTPUT_BYTES` afterwards; this is larger
+/// so that the failures digest reads a test run whole, failures in the
+/// middle included, before that cut.
+pub(crate) const CAPTURE_BYTES: usize = 1 << 20;
+
 fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> Drain {
     let buf = std::sync::Arc::new(std::sync::Mutex::new(super::bounded::Capture::new(
-        super::MAX_TOOL_OUTPUT_BYTES,
+        CAPTURE_BYTES,
     )));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stopped = stop.clone();
@@ -513,6 +519,41 @@ pub(crate) fn group_alive(pgid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Through a real command: a test run longer than a tool result may
+    /// be, its one failure in the middle, is captured whole and the digest
+    /// leads with that failure.
+    #[test]
+    fn a_long_real_test_run_keeps_its_failure_in_the_middle() {
+        let (r, _) = run(
+            "i=0; while [ $i -lt 2500 ]; do echo \"test x_$i ... ok\"; i=$((i+1)); done; \
+             printf 'failures:\\n\\n---- tests::a stdout ----\\n'; \
+             printf \"thread 'tests::a' panicked at src/lib.rs:1:1:\\nno\\n\\n\"; \
+             i=0; while [ $i -lt 2500 ]; do echo \"test y_$i ... ok\"; i=$((i+1)); done; \
+             echo 'test result: FAILED. 5000 passed; 1 failed; 0 ignored'; exit 101",
+            60,
+        );
+        let Run::Failed(text) = r else {
+            panic!("{r:?}");
+        };
+        assert!(
+            text.len() > super::super::MAX_TOOL_OUTPUT_BYTES,
+            "{}",
+            text.len()
+        );
+        assert!(
+            text.contains("panicked at src/lib.rs:1:1"),
+            "the capture dropped the failure"
+        );
+        let led = with_failures_first(text);
+        assert!(
+            led.starts_with(
+                "1 failed\n\n✗ tests::a\nthread 'tests::a' panicked at src/lib.rs:1:1:\nno\n"
+            ),
+            "{}",
+            &led[..200]
+        );
+    }
 
     /// A failed test run too long to keep whole leads with its failures,
     /// which the cut to head and tail would have dropped; one that fits is
@@ -705,12 +746,12 @@ mod tests {
 
     #[test]
     fn large_output_does_not_block() {
-        let (r, took) = run("head -c 1000000 /dev/zero | tr '\\0' x", 20);
+        let (r, took) = run("head -c 3000000 /dev/zero | tr '\\0' x", 20);
         assert!(took < Duration::from_secs(5), "took {took:?}");
         match r {
             Run::Ok(text) => {
-                assert!(text.len() < super::super::MAX_TOOL_OUTPUT_BYTES + 128);
-                assert!(text.contains("968000 bytes elided"));
+                assert!(text.len() < CAPTURE_BYTES + 128);
+                assert!(text.contains("1951424 bytes elided"));
                 assert!(text.starts_with('x') && text.ends_with('x'));
             }
             other => panic!("{other:?}"),

@@ -3443,6 +3443,13 @@ impl Agent {
         self.session_edits.clear();
         self.last_check = None;
         self.session_turns = 0;
+        // What the old session read is not what this one has seen: a
+        // rewrite here needs its own read, as the refusal says.
+        self.ctx
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     fn maybe_compact(&mut self, system: &mut String, model: &str, connection: &str) -> Result<()> {
@@ -3729,6 +3736,10 @@ impl Agent {
         // lookups, under the scout's own row.
         let mut ctx = self.ctx.clone();
         ctx.live = None;
+        // The scout's reads are its own: what it read stays in its
+        // transcript, so the hat has not seen the file and may not rewrite
+        // it on the scout's summary.
+        ctx.seen = Default::default();
         let cap = call.cfg.rounds.max(1);
         loop {
             if self.ctx.cancel.is_cancelled() {
@@ -4400,6 +4411,8 @@ mod tests {
         agent.ctx.role = Role::Plan;
         let r = agent.turn("what does hello.txt say?").await.unwrap();
         assert_eq!(r.text, "The scout read it: hi there.");
+        // The scout's read is the scout's: the hat has not seen the file.
+        assert!(agent.ctx.seen.lock().unwrap().is_empty());
         let t = &agent.session.transcript;
         assert!(
             t.iter().all(|m| m
@@ -7496,6 +7509,8 @@ mod tests {
             say("second"),
             write("README.md", "clobbered again\n"),
             say("third"),
+            write("README.md", "after new\n"),
+            say("fourth"),
         ]);
         let readme = cwd.path().join("README.md");
         agent.turn("rewrite the readme").await.unwrap();
@@ -7533,6 +7548,30 @@ mod tests {
             last.contains("README.md changed since you last read it (now 2 lines)"),
             "{last}"
         );
+        // A new session in the same project (`/new`) has seen nothing: the
+        // old session's read does not carry over.
+        let fresh = Session::create(
+            _home.path(),
+            cwd.path(),
+            "spacexsi".into(),
+            "grok-4.6".into(),
+        )
+        .unwrap();
+        agent.swap_session(fresh);
+        agent.turn("rewrite it after /new").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            "by the model\nand by me\n"
+        );
+        let last = agent
+            .session
+            .transcript
+            .iter()
+            .rev()
+            .find(|m| m.role == "tool")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        assert!(last.contains("you have not read it this session"), "{last}");
     }
 
     /// A failing check script, and the files the model writes.
@@ -7674,12 +7713,11 @@ mod tests {
         );
         assert!(!n.iter().any(|m| m.starts_with("not done:")), "{n:?}");
         // A check that cannot run here: no loop.
-        let (_home, cwd, mut agent, check) =
+        let (_home, cwd, mut agent, _check) =
             checked_project(vec![write("notes.txt", "one\n"), say("done"), say("never")]);
-        std::fs::write(&check, "sh: 1: no-such-checker: not found\n").unwrap();
         std::fs::write(
             cwd.path().join("check.sh"),
-            "echo 'sh: 1: no-such-checker: command not found' >&2; exit 127\n",
+            "echo 'sh: 1: no-such-checker: not found' >&2; exit 127\n",
         )
         .unwrap();
         let (tx, rx) = std::sync::mpsc::channel();

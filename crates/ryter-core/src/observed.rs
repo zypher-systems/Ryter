@@ -58,17 +58,99 @@ impl Outcome {
         if ok {
             return Self::Ok;
         }
-        let head: String = output.lines().take(3).collect::<Vec<_>>().join("\n");
-        let low = head.to_ascii_lowercase();
-        if low.contains("command not found")
-            || low.contains("not recognized as an internal or external command")
-            || (low.contains("no such file or directory") && low.contains("sh:"))
+        // bash: `bash: line 1: pnpm: command not found`; dash (`sh` on
+        // Debian and Ubuntu): `sh: 1: pnpm: not found`; a script that is
+        // not there: `sh: 1: ./run: No such file or directory`.
+        let shell_said = |low: &str| {
+            let from_shell = low.starts_with("sh:")
+                || low.starts_with("bash:")
+                || low.starts_with("dash:")
+                || low.starts_with("zsh:")
+                || low.contains("/sh: ")
+                || low.contains("/bash: ")
+                || low.contains("/env: ");
+            low.contains("command not found")
+                || low.contains("not recognized as an internal or external command")
+                || (from_shell
+                    && (low.ends_with(": not found") || low.contains("no such file or directory")))
+        };
+        if output
+            .lines()
+            .take(3)
+            .any(|l| shell_said(&l.trim().to_ascii_lowercase()))
         {
             Self::NotFound
         } else {
             Self::Failed
         }
     }
+}
+
+/// Whether a command carries what looks like a secret: a password or token
+/// on an option or in an assignment, an auth header, a key by its shape. A
+/// command that does is not noted: the note is kept on disk and sent to the
+/// provider at the start of every later session.
+fn carries_a_secret(cmd: &str) -> bool {
+    const KEYS: &[&str] = &[
+        "password",
+        "passwd",
+        "secret",
+        "token",
+        "api_key",
+        "apikey",
+        "api-key",
+        "access_key",
+        "private_key",
+        "credential",
+        "auth",
+    ];
+    let words: Vec<&str> = cmd.split_whitespace().collect();
+    for (i, w) in words.iter().enumerate() {
+        let low = w.to_ascii_lowercase();
+        if let Some((k, v)) = low.split_once('=') {
+            if !v.is_empty()
+                && KEYS
+                    .iter()
+                    .any(|key| k.trim_start_matches('-').contains(key))
+            {
+                return true;
+            }
+        }
+        let next = words.get(i + 1).map(|n| n.to_ascii_lowercase());
+        match low.as_str() {
+            "-u" | "--user" | "--password" | "--oauth2-bearer" | "--token" => {
+                if next.as_deref().is_some_and(|n| !n.starts_with('-')) {
+                    return true;
+                }
+            }
+            "-h" | "--header" => {
+                let rest = cmd.to_ascii_lowercase();
+                if rest.contains("authorization")
+                    || rest.contains("bearer ")
+                    || rest.contains("basic ")
+                    || rest.contains("cookie")
+                    || rest.contains("api-key")
+                    || rest.contains("token")
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        let bare = low.trim_matches(|c: char| c == '"' || c == '\'');
+        if bare.starts_with("sk-")
+            || bare.starts_with("ghp_")
+            || bare.starts_with("gho_")
+            || bare.starts_with("github_pat_")
+            || bare.starts_with("xoxb-")
+            || bare.starts_with("xoxp-")
+            || bare.starts_with("akia")
+            || (bare.starts_with("eyj") && bare.len() > 40)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// One command, over its runs here.
@@ -186,7 +268,7 @@ pub fn note_command(
     took: Duration,
     always: bool,
 ) {
-    if !worth_noting(cmd, took, always) {
+    if !worth_noting(cmd, took, always) || carries_a_secret(cmd) {
         return;
     }
     let mut observed = load(home, root);
@@ -532,9 +614,10 @@ mod tests {
     fn an_outcome_is_read_from_the_run() {
         assert_eq!(Outcome::of(true, false, ""), Outcome::Ok);
         assert_eq!(Outcome::of(false, true, ""), Outcome::TimedOut);
+        // bash, dash (`sh` on Debian and Ubuntu), a shell by its path.
         assert_eq!(
             Outcome::of(false, false, "sh: 1: pnpm: not found\n[exit 127]"),
-            Outcome::Failed
+            Outcome::NotFound
         );
         assert_eq!(
             Outcome::of(
@@ -545,13 +628,62 @@ mod tests {
             Outcome::NotFound
         );
         assert_eq!(
+            Outcome::of(false, false, "/bin/sh: 1: pnpm: not found"),
+            Outcome::NotFound
+        );
+        assert_eq!(
             Outcome::of(false, false, "sh: 1: ./run: No such file or directory"),
             Outcome::NotFound
         );
+        // A program that ran and failed, whatever it said.
         assert_eq!(
             Outcome::of(false, false, "error: test failed"),
             Outcome::Failed
         );
+        assert_eq!(
+            Outcome::of(false, false, "Error: module not found: ./x\n[exit 1]"),
+            Outcome::Failed
+        );
+        assert_eq!(
+            Outcome::of(false, false, "cat: data/x: No such file or directory"),
+            Outcome::Failed
+        );
+    }
+
+    /// A command with a secret in it is not written down: the note would
+    /// go to the provider at every later session's start.
+    #[test]
+    fn a_command_carrying_a_secret_is_not_noted() {
+        let home = TempDir::new().unwrap();
+        let root = TempDir::new().unwrap();
+        for cmd in [
+            "curl -u me:hunter2 https://api.example.com/x",
+            "curl -H 'Authorization: Bearer abc.def' https://x",
+            "TOKEN=abc npm test",
+            "./deploy --password=pw",
+            "psql --password pw -c 'select 1'",
+            "echo sk-abcdefghijklmnop | wc -c",
+        ] {
+            note_command(
+                home.path(),
+                root.path(),
+                cmd,
+                Outcome::Ok,
+                Duration::from_secs(3),
+                true,
+            );
+            assert!(carries_a_secret(cmd), "{cmd}");
+        }
+        assert!(load(home.path(), root.path()).commands.is_empty());
+        for cmd in [
+            "cargo test",
+            "npm run build -- --token-file ./x",
+            "curl -s https://x/health",
+            "git -c user.name=me commit -m x",
+            "python3 -m pytest -p no:cacheprovider",
+        ] {
+            assert!(!carries_a_secret(cmd), "{cmd}");
+        }
     }
 
     #[test]

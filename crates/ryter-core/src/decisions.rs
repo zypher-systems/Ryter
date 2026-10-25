@@ -204,15 +204,28 @@ pub fn shown(root: &Path, cap: usize) -> Option<String> {
         .find("\n## ")
         .map_or(text.as_str(), |i| &text[i + 1..])
         .trim_end();
+    Some(newest(text, cap))
+}
+
+/// `text` whole when it fits `cap`, otherwise its newest `cap` bytes from
+/// an entry's start, with a line saying so. The cut is moved onto a
+/// character boundary: the file is Unicode (every entry has a `·`, and the
+/// user writes what they like), and a byte index inside a character is a
+/// panic, on every turn, until the file is edited by hand.
+fn newest(text: &str, cap: usize) -> String {
     if text.len() <= cap {
-        return Some(text.to_string());
+        return text.to_string();
     }
-    let tail = &text[text.len() - cap..];
+    let mut cut = text.len() - cap;
+    while !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    let tail = &text[cut..];
     let from = tail.find("\n### ").map_or(0, |i| i + 1);
-    Some(format!(
+    format!(
         "…(earlier entries left out; the whole file is `{FILE}`)\n\n{}",
         tail[from..].trim_end()
-    ))
+    )
 }
 
 /// What a reader of the work is told about the choices made in it:
@@ -450,6 +463,28 @@ mod tests {
         assert!(cut.contains("### No export button"), "{cut}");
         assert!(!cut.contains("SQLite"), "{cut}");
         assert_eq!(shown(TempDir::new().unwrap().path(), 10_000), None);
+    }
+
+    /// The cut of a long file can land inside a character (`·`, `é`): it is
+    /// moved onto a boundary instead of panicking in the prompt.
+    #[test]
+    fn a_cut_inside_a_character_does_not_panic() {
+        let text = format!(
+            "## work\n\n### première\n- Chose: {}\n\n### b\n- Why: fin · 2026-10-25 02:26",
+            "é".repeat(40)
+        );
+        // Every cut, boundary or not: no panic, the end kept, the marker on.
+        for cut in 1..text.len() {
+            let shown = newest(&text, text.len() - cut);
+            assert!(shown.starts_with("…(earlier entries left out"), "{shown}");
+            let kept = shown.rsplit("\n\n").next().unwrap();
+            assert!(text.ends_with(kept), "{shown}");
+        }
+        let i = text.find('é').unwrap() + 1;
+        assert!(!text.is_char_boundary(i));
+        let shown = newest(&text, text.len() - i);
+        assert!(shown.contains("### b"), "{shown}");
+        assert_eq!(newest(&text, text.len()), text);
     }
 
     #[test]

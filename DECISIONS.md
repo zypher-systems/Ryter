@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-25 — What the 0.40.0 reviews found: a byte cut in Unicode, a capture that dropped the middle, and what "seen" must not include
+
+Both reviews of PR #104 rejected on `decisions::shown`, which cut the newest 6,000 bytes of the decisions file at a raw byte index. Every entry has a `·`, and a cut inside it panics in `prompt::system`, on every turn of every hat, until the user edits the file by hand. The cut now moves onto a character boundary (`newest`), tested at every byte offset of a file full of `é` and `·`.
+
+The second review found three more. The command capture kept 32,000 bytes (head and tail) while a command ran, so a test run longer than that had its failures dropped before the digest ever saw them: the digest fixed the cut and not the capture. The capture now holds a megabyte (`CAPTURE_BYTES`); the tool result is still cut to 32,000 bytes afterwards, with the digest in front of it. Tested through a real 5,000-line run with one failure in the middle. `Agent::swap_session` let go of the map and the notes but not of what the model had seen, so after `/new` a rewrite of a file the old session read was allowed, against what the refusal says and the release notes promised; it clears the record now. And the scout's reads marked files as seen for the hat, because the scout's tool context was a clone sharing the record: the build hat could rewrite a file on the scout's summary. The scout's clone now has a record of its own.
+
+Two notes taken with them. Dash, which is `sh` on Debian and Ubuntu, says `sh: 1: pnpm: not found`, which `Outcome::of` read as a failure, so done means checked would have held the model to a check whose program is missing on exactly those machines; a shell's `: not found` now counts as not found, while a program's own "not found" (a module, a file under `cat`) stays a failure. And a noted command went to disk and to the provider at every later session's start verbatim, secrets included: a command that carries what looks like one (a password or token in an option or an assignment, an auth or cookie header, a key by its shape) is not noted at all. Left: `-p` is not read as a password option, since `pytest -p` is a plugin; a password passed that way is noted.
+
 ### 2026-10-25 — Done means checked: a build turn does not end on "done" while the project's check fails
 
 The check after edits (0.37.0) ran the project's fast check after every build round that edited files and handed the model the errors. The turn still ended on the model's word: "done" with the check red was the end, the row showed a cross, and the user was the one who noticed. The hard bench logs show this as the commonest way a task is lost: a confident summary one round before the fix.
