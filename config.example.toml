@@ -19,6 +19,16 @@ env_key = "OPENROUTER_API_KEY"
 default_model = "anthropic/claude-sonnet-4.6"
 http_referer = "https://github.com/zypher-systems/ryter"
 x_title = "Ryter"
+# Which host serves a model: OpenRouter's `provider` object, sent with every
+# request. Unset, OpenRouter chooses, and its choice is not the cheapest; the
+# host that served each call is shown in /spend and `ryter spend`.
+# [connections.openrouter.routing]
+# sort = "price"                           # or "throughput", "latency"
+# quantizations = ["fp8", "bf16", "fp16"]  # not a host serving a lossier quant
+# order = ["baseten"]                      # hosts to try first, by OpenRouter's slug
+# allow_fallbacks = false                  # and no other when those fail
+# only = ["baseten", "fireworks"]          # the only hosts allowed
+# ignore = ["wafer"]                       # hosts never used
 
 [connections.anthropic]
 kind = "anthropic"

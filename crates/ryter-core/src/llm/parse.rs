@@ -129,6 +129,12 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<bool> {
     if let Some(c) = reported_cost(&v) {
         out.push(StreamDelta::ReportedCost(c));
     }
+    // OpenRouter names the host on every chunk; the last one read stands.
+    if let Some(h) = v.get("provider").and_then(Value::as_str) {
+        if !h.is_empty() {
+            out.push(StreamDelta::Host(h.to_string()));
+        }
+    }
     let Some(choice) = v
         .get("choices")
         .and_then(|c| c.as_array())
@@ -654,6 +660,33 @@ data: {"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":40}}
             })
             .unwrap();
         assert!((c - 0.5).abs() < 1e-12);
+    }
+
+    /// OpenRouter names the host that served the call on every chunk. The
+    /// host decides the price, so it is read; another wire names none.
+    #[test]
+    fn the_host_that_served_the_call_is_read_off_the_chunks() {
+        let hosts = |backend, sse: &str| -> Vec<String> {
+            parse_sse(backend, sse)
+                .unwrap()
+                .into_iter()
+                .filter_map(|d| match d {
+                    StreamDelta::Host(h) => Some(h),
+                    _ => None,
+                })
+                .collect()
+        };
+        let chat = "data: {\"provider\":\"Baseten\",\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n\
+                    data: {\"provider\":\"Baseten\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"cost\":0.002}}\n\n\
+                    data: [DONE]\n\n";
+        assert_eq!(
+            hosts(Backend::ChatCompletions, chat),
+            vec!["Baseten".to_string(), "Baseten".to_string()]
+        );
+        let plain = "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n";
+        assert!(hosts(Backend::ChatCompletions, plain).is_empty());
+        let empty = "data: {\"provider\":\"\",\"choices\":[]}\n\ndata: [DONE]\n\n";
+        assert!(hosts(Backend::ChatCompletions, empty).is_empty());
     }
 
     /// OpenAI-style counts already include cached tokens; DeepSeek names its

@@ -148,6 +148,18 @@ class Charges(unittest.TestCase):
         self.assertFalse(c['complete'])
         self.assertIsNone(charge(Run('ryter=c:m'), 'not json\n')['usd'])
 
+    def test_ryter_names_the_hosts_that_served_it(self):
+        out = lines({'kind': 'spend', 'total_usd': 0.02, 'incomplete': False, 'input_tokens': 1, 'cached_tokens': 0,
+                     'output_tokens': 1, 'model': 'm', 'host': 'Baseten'},
+                    {'kind': 'spend', 'total_usd': 0.001, 'incomplete': False, 'input_tokens': 1, 'cached_tokens': 0,
+                     'output_tokens': 1, 'model': 'm', 'host': 'Wafer'},
+                    {'kind': 'spend', 'total_usd': 0.02, 'incomplete': False, 'input_tokens': 1, 'cached_tokens': 0,
+                     'output_tokens': 1, 'model': 'm', 'host': 'Baseten'},
+                    {'kind': 'spend', 'total_usd': 0.01, 'incomplete': False, 'input_tokens': 1, 'cached_tokens': 0,
+                     'output_tokens': 1, 'model': 'm'})
+        self.assertEqual(charge(Run('ryter=c:m'), out)['hosts'], {'Baseten': 2, 'Wafer': 1})
+        self.assertEqual(charge(Run('opencode=p/m'), lines({'type': 'step_finish'}))['hosts'], {})
+
     def test_claude_code_reports_its_own_dollars(self):
         out = json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'num_turns': 7,
                           'total_cost_usd': 0.1234, 'duration_ms': 90_000, 'result': 'done',
@@ -192,16 +204,18 @@ class Charges(unittest.TestCase):
 
 class Summary(unittest.TestCase):
     def report(self):
-        def row(solved, usd, seconds=60, by='tool', timed_out=False, calls=4):
+        def row(solved, usd, seconds=60, by='tool', timed_out=False, calls=4, hosts=None):
             return {'solved': solved, 'usd': usd, 'seconds': seconds, 'timed_out': timed_out,
-                    'charge': {'priced_by': by, 'calls': calls}, 'acceptance': []}
+                    'charge': {'priced_by': by, 'calls': calls, 'hosts': hosts or {}}, 'acceptance': []}
         return {'date': '2026-10-22', 'ryter': 'abc1234', 'runs': ['ryter=c:m', 'claude=s', 'codex=g'],
                 'versions': {'ryter': 'ryter 0.37.0', 'claude': None, 'codex': 'codex-cli 0.1'},
                 'budget_usd': 5.0, 'timeout_seconds': 600, 'total_usd': 0.9,
                 'prices': {'g': {'input': 2.0, 'cached': 0.2, 'output': 10.0}},
-                'tasks': {'a': {'results': {'ryter=c:m': row(True, 0.10), 'claude=s': row(True, 0.30, by='tool estimate'),
+                'tasks': {'a': {'results': {'ryter=c:m': row(True, 0.10, hosts={'Baseten': 4}),
+                                            'claude=s': row(True, 0.30, by='tool estimate'),
                                             'codex=g': row(False, 0.05, 600, 'table', True)}},
-                          'b': {'results': {'ryter=c:m': row(True, 0.20, 120, calls=6), 'claude=s': row(False, 0.25),
+                          'b': {'results': {'ryter=c:m': row(True, 0.20, 120, calls=6, hosts={'Baseten': 1, 'Wafer': 5}),
+                                            'claude=s': row(False, 0.25),
                                             'codex=g': {'error': 'fixture trust failed', 'usd': None}}}}}
 
     def test_solved_per_dollar_is_solved_over_cost(self):
@@ -259,6 +273,14 @@ class Summary(unittest.TestCase):
         self.assertIn('| a | ✓ $0.100 | ✓ $0.300 | ✗ $0.050 (timed out) |', md)
         self.assertIn('| b | ✓ $0.200 | ✗ $0.250 | error: fixture trust failed |', md)
         self.assertIn('claude (version unknown)', md)
+        self.assertIn('Hosts that served the calls, where the tool names them: `ryter=c:m` Baseten (5), Wafer (5).', md)
+
+    def test_a_report_without_hosts_says_nothing_about_them(self):
+        report = self.report()
+        for task in report['tasks'].values():
+            for r in task['results'].values():
+                r.get('charge', {}).pop('hosts', None)
+        self.assertNotIn('Hosts', markdown(report))
 
 
 if __name__ == '__main__':

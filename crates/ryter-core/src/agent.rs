@@ -743,6 +743,7 @@ impl Agent {
             let mut echo = MessagesEchoAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
+            let mut host: Option<String> = None;
             let mut saw_usage = false;
             let mut saw_done = false;
             // Set when the provider says the answer hit the output ceiling.
@@ -789,6 +790,7 @@ impl Agent {
                             saw_usage = true;
                         }
                         StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                        StreamDelta::Host(h) => host = Some(h),
                         StreamDelta::Truncated => truncated = true,
                         StreamDelta::Done => saw_done = true,
                     }
@@ -802,6 +804,7 @@ impl Agent {
                 &model,
                 usage,
                 reported_cost,
+                host,
                 saw_usage,
                 received.is_ok() && saw_done,
                 false,
@@ -3596,6 +3599,7 @@ impl Agent {
         let mut text = String::new();
         let mut usage = Usage::default();
         let mut reported_cost: Option<f64> = None;
+        let mut host: Option<String> = None;
         let mut saw_usage = false;
         let mut saw_done = false;
         let received: Result<()> = async {
@@ -3615,6 +3619,7 @@ impl Agent {
                         saw_usage = true;
                     }
                     StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                    StreamDelta::Host(h) => host = Some(h),
                     StreamDelta::Done => saw_done = true,
                     _ => {}
                 }
@@ -3627,6 +3632,7 @@ impl Agent {
             &self.model.clone(),
             usage,
             reported_cost,
+            host,
             saw_usage,
             received.is_ok() && saw_done,
             false,
@@ -4126,6 +4132,7 @@ impl Agent {
             let mut echo = MessagesEchoAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
+            let mut host: Option<String> = None;
             let mut saw_usage = false;
             let mut saw_done = false;
             let received: Result<()> = async {
@@ -4151,6 +4158,7 @@ impl Agent {
                             saw_usage = true;
                         }
                         StreamDelta::ReportedCost(c) => reported_cost = Some(c),
+                        StreamDelta::Host(h) => host = Some(h),
                         StreamDelta::Done => saw_done = true,
                         _ => {}
                     }
@@ -4166,6 +4174,7 @@ impl Agent {
                 &call.model,
                 usage,
                 reported_cost,
+                host,
                 saw_usage,
                 received.is_ok() && saw_done,
                 true,
@@ -4352,6 +4361,7 @@ impl Agent {
         model: &str,
         usage: Usage,
         reported_cost: Option<f64>,
+        host: Option<String>,
         saw_usage: bool,
         complete: bool,
         scout: bool,
@@ -4370,6 +4380,7 @@ impl Agent {
         let mut record = spend_record(connection.into(), model.into(), self.role, usage, total_usd);
         record.incomplete = !local && reported_cost.is_none() && (!complete || !saw_usage);
         record.scout = scout;
+        record.host = host.clone();
         let incomplete = record.incomplete;
         self.session.record_spend(record)?;
         // The conversation's size: a scout's prompt is its own.
@@ -4387,6 +4398,7 @@ impl Agent {
             total_usd,
             incomplete,
             scout,
+            host,
         })?;
         if incomplete && (self.budget_usd > 0.0 || !complete) {
             self.emit(AgentEvent::Notice { message: "This request's accounting is incomplete. Reported tokens and known cost have been saved as a lower bound; a configured budget will stop further requests in this session.".into() })?;
@@ -4565,6 +4577,7 @@ mod tests {
                     ..Usage::default()
                 },
                 Some(0.25),
+                None,
                 true,
                 false,
                 false,

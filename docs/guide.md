@@ -73,6 +73,27 @@ A search provider's key is stored the same way under the provider's name. In the
 
 **Auto** means Ryter picks by hat: `high` for the plan hat, `medium` for build and audit. `[reasoning_effort]` overrides that per hat (`build`, `plan`, `audit`; `review` still reads as `audit`). **Model's own** sends nothing. Beware: with no setting, some models think for minutes before acting. The level is sent to OpenRouter and OpenAI connections as their reasoning effort, and to Anthropic as adaptive thinking at that effort (Claude 4.6 and later) or a thinking budget (older Claude models).
 
+**Which host serves you on OpenRouter.** OpenRouter serves one model from several hosts, and their prices for the same model differ by an order of magnitude: on a bench run in October 2026 every one of Ryter's calls to GLM 5.3 landed on a host charging $2.10 per million input tokens while another tool's calls, on the same account and model, landed on one charging $0.08. OpenRouter's own choice is not the cheapest, and Ryter leaves that choice to OpenRouter unless you make it. A `routing` table under the connection's row in `config.toml` is sent with every request as OpenRouter's `provider` object, every field under OpenRouter's own name, so [its routing documentation](https://openrouter.ai/docs/provider-routing) applies:
+
+```toml
+[connections.openrouter]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_backend = "chat_completions"
+env_key = "OPENROUTER_API_KEY"
+default_model = "anthropic/claude-sonnet-4.6"
+
+[connections.openrouter.routing]
+sort = "price"                           # cheapest host first; or "throughput", "latency"
+quantizations = ["fp8", "bf16", "fp16"]  # but not a host that serves a lossier quant
+# order = ["baseten"]                    # hosts to try first, by OpenRouter's slug
+# allow_fallbacks = false                # and no other when those fail
+# only = ["baseten", "fireworks"]        # the only hosts allowed
+# ignore = ["wafer"]                     # hosts never used
+```
+
+The example is the setting we would start from: the cheapest host that serves the model at 8-bit precision or better, which would have cut that run's bill by most of the gap. `sort = "price"` alone also takes 4-bit hosts, which are cheaper still and may cost accuracy on hard work. A `routing` table on a connection that is not OpenRouter's is refused at startup, as is a sort OpenRouter does not take. The host that served each call is recorded with its cost: `/spend` lists a row per connection and host under *by connection*, `ryter spend` says `via <host>` on each line, and `spend.jsonl` carries it as `host`. OpenRouter's `:floor` and `:nitro` suffixes on a model id do the same as `sort = "price"` and `sort = "throughput"`, and a model id typed into `config.toml` or `--model` is used as given, but the `/models` picker cannot choose them, since OpenRouter does not list them as models.
+
 Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 
 If `config.toml` contains `api_key` and is group/world-readable, Ryter refuses to start until the mode is `0600`.
@@ -505,6 +526,8 @@ cached_per_million = 0.3        # cache reads
 cache_write_per_million = 3.75  # cache writes (Anthropic: 1.25x input)
 output_per_million = 15.0
 ```
+
+Where a router names the host that served a call, as OpenRouter does on every response, the host is recorded beside the cost: `/spend` has a row per connection and host under *by connection* (`openrouter · Baseten`, `openrouter · Wafer`), `ryter spend` prints `via <host>` on each line, and `spend.jsonl` carries it as `host`. On OpenRouter the host sets the price, and [a `routing` table on the connection](#keys-and-connections) chooses it.
 
 Prompt caching is priced in parts: cache reads at the cached rate, cache writes at the cache-write rate, the rest at the input rate. Each rate falls back to the input rate when unset. The counts come from the provider's usage report on every wire: Anthropic's `cache_read_input_tokens` and `cache_creation_input_tokens` (added back into the prompt count, which leaves them out), OpenAI's and OpenRouter's `cached_tokens` and `cache_write_tokens`, SpaceXSI's `cached_tokens` (it does not charge for writes). Both counts are in `spend.jsonl`, `ryter spend`, the spend panel and its CSV, so a turn can be checked against the provider's console. Where a provider bills a long-context prompt higher (SpaceXSI from 200k tokens, OpenAI over 272k, Claude Haiku 5.5 over 100k), the whole request is priced at that tier, reads and writes included.
 

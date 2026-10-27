@@ -192,6 +192,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             total_usd,
             incomplete,
             scout,
+            host,
         } => {
             if let Some(p) = &mut view.project_spend {
                 p.add(*role, model, *total_usd);
@@ -202,6 +203,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             on_spend(
                 view,
                 connection,
+                host.as_deref(),
                 *role,
                 *input_tokens,
                 *output_tokens,
@@ -704,6 +706,7 @@ fn guess_summary(name: &str, args: &serde_json::Value) -> String {
 fn on_spend(
     view: &mut View,
     connection: &str,
+    host: Option<&str>,
     role: Role,
     input_tokens: u64,
     output_tokens: u64,
@@ -730,7 +733,7 @@ fn on_spend(
     {
         let row = view
             .spend_rows_conn
-            .entry(connection.to_string())
+            .entry(crate::view::connection_row(connection, host))
             .or_default();
         row.unpriced |= incomplete;
         row.calls += 1;
@@ -1118,6 +1121,7 @@ mod tests {
                 total_usd: Some(0.01),
                 incomplete: false,
                 scout: false,
+                host: None,
             },
         );
         assert!(v.busy, "spend alone does not end the turn");
@@ -1155,6 +1159,7 @@ mod tests {
             total_usd: Some(0.01),
             incomplete: false,
             scout,
+            host: None,
         };
         apply(&mut v, spend(5_000, 10, false));
         assert_eq!(v.ctx_tokens, Some(5_000));
@@ -1186,11 +1191,58 @@ mod tests {
                 total_usd: None,
                 incomplete: false,
                 scout: false,
+                host: None,
             },
         );
         assert!(v.spend_unknown);
         assert_eq!(v.unpriced_calls, 1);
         assert_eq!(v.spend_label(), "$?.??");
+    }
+
+    /// The host that served a call is its own row under "by connection":
+    /// on OpenRouter the host sets the price, so two hosts for one model are
+    /// two rows, and a call that named none is the connection's own row.
+    #[test]
+    fn the_host_that_served_a_call_is_its_own_connection_row() {
+        let mut v = view();
+        let spend = |host: Option<&str>, usd: f64| AgentEvent::Spend {
+            connection: "openrouter".into(),
+            model: "z-ai/glm-5.3".into(),
+            role: Role::Build,
+            input_tokens: 1_000,
+            output_tokens: 10,
+            cached_tokens: 0,
+            cache_write_tokens: 0,
+            total_usd: Some(usd),
+            incomplete: false,
+            scout: false,
+            host: host.map(str::to_string),
+        };
+        apply(&mut v, spend(Some("Baseten"), 0.02));
+        apply(&mut v, spend(Some("Wafer"), 0.001));
+        apply(&mut v, spend(Some("Baseten"), 0.02));
+        apply(&mut v, spend(None, 0.01));
+        let rows: Vec<(&String, u32)> = v
+            .spend_rows_conn
+            .iter()
+            .map(|(k, r)| (k, r.calls))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (&"openrouter".to_string(), 1),
+                (&"openrouter · Baseten".to_string(), 2),
+                (&"openrouter · Wafer".to_string(), 1),
+            ]
+        );
+        assert!((v.spend_rows_conn["openrouter · Baseten"].usd - 0.04).abs() < 1e-9);
+        // The connection's total is the connection's, whatever the host.
+        assert!((v.spend_by_conn["openrouter"] - 0.051).abs() < 1e-9);
+        assert_eq!(
+            crate::view::connection_row("openrouter", Some("")),
+            "openrouter",
+            "an empty name is no host"
+        );
     }
 
     #[test]
@@ -1209,6 +1261,7 @@ mod tests {
                 total_usd: Some(0.002),
                 incomplete: true,
                 scout: false,
+                host: None,
             },
         );
         assert_eq!(v.spend, Some(0.002));

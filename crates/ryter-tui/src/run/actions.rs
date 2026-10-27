@@ -679,7 +679,10 @@ pub fn fill_view_from_session(view: &mut View, session: &Session) {
             let role = r.role.to_string();
             for (key, map) in [
                 (role.clone(), &mut view.spend_rows_role),
-                (r.connection.clone(), &mut view.spend_rows_conn),
+                (
+                    crate::view::connection_row(&r.connection, r.host.as_deref()),
+                    &mut view.spend_rows_conn,
+                ),
             ] {
                 let row = map.entry(key).or_default();
                 row.unpriced |= r.incomplete;

@@ -166,7 +166,10 @@ def charge(run, stdout, price=None):
     """What the tool says the task cost: {usd, priced_by, input, cached,
     output, calls, complete}. `usd` is None when nothing priced it;
     `complete` is False when the tool said its own accounting was not."""
-    out = {'usd': None, 'priced_by': None, 'input': 0, 'cached': 0, 'output': 0, 'calls': 0, 'complete': True}
+    out = {'usd': None, 'priced_by': None, 'input': 0, 'cached': 0, 'output': 0, 'calls': 0, 'complete': True,
+           # Calls per host that served them, where the tool names one
+           # (Ryter's spend events on OpenRouter): the host sets the price.
+           'hosts': {}}
     if run.tool == 'ryter':
         spend = [e for e in json_lines(stdout) if e.get('kind') == 'spend']
         for e in spend:
@@ -175,6 +178,8 @@ def charge(run, stdout, price=None):
             out['output'] += e.get('output_tokens', 0)
             if e.get('total_usd') is None or e.get('incomplete'):
                 out['complete'] = False
+            if e.get('host'):
+                out['hosts'][e['host']] = out['hosts'].get(e['host'], 0) + 1
         out['calls'] = len(spend)
         if spend and out['complete']:
             out['usd'], out['priced_by'] = sum(e['total_usd'] for e in spend), 'tool'
@@ -356,7 +361,11 @@ def summarize(report):
         solved = sum(r['solved'] for r in done)
         priced = all(r.get('usd') is not None for r in done) and bool(done)
         usd = sum(r['usd'] for r in done) if priced else None
-        rows.append({'run': key, 'tasks': len(done), 'solved': solved, 'usd': usd,
+        hosts = {}
+        for r in done:
+            for host, calls in r.get('charge', {}).get('hosts', {}).items():
+                hosts[host] = hosts.get(host, 0) + calls
+        rows.append({'run': key, 'tasks': len(done), 'solved': solved, 'usd': usd, 'hosts': hosts,
                      'usd_per_solved': (usd / solved) if priced and solved else None,
                      'solved_per_usd': (solved / usd) if priced and usd else None,
                      'timed_out': sum(r.get('timed_out', False) for r in done),
@@ -398,6 +407,16 @@ def markdown(report):
     if any(s['estimated'] for s in summary):
         lines += ['', "† the tool's own estimate of the cost at list prices, not a provider's charge: "
                   "Claude Code prices its usage itself, and on a subscription login nothing is billed per token."]
+    if any(s['hosts'] for s in summary):
+        # On OpenRouter the host sets the price, by an order of magnitude
+        # between hosts of one model; a cost column compares tools only
+        # where every run was served by the same hosts.
+        lines += ['', 'Hosts that served the calls, where the tool names them: '
+                  + '; '.join(f'`{s["run"]}` ' + ', '.join(f'{h} ({n})' for h, n in
+                                                           sorted(s['hosts'].items(), key=lambda kv: -kv[1]))
+                              for s in summary if s['hosts'])
+                  + ". On OpenRouter the host sets the price, so two runs served by different hosts "
+                    "compare hosts, not tools; pin the host on every tool before reading the cost column."]
     lines += ['', '| Task | ' + ' | '.join(f'`{k}`' for k in report['runs']) + ' |',
               '|---|' + '---|' * len(report['runs'])]
     for name, task in report['tasks'].items():

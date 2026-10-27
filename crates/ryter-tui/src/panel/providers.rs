@@ -782,6 +782,7 @@ impl Providers {
                                 default_model: None,
                                 http_referer: None,
                                 x_title: None,
+                                routing: None,
                             });
                         conn.base_url = base_url;
                         conn.env_key = (!env_key.is_empty()).then_some(env_key);

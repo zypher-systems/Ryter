@@ -63,6 +63,9 @@ pub enum StreamDelta {
     Usage(Usage),
     /// Provider-reported USD (OpenRouter generation cost). Wins over the price book.
     ReportedCost(f64),
+    /// The host that served the call, where a router names one: OpenRouter's
+    /// `provider` on every chunk. What a call cost depends on it.
+    Host(String),
     /// The model ran into the output-token ceiling mid-answer. Without this a
     /// truncated turn is indistinguishable from a finished one.
     Truncated,

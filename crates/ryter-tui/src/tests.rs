@@ -841,6 +841,7 @@ fn spent(role: Role, usd: Option<f64>) -> AgentEvent {
         total_usd: usd,
         incomplete: false,
         scout: false,
+        host: None,
     }
 }
 

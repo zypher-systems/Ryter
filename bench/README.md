@@ -256,6 +256,22 @@ python3 bench/compare.py --run ryter=openrouter:z-ai/glm-5.3 \
     --run opencode=openrouter/z-ai/glm-5.3 --level hard --budget 8
 ```
 
+### The host on OpenRouter
+
+OpenRouter serves one model from several hosts at prices an order of magnitude
+apart, and chooses among them per request: on the 2026-10-26 run above every
+Ryter call to GLM 5.3 was served at $2.10 per million input tokens and every
+OpenCode call at $0.08, on the same account, with neither tool asking for a
+host. A cost column on OpenRouter therefore compares tools only when every
+run was served by the same hosts. The table says which hosts served each run
+where the tool names them (Ryter's spend events do), and the way to pin
+Ryter's is a `routing` table on the connection in your `~/.ryter/config.toml`
+(see the guide's *Which host serves you on OpenRouter*), or in a labelled
+arm's `--ryter-config` file with the whole connection row. Pin the other
+tools by their own settings before reading their dollars against Ryter's;
+OpenRouter's `:floor` suffix on a model id (`opencode=openrouter/z-ai/glm-5.3:floor`)
+is the cheapest host for any tool that passes the id through.
+
 ## Recorded live result
 
 See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md), made on

@@ -357,12 +357,83 @@ pub struct ConnectionConfig {
     /// OpenRouter `X-Title`.
     #[serde(default)]
     pub x_title: Option<String>,
+    /// `[connections.<name>.routing]`: how OpenRouter picks the host that
+    /// serves a model. OpenRouter connections only. Boxed: a connection
+    /// rides in the TUI's actions, and the table is most of its size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<Box<RoutingConfig>>,
+}
+
+/// How OpenRouter picks the host that serves a model: its `provider`
+/// object, sent with every request on an OpenRouter connection.
+///
+/// OpenRouter serves one model from several hosts at prices that differ by
+/// an order of magnitude, and its own choice is not the cheapest: on the
+/// 2026-10-26 bench run every Ryter call landed on a $2.10-per-million host
+/// while another tool's calls, on the same account and model, landed on a
+/// $0.08 one. Unset, the choice stays OpenRouter's. Every field is
+/// OpenRouter's own, under its own name, so its documentation applies.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RoutingConfig {
+    /// `price`, `throughput` or `latency`: the hosts tried in that order.
+    /// Unset is OpenRouter's load balancing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+    /// Quantizations a host may serve the model at: `fp8`, `bf16`, `fp16`,
+    /// `fp32`, `int8`, `int4`, `fp4`, `fp6`, `unknown`. Empty allows any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quantizations: Vec<String>,
+    /// Hosts to try first, by OpenRouter's slug (`baseten`, `wafer`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+    /// Whether a host outside `order` may serve when those fail. Unset is
+    /// OpenRouter's default, which allows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_fallbacks: Option<bool>,
+    /// The only hosts allowed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub only: Vec<String>,
+    /// Hosts never used.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<String>,
+}
+
+/// The sorts OpenRouter takes.
+pub const ROUTING_SORTS: [&str; 3] = ["price", "throughput", "latency"];
+
+impl RoutingConfig {
+    /// The `provider` object as OpenRouter reads it: the fields set, under
+    /// OpenRouter's names, and nothing when none is.
+    pub fn provider_object(&self) -> Option<serde_json::Value> {
+        if *self == Self::default() {
+            return None;
+        }
+        serde_json::to_value(self).ok()
+    }
+
+    /// What is wrong with it, for the config error: a sort OpenRouter does
+    /// not take.
+    fn problem(&self) -> Option<String> {
+        match self.sort.as_deref() {
+            Some(s) if !ROUTING_SORTS.contains(&s) => Some(format!(
+                "routing sort {s:?} is not one of {}",
+                ROUTING_SORTS.join(", ")
+            )),
+            _ => None,
+        }
+    }
 }
 
 impl ConnectionConfig {
     /// A model server on this machine: no key required, no API cost.
     pub fn is_local(&self) -> bool {
         self.kind == "local"
+    }
+
+    /// Reaches OpenRouter: the built-in kind, or any connection pointed at
+    /// its host.
+    pub fn is_openrouter(&self) -> bool {
+        self.kind == "openrouter" || self.base_url.contains("openrouter.ai")
     }
 }
 
@@ -388,6 +459,7 @@ impl std::fmt::Debug for ConnectionConfig {
             .field("default_model", &self.default_model)
             .field("http_referer", &self.http_referer)
             .field("x_title", &self.x_title)
+            .field("routing", &self.routing)
             .finish()
     }
 }
@@ -697,6 +769,7 @@ fn builtin(kind: &str, base_url: &str, backend: &str, env: &str, model: &str) ->
         default_model: Some(model.into()),
         http_referer: None,
         x_title: None,
+        routing: None,
     }
 }
 
@@ -743,6 +816,7 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             default_model: Some("anthropic/claude-sonnet-4.6".into()),
             http_referer: Some("https://github.com/zypher-systems/ryter".into()),
             x_title: Some("Ryter".into()),
+            routing: None,
         }),
         // OpenAI's own API speaks Responses, like SpaceXSI's.
         "openai" => Ok(builtin(
@@ -762,6 +836,7 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             default_model: None,
             http_referer: None,
             x_title: None,
+            routing: None,
         }),
         // The API lives under /v1; the provider appends `/messages`.
         "anthropic" => Ok(builtin(
@@ -787,6 +862,7 @@ pub fn connection_template(kind: &str) -> Result<ConnectionConfig> {
             default_model: None,
             http_referer: None,
             x_title: None,
+            routing: None,
         }),
         other => Err(Error::Config(format!(
             "unknown kind {other:?} (spacexsi, openrouter, anthropic, openai, openai_compat, local, ollama, lmstudio, llamacpp)"
@@ -1652,6 +1728,22 @@ fn validate(cfg: &Config) -> Result<()> {
             "default_connection {:?} is not a known connection",
             cfg.default_connection
         )));
+    }
+    for (name, conn) in &cfg.connections {
+        let Some(routing) = &conn.routing else {
+            continue;
+        };
+        if !conn.is_openrouter() {
+            return Err(Error::Config(format!(
+                "[connections.{name}.routing] is for OpenRouter connections; {name} is {}",
+                conn.kind
+            )));
+        }
+        if let Some(problem) = routing.problem() {
+            return Err(Error::Config(format!(
+                "[connections.{name}.routing] {problem}"
+            )));
+        }
     }
     Ok(())
 }
@@ -2804,6 +2896,79 @@ mod tests {
         save_settings(dir.path(), &cfg).unwrap();
         assert!(!load_at(dir.path(), None, false).unwrap().ui.open_pages);
         assert!(Config::default().ui.open_pages, "on unless turned off");
+    }
+
+    /// `[connections.<name>.routing]` is the user's choice of OpenRouter
+    /// host: read from their file, sent as the fields set and no other,
+    /// saved back with the connection, and refused where it can't apply (a
+    /// connection that is not OpenRouter's) or says what OpenRouter won't
+    /// take (a sort it has no such thing as).
+    #[test]
+    fn routing_is_read_saved_and_refused_where_it_cannot_apply() {
+        let dir = TempDir::new().unwrap();
+        let row = "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n";
+        fs::write(
+            dir.path().join("config.toml"),
+            format!(
+                "{row}[connections.openrouter.routing]\nsort = \"price\"\nquantizations = [\"fp8\", \"bf16\"]\n"
+            ),
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        let routing = cfg.connections["openrouter"].routing.clone().unwrap();
+        assert_eq!(routing.sort.as_deref(), Some("price"));
+        assert_eq!(
+            routing.provider_object().unwrap(),
+            serde_json::json!({"sort": "price", "quantizations": ["fp8", "bf16"]}),
+            "the fields set, under OpenRouter's names, and no other"
+        );
+        assert_eq!(RoutingConfig::default().provider_object(), None);
+        // Saved with the connection; a connection without one saves no table.
+        let mut map = BTreeMap::new();
+        map.insert("or".to_string(), cfg.connections["openrouter"].clone());
+        map.insert(
+            "plain".to_string(),
+            connection_template("openai_compat").unwrap(),
+        );
+        save_user_connections(dir.path(), &map).unwrap();
+        let saved = fs::read_to_string(dir.path().join("connections.toml")).unwrap();
+        assert!(saved.contains("[connections.or.routing]"), "{saved}");
+        assert!(saved.contains("sort = \"price\""), "{saved}");
+        assert!(!saved.contains("plain.routing"), "{saved}");
+        assert_eq!(
+            load_user_connections(dir.path())["or"].routing,
+            Some(routing)
+        );
+        // Not OpenRouter: refused by name, not sent to a server that may
+        // reject an unknown field.
+        fs::write(
+            dir.path().join("config.toml"),
+            "[connections.openai]\nkind = \"openai\"\nbase_url = \"https://api.openai.com/v1\"\n[connections.openai.routing]\nsort = \"price\"\n",
+        )
+        .unwrap();
+        let err = load_at(dir.path(), None, false).unwrap_err().to_string();
+        assert!(
+            err.contains("[connections.openai.routing] is for OpenRouter connections"),
+            "{err}"
+        );
+        // A user connection pointed at OpenRouter's host counts as one.
+        fs::write(
+            dir.path().join("config.toml"),
+            "[connections.mine]\nkind = \"openai_compat\"\nbase_url = \"https://openrouter.ai/api/v1\"\n[connections.mine.routing]\nsort = \"throughput\"\n",
+        )
+        .unwrap();
+        assert!(load_at(dir.path(), None, false).is_ok());
+        // A sort OpenRouter does not take.
+        fs::write(
+            dir.path().join("config.toml"),
+            format!("{row}[connections.openrouter.routing]\nsort = \"cheapest\"\n"),
+        )
+        .unwrap();
+        let err = load_at(dir.path(), None, false).unwrap_err().to_string();
+        assert!(
+            err.contains("routing sort \"cheapest\" is not one of price, throughput, latency"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -161,6 +161,10 @@ pub struct SpendRecord {
     /// conversation, so the context ring and the last reader skip it.
     #[serde(default, skip_serializing_if = "is_false")]
     pub scout: bool,
+    /// The host that served the call, where a router names one (OpenRouter
+    /// does): the price depends on it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// Open session on disk.
@@ -715,6 +719,7 @@ pub fn spend_record(
         total_usd,
         incomplete: false,
         scout: false,
+        host: None,
     }
 }
 

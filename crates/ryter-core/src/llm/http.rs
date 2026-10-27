@@ -89,6 +89,8 @@ pub struct HttpProvider {
     kind: String,
     http_referer: Option<String>,
     x_title: Option<String>,
+    /// OpenRouter's `provider` object, from the connection's `[routing]`.
+    routing: Option<Value>,
 }
 
 impl HttpProvider {
@@ -122,6 +124,11 @@ impl HttpProvider {
             kind: conn.kind.clone(),
             http_referer: conn.http_referer.clone(),
             x_title: conn.x_title.clone(),
+            routing: conn
+                .routing
+                .as_ref()
+                .filter(|_| conn.is_openrouter())
+                .and_then(|r| r.provider_object()),
         }
     }
 
@@ -183,6 +190,11 @@ impl HttpProvider {
             if let Some(effort) = &req.reasoning {
                 body["reasoning"] = json!({ "effort": effort });
             }
+        }
+        // Which host serves the model is the user's choice on OpenRouter;
+        // without one, OpenRouter's own, which is not the cheapest.
+        if let Some(routing) = &self.routing {
+            body["provider"] = routing.clone();
         }
         // Direct Anthropic Messages: turn the same effort knob into extended
         // thinking. Without this, thinking stays off and there is nothing to
@@ -1121,6 +1133,64 @@ mod tests {
                 "{d:?}"
             );
         }
+    }
+
+    /// The connection's `[routing]` goes to OpenRouter as its `provider`
+    /// object, the fields set and no other; a connection without one sends
+    /// nothing, and OpenRouter's own choice stands.
+    #[test]
+    fn routing_goes_to_openrouter_as_its_provider_object() {
+        let req = CompletionRequest {
+            model: "z-ai/glm-5.3".into(),
+            system: None,
+            messages: vec![],
+            tools: vec![],
+            max_tokens: Some(16),
+            reasoning: None,
+        };
+        let mut or = crate::config::connection_template("openrouter").unwrap();
+        assert!(
+            HttpProvider::new(&or, "k".into())
+                .body(&req)
+                .get("provider")
+                .is_none(),
+            "no routing, no provider object"
+        );
+        or.routing = Some(Box::new(crate::config::RoutingConfig {
+            sort: Some("price".into()),
+            quantizations: vec!["fp8".into(), "bf16".into()],
+            ..Default::default()
+        }));
+        let body = HttpProvider::new(&or, "k".into()).body(&req);
+        assert_eq!(
+            body["provider"],
+            json!({"sort": "price", "quantizations": ["fp8", "bf16"]}),
+            "{body}"
+        );
+        // Every field is set: the names are OpenRouter's own.
+        or.routing = Some(Box::new(crate::config::RoutingConfig {
+            sort: None,
+            quantizations: vec![],
+            order: vec!["baseten".into()],
+            allow_fallbacks: Some(false),
+            only: vec!["baseten".into(), "fireworks".into()],
+            ignore: vec!["wafer".into()],
+        }));
+        let body = HttpProvider::new(&or, "k".into()).body(&req);
+        assert_eq!(
+            body["provider"],
+            json!({"order": ["baseten"], "allow_fallbacks": false,
+                   "only": ["baseten", "fireworks"], "ignore": ["wafer"]}),
+            "{body}"
+        );
+        // An empty table is no routing.
+        or.routing = Some(Default::default());
+        assert!(
+            HttpProvider::new(&or, "k".into())
+                .body(&req)
+                .get("provider")
+                .is_none()
+        );
     }
 
     /// OpenRouter and OpenAI get the reasoning setting; other servers never

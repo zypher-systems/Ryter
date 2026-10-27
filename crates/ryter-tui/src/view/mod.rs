@@ -405,6 +405,17 @@ pub struct View {
     pub plan_steps: Vec<(bool, String)>,
 }
 
+/// The `/spend` row a call goes in under "by connection": the connection,
+/// and the host that served it where a router named one. OpenRouter serves
+/// one model from hosts whose prices differ by an order of magnitude, so
+/// the host is where a bill is explained.
+pub fn connection_row(connection: &str, host: Option<&str>) -> String {
+    match host {
+        Some(h) if !h.is_empty() => format!("{connection} · {h}"),
+        _ => connection.to_string(),
+    }
+}
+
 /// Aggregated spend row for `/spend`.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SpendRow {
