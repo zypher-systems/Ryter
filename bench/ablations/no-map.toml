@@ -1,0 +1,4 @@
+# The map off: the ablation arm `ryter@no-map` in bench/compare.py.
+# python3 bench/compare.py --run ryter=C:M --run ryter@no-map=C:M --ryter-config no-map=bench/ablations/no-map.toml …
+[map]
+chars = 0

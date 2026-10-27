@@ -1,9 +1,11 @@
 """The comparison runner's parsing, pricing and summary, on recorded shapes of
 each tool's output. No tool is run and nothing is paid."""
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from compare import (Run, allowance, cap_text, changed_files, charge, command_for, markdown, merge_into,
+from compare import (Run, allowance, cap_text, changed_files, charge, command_for, markdown, merge_into, parse_config,
                      parse_price, price_tokens, prompt_for, stale_directories, summarize)
 
 
@@ -21,6 +23,27 @@ class Runs(unittest.TestCase):
         for bad in ['ryter=claude-sonnet-4-5', 'cursor=x', 'claude', 'codex=', 'ryter=:m', 'ryter=c:']:
             with self.assertRaises(ValueError, msg=bad):
                 Run(bad)
+
+    def test_a_labelled_ryter_arm_is_an_ablation_on_the_same_model(self):
+        r = Run('ryter@no-map=openrouter:z-ai/glm-5.3')
+        self.assertEqual((r.tool, r.label, r.connection, r.model), ('ryter', 'no-map', 'openrouter', 'z-ai/glm-5.3'))
+        self.assertEqual(r.key, 'ryter@no-map=openrouter:z-ai/glm-5.3')
+        self.assertNotEqual(r.directory, Run('ryter=openrouter:z-ai/glm-5.3').directory)
+        self.assertEqual(r.config_text, '')
+        for bad in ['opencode@x=p/m', 'ryter@=c:m', 'ryter@a b=c:m']:
+            with self.assertRaises(ValueError):
+                Run(bad)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'no-map.toml'
+            path.write_text('[map]\nchars = 0\n')
+            self.assertEqual(parse_config(f'no-map={path}'), ('no-map', '[map]\nchars = 0\n'))
+            path.write_text('[map\n')
+            with self.assertRaises(ValueError):
+                parse_config(f'no-map={path}')
+            with self.assertRaises(ValueError):
+                parse_config(f'no-map={d}/missing.toml')
+            with self.assertRaises(ValueError):
+                parse_config('no-map')
 
     def test_two_models_of_one_tool_get_their_own_directories(self):
         a, b = Run('ryter=anthropic:claude-sonnet-4-5'), Run('ryter=anthropic:claude-opus-4-5')
@@ -169,16 +192,16 @@ class Charges(unittest.TestCase):
 
 class Summary(unittest.TestCase):
     def report(self):
-        def row(solved, usd, seconds=60, by='tool', timed_out=False):
+        def row(solved, usd, seconds=60, by='tool', timed_out=False, calls=4):
             return {'solved': solved, 'usd': usd, 'seconds': seconds, 'timed_out': timed_out,
-                    'charge': {'priced_by': by}, 'acceptance': []}
+                    'charge': {'priced_by': by, 'calls': calls}, 'acceptance': []}
         return {'date': '2026-10-22', 'ryter': 'abc1234', 'runs': ['ryter=c:m', 'claude=s', 'codex=g'],
                 'versions': {'ryter': 'ryter 0.37.0', 'claude': None, 'codex': 'codex-cli 0.1'},
                 'budget_usd': 5.0, 'timeout_seconds': 600, 'total_usd': 0.9,
                 'prices': {'g': {'input': 2.0, 'cached': 0.2, 'output': 10.0}},
                 'tasks': {'a': {'results': {'ryter=c:m': row(True, 0.10), 'claude=s': row(True, 0.30, by='tool estimate'),
                                             'codex=g': row(False, 0.05, 600, 'table', True)}},
-                          'b': {'results': {'ryter=c:m': row(True, 0.20, 120), 'claude=s': row(False, 0.25),
+                          'b': {'results': {'ryter=c:m': row(True, 0.20, 120, calls=6), 'claude=s': row(False, 0.25),
                                             'codex=g': {'error': 'fixture trust failed', 'usd': None}}}}}
 
     def test_solved_per_dollar_is_solved_over_cost(self):
@@ -189,6 +212,7 @@ class Summary(unittest.TestCase):
         self.assertAlmostEqual(ryter['usd_per_solved'], 0.15)
         self.assertAlmostEqual(ryter['solved_per_usd'], 2 / 0.30)
         self.assertAlmostEqual(ryter['median_minutes'], 1.5)
+        self.assertEqual(ryter['median_rounds'], 5)
         claude = rows['claude=s']
         self.assertEqual((claude['solved'], claude['usd']), (1, 0.55))
         codex = rows['codex=g']
@@ -227,9 +251,9 @@ class Summary(unittest.TestCase):
     def test_the_markdown_has_the_summary_the_matrix_and_the_rates(self):
         md = markdown(self.report())
         self.assertIn('# Tasks solved per dollar — 2026-10-22', md)
-        self.assertIn('| `ryter=c:m` | 2/2 | $0.300 | $0.150 | 6.7 | 1.5 | 0 |', md)
-        self.assertIn('| `codex=g` | 0/1 | $0.050 * | — | 0.0 | 10.0 | 1 |', md)
-        self.assertIn('| `claude=s` | 1/2 | $0.550 † | $0.550 | 1.8 | 1.0 | 0 |', md)
+        self.assertIn('| `ryter=c:m` | 2/2 | $0.300 | $0.150 | 6.7 | 1.5 | 5 | 0 |', md)
+        self.assertIn('| `codex=g` | 0/1 | $0.050 * | — | 0.0 | 10.0 | 4 | 1 |', md)
+        self.assertIn('| `claude=s` | 1/2 | $0.550 † | $0.550 | 1.8 | 1.0 | 4 | 0 |', md)
         self.assertIn("† the tool's own estimate of the cost at list prices", md)
         self.assertIn('`g` $2.0/0.2/10.0 per million', md)
         self.assertIn('| a | ✓ $0.100 | ✓ $0.300 | ✗ $0.050 (timed out) |', md)

@@ -239,6 +239,23 @@ whose reference solution does not pass or whose unchanged project does. The
 solved tree it proves that with is removed before any tool starts. The runner
 needs Python 3.12 or newer.
 
+### An ablation: Ryter against itself
+
+`ryter@label=connection:model` is a second Ryter arm on the same model, told
+apart by its label, and `--ryter-config label=FILE` puts that file's TOML
+into the arm's project config (`.ryter/config.toml`, after the cap every arm
+gets alike), so one piece of the harness can be switched off for one arm and
+the two compared on the same tasks, the same model and the same billing.
+`bench/ablations/no-map.toml` turns the project map off. The summary's
+"Median rounds" column is the tool's own count of its rounds with the model,
+which is what the map is meant to save:
+
+```sh
+python3 bench/compare.py --run ryter=openrouter:z-ai/glm-5.3 \
+    --run ryter@no-map=openrouter:z-ai/glm-5.3 --ryter-config no-map=bench/ablations/no-map.toml \
+    --run opencode=openrouter/z-ai/glm-5.3 --level hard --budget 8
+```
+
 ## Recorded live result
 
 See [the October 2 acceptance report](../docs/acceptance-2026-10-02.md), made on
