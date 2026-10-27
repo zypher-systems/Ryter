@@ -84,15 +84,22 @@ env_key = "OPENROUTER_API_KEY"
 default_model = "anthropic/claude-sonnet-4.6"
 
 [connections.openrouter.routing]
-sort = "price"                           # cheapest host first; or "throughput", "latency"
+sort = "price"                           # cheapest host first; or "throughput" (fastest), "latency" (first token soonest)
 quantizations = ["fp8", "bf16", "fp16"]  # but not a host that serves a lossier quant
-# order = ["baseten"]                    # hosts to try first, by OpenRouter's slug
+# max_price = { prompt = 0.5, completion = 2 }   # dollars per million; the request fails rather than run dearer
+# preferred_min_throughput = 80          # tokens per second, a preference; or { p50 = 80, p90 = 40 }
+# preferred_max_latency = 2              # seconds to the first token, likewise
+# order = ["baseten", "fireworks"]       # hosts to try first, by OpenRouter's slug
 # allow_fallbacks = false                # and no other when those fail
-# only = ["baseten", "fireworks"]        # the only hosts allowed
+# only = ["baseten/fp8/us"]              # the only hosts allowed; an endpoint slug names its region
 # ignore = ["wafer"]                     # hosts never used
+# zdr = true                             # zero-data-retention endpoints only
+# data_collection = "deny"               # no host that keeps or trains on prompts
+# require_parameters = true              # only hosts that take every parameter Ryter sends
+# enforce_distillable_text = true        # only models whose terms allow distilling their text
 ```
 
-The example is the setting we would start from: the cheapest host that serves the model at 8-bit precision or better, which would have cut that run's bill by most of the gap. `sort = "price"` alone also takes 4-bit hosts, which are cheaper still and may cost accuracy on hard work. A `routing` table on a connection that is not OpenRouter's is refused at startup, as is a sort OpenRouter does not take. The host that served each call is recorded with its cost: `/spend` lists a row per connection and host under *by connection*, `ryter spend` says `via <host>` on each line, and `spend.jsonl` carries it as `host`. OpenRouter's `:floor` and `:nitro` suffixes on a model id do the same as `sort = "price"` and `sort = "throughput"`, and a model id typed into `config.toml` or `--model` is used as given, but the `/models` picker cannot choose them, since OpenRouter does not list them as models.
+The example is the setting we would start from: the cheapest host that serves the model at 8-bit precision or better, which would have cut that run's bill by most of the gap. `sort = "price"` alone also takes 4-bit hosts, which are cheaper still and may cost accuracy on hard work. The fastest host is `sort = "throughput"`, the soonest to answer `sort = "latency"`, and the two `preferred_` figures keep the sort you chose while asking for a floor on speed. `max_price` is the one bar among them: a request that no host under that price can serve fails and says so, where a preference is still served by the best host there is. There is no region field: a host's region is part of its endpoint slug in `order`, `only` and `ignore` (`baseten/fp8/us`, `google-vertex/us-east5`), and keeping every request in one region is a base URL on OpenRouter's business plans (`https://us.openrouter.ai/api/v1`, `https://eu.openrouter.ai/api/v1`), which the connection's `base_url` takes. A `routing` table on a connection that is not OpenRouter's is refused at startup, as is a word OpenRouter has no such value for (a sort, a partition, `data_collection`) or a price below zero; the host and quantization lists are passed as written, since OpenRouter adds to them. The host that served each call is recorded with its cost: `/spend` lists a row per connection and host under *by connection*, `ryter spend` says `via <host>` on each line, and `spend.jsonl` carries it as `host`. OpenRouter's `:floor` and `:nitro` suffixes on a model id do the same as `sort = "price"` and `sort = "throughput"`, and a model id typed into `config.toml` or `--model` is used as given, but the `/models` picker cannot choose them, since OpenRouter does not list them as models.
 
 Where a saved key (`/provider` set-key, `ryter connections set-key`) is stored: on **Linux**, `~/.ryter/keys/<connection>`, readable only by you (mode 0600). Linux's kernel keyring is in memory and doesn't survive a reboot, so it isn't used to store keys. On **macOS**, the keychain (`service=ryter`, `account=connection:<name>`), falling back to the file if the keychain refuses.
 

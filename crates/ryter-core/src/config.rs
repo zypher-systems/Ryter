@@ -372,18 +372,25 @@ pub struct ConnectionConfig {
 /// 2026-10-26 bench run every Ryter call landed on a $2.10-per-million host
 /// while another tool's calls, on the same account and model, landed on a
 /// $0.08 one. Unset, the choice stays OpenRouter's. Every field is
-/// OpenRouter's own, under its own name, so its documentation applies.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+/// OpenRouter's own, under its own name, so its documentation applies; the
+/// whole object is carried, not a slice of it, so nothing OpenRouter offers
+/// needs a release here. There is no region field: a host's region is part
+/// of its endpoint slug (`baseten/fp8/us`) for `order`, `only` and
+/// `ignore`, and regional processing is a base URL (`us.openrouter.ai`).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct RoutingConfig {
-    /// `price`, `throughput` or `latency`: the hosts tried in that order.
+    /// `price`, `throughput` or `latency`: the hosts tried in that order,
+    /// load balancing off. Or a table `{ by = "price", partition = "none" }`.
     /// Unset is OpenRouter's load balancing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sort: Option<String>,
+    pub sort: Option<RoutingSort>,
     /// Quantizations a host may serve the model at: `fp8`, `bf16`, `fp16`,
-    /// `fp32`, `int8`, `int4`, `fp4`, `fp6`, `unknown`. Empty allows any.
+    /// `fp32`, `int8`, `int4`, `fp4`, `fp6`, `unknown` and OpenRouter's
+    /// others. Empty allows any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub quantizations: Vec<String>,
-    /// Hosts to try first, by OpenRouter's slug (`baseten`, `wafer`).
+    /// Hosts to try first, by OpenRouter's slug (`baseten`, `wafer`, or an
+    /// endpoint's `baseten/fp8/us`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub order: Vec<String>,
     /// Whether a host outside `order` may serve when those fail. Unset is
@@ -396,6 +403,89 @@ pub struct RoutingConfig {
     /// Hosts never used.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ignore: Vec<String>,
+    /// Only hosts that take every parameter of the request (Ryter sends
+    /// tools and a reasoning effort). Unset is OpenRouter's default, off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_parameters: Option<bool>,
+    /// `allow` or `deny`: whether a host that keeps or trains on prompts
+    /// may serve. Unset is OpenRouter's default, `allow`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_collection: Option<String>,
+    /// Only zero-data-retention endpoints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zdr: Option<bool>,
+    /// Only models whose terms allow distilling their text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforce_distillable_text: Option<bool>,
+    /// Tokens per second a host should reach: a number (the median), or a
+    /// table of percentiles `{ p50 = 80, p90 = 40 }`. A preference, not a
+    /// bar: OpenRouter still serves when no host reaches it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_min_throughput: Option<RoutingPercentiles>,
+    /// Seconds to the first token a host should stay under: a number (the
+    /// median) or a table of percentiles. A preference, as above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_max_latency: Option<RoutingPercentiles>,
+    /// The most to pay, in dollars per million tokens (`prompt`,
+    /// `completion`) and per request or image. A bar, not a preference:
+    /// the request fails rather than run dearer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_price: Option<RoutingMaxPrice>,
+}
+
+/// `sort`: a word, or OpenRouter's table form with a partition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RoutingSort {
+    /// `"price"`, `"throughput"` or `"latency"`.
+    By(String),
+    /// `{ by = "price", partition = "none" }`: `partition` is `model` (the
+    /// default, sort within each model's hosts) or `none`.
+    Detailed {
+        by: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partition: Option<String>,
+    },
+}
+
+impl RoutingSort {
+    fn by(&self) -> &str {
+        match self {
+            Self::By(b) | Self::Detailed { by: b, .. } => b,
+        }
+    }
+}
+
+/// A number for the median, or percentiles by name.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RoutingPercentiles {
+    /// The p50 figure.
+    Median(f64),
+    /// `{ p50 = 80, p75 = 60, p90 = 40, p99 = 20 }`, any of them.
+    Percentiles {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        p50: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        p75: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        p90: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        p99: Option<f64>,
+    },
+}
+
+/// `max_price`: dollars per million tokens, and per request or image.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct RoutingMaxPrice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<f64>,
 }
 
 /// The sorts OpenRouter takes.
@@ -411,16 +501,44 @@ impl RoutingConfig {
         serde_json::to_value(self).ok()
     }
 
-    /// What is wrong with it, for the config error: a sort OpenRouter does
-    /// not take.
+    /// What is wrong with it, for the config error: a word OpenRouter has
+    /// no such value for, or a price below zero. The open lists (hosts,
+    /// quantizations) are OpenRouter's to judge.
     fn problem(&self) -> Option<String> {
-        match self.sort.as_deref() {
-            Some(s) if !ROUTING_SORTS.contains(&s) => Some(format!(
-                "routing sort {s:?} is not one of {}",
-                ROUTING_SORTS.join(", ")
-            )),
-            _ => None,
+        if let Some(sort) = &self.sort {
+            if !ROUTING_SORTS.contains(&sort.by()) {
+                return Some(format!(
+                    "routing sort {:?} is not one of {}",
+                    sort.by(),
+                    ROUTING_SORTS.join(", ")
+                ));
+            }
+            if let RoutingSort::Detailed {
+                partition: Some(p), ..
+            } = sort
+            {
+                if p != "model" && p != "none" {
+                    return Some(format!("routing sort partition {p:?} is not model or none"));
+                }
+            }
         }
+        if let Some(d) = &self.data_collection {
+            if d != "allow" && d != "deny" {
+                return Some(format!(
+                    "routing data_collection {d:?} is not allow or deny"
+                ));
+            }
+        }
+        if let Some(p) = &self.max_price {
+            if [p.prompt, p.completion, p.request, p.image]
+                .into_iter()
+                .flatten()
+                .any(|v| !v.is_finite() || v < 0.0)
+            {
+                return Some("routing max_price must be finite and not below zero".into());
+            }
+        }
+        None
     }
 }
 
@@ -2916,7 +3034,7 @@ mod tests {
         .unwrap();
         let cfg = load_at(dir.path(), None, false).unwrap();
         let routing = cfg.connections["openrouter"].routing.clone().unwrap();
-        assert_eq!(routing.sort.as_deref(), Some("price"));
+        assert_eq!(routing.sort, Some(RoutingSort::By("price".into())));
         assert_eq!(
             routing.provider_object().unwrap(),
             serde_json::json!({"sort": "price", "quantizations": ["fp8", "bf16"]}),
@@ -2969,6 +3087,73 @@ mod tests {
             err.contains("routing sort \"cheapest\" is not one of price, throughput, latency"),
             "{err}"
         );
+        // The whole object: OpenRouter's other fields, in both of the forms
+        // it takes where it takes two, under its own names.
+        fs::write(
+            dir.path().join("config.toml"),
+            format!(
+                "{row}[connections.openrouter.routing]\n\
+                 sort = {{ by = \"throughput\", partition = \"none\" }}\n\
+                 require_parameters = true\n\
+                 data_collection = \"deny\"\n\
+                 zdr = true\n\
+                 enforce_distillable_text = false\n\
+                 preferred_min_throughput = 80\n\
+                 preferred_max_latency = {{ p50 = 1.5, p90 = 4 }}\n\
+                 max_price = {{ prompt = 0.5, completion = 2 }}\n"
+            ),
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        let routing = cfg.connections["openrouter"].routing.clone().unwrap();
+        assert_eq!(
+            routing.provider_object().unwrap(),
+            serde_json::json!({
+                "sort": {"by": "throughput", "partition": "none"},
+                "require_parameters": true,
+                "data_collection": "deny",
+                "zdr": true,
+                "enforce_distillable_text": false,
+                "preferred_min_throughput": 80.0,
+                "preferred_max_latency": {"p50": 1.5, "p90": 4.0},
+                "max_price": {"prompt": 0.5, "completion": 2.0}
+            })
+        );
+        let saved = toml::to_string(&*routing).unwrap();
+        assert_eq!(
+            toml::from_str::<RoutingConfig>(&saved).unwrap(),
+            *routing,
+            "round trip: {saved}"
+        );
+        // The closed words are checked; the open lists are OpenRouter's.
+        for (bad, says) in [
+            (
+                "sort = { by = \"price\", partition = \"host\" }",
+                "routing sort partition \"host\" is not model or none",
+            ),
+            (
+                "data_collection = \"maybe\"",
+                "routing data_collection \"maybe\" is not allow or deny",
+            ),
+            (
+                "max_price = { prompt = -1 }",
+                "routing max_price must be finite and not below zero",
+            ),
+        ] {
+            fs::write(
+                dir.path().join("config.toml"),
+                format!("{row}[connections.openrouter.routing]\n{bad}\n"),
+            )
+            .unwrap();
+            let err = load_at(dir.path(), None, false).unwrap_err().to_string();
+            assert!(err.contains(says), "{bad}: {err}");
+        }
+        fs::write(
+            dir.path().join("config.toml"),
+            format!("{row}[connections.openrouter.routing]\nquantizations = [\"mxfp4\"]\nonly = [\"baseten/fp8/us\"]\n"),
+        )
+        .unwrap();
+        assert!(load_at(dir.path(), None, false).is_ok());
     }
 
     #[test]

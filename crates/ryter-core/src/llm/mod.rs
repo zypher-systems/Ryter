@@ -615,6 +615,13 @@ pub fn explain_error(e: &str) -> Option<String> {
     if lower.contains("not a valid model") {
         return Some("not a model this connection knows (renamed or retired?)".into());
     }
+    if lower.contains("max price") || lower.contains("[routing]") {
+        return Some(
+            "no host passes the connection's [routing] (its max_price, or another of its \
+             terms); loosen it in config.toml or pick another model"
+                .into(),
+        );
+    }
     if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") {
         return Some("the key was refused for this model".into());
     }
@@ -1062,6 +1069,10 @@ mod tests {
             (
                 r#"http 404: {"error":{"message":"No endpoints found that support tool use"}}"#,
                 "tool use",
+            ),
+            (
+                r#"http 404: {"error":{"message":"No endpoints found that satisfy the max price for this request","metadata":{"failed_routing_step":"Filter by Max Price"}}}"#,
+                "[routing]",
             ),
             (
                 r#"http 402: {"error":{"message":"Insufficient credits"}}"#,
