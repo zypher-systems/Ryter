@@ -19,7 +19,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.41.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.42.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 - **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
 - **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
@@ -67,6 +67,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.42.0 — The host on OpenRouter is the user's choice (2026-10-28)
+
+Released 2026-10-28 (PR #106, three rounds. Round 1: one approved; the other rejected on four: a clear on the screen saved as no entry, so a `config.toml` table came back on the next launch; the worker's `SetRouting` left the agent's own config copy stale, so a hat or the scout on another connection kept the old rules; the refusal said to loosen the rules in `config.toml`, which the screen's file overrides; a bench arm's `--ryter-config` routing table lost to the screen's file. Round 2: one approved; the other held one: the project-pin fix kept a project's table only when its value differed from the home file's, so a pin restating that choice lost and a row without the key read as a clear. Round 3: both approved on `8c7e9e7`.)
+
+- **Routing rules on the `/provider` screen.** `r` on a row OpenRouter serves opens a form of every field of OpenRouter's `provider` object, grouped as order, offer, speed and price, a line under the focused row saying what it does; `^s` saves to `~/.ryter/routing.toml`, the row says the rule in a word, the live provider is rebuilt so the next call carries it, and a clear is saved as an empty table so it holds. The same table in `config.toml` works and the screen's file lays over it; a trusted project's own table lays over both, counted by the presence of its `routing` key. The host that served each call is read off the stream and kept on the spend record: `/spend` rows per connection and host, `ryter spend` via host, the bench table's hosts line. A routing refusal is said as the funnel step it stopped at. `DECISIONS.md` 2026-10-27.
+- **Columns that stay put.** The table widget measures every row and draws the window, so `/models`, `/sessions` and the bench's model picker keep their columns still while scrolling or searching.
+- **Compare ablation arms.** `ryter@label=connection:model` and `--ryter-config label=FILE` in `bench/compare.py`, a "Median rounds" column, `bench/ablations/no-map.toml`. The map measured on GLM 5.3: on 7/10 at 99 calls, off 6/10 at 156.
+- Open, from the reviews: a hand-edited empty percentiles table goes out as an empty object; a key that cannot be re-resolved on `SetRouting` leaves the old provider until reconnect; the routing refusal can be explained twice in one notice; the project file is parsed a second time for the routing key scan; a project connection row without a `routing` table and nothing saved from the screen drops the home `config.toml` table with the replaced row; `is_openrouter` matches any base URL containing `openrouter.ai`. Open besides: the `/models` picker cannot choose a `:floor`/`:nitro` id; `ryter connections` does not show routing; the first person to use the routing screen found it somewhat confusing. Next: the Windows build.
 
 ### 0.41.0 — The project's verbs as tools (2026-10-25)
 
