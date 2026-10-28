@@ -2214,7 +2214,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryter-bench"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "flate2",
  "rustix",
@@ -2227,7 +2227,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-cli"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "clap",
  "ryter-bench",
@@ -2240,7 +2240,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-core"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -2270,7 +2270,7 @@ dependencies = [
 
 [[package]]
 name = "ryter-tui"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "base64",
  "crossterm",
