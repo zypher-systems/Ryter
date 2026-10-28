@@ -267,7 +267,10 @@ run was served by the same hosts. The table says which hosts served each run
 where the tool names them (Ryter's spend events do), and the way to pin
 Ryter's is a `routing` table on the connection in your `~/.ryter/config.toml`
 (see the guide's *Which host serves you on OpenRouter*), or in a labelled
-arm's `--ryter-config` file with the whole connection row. Pin the other
+arm's `--ryter-config` file with the whole connection row. The arm's file is
+the project's own, so its table wins over the rules saved from `/provider`
+(`~/.ryter/routing.toml`), which in turn win over `~/.ryter/config.toml`;
+the hosts line under the table shows what the pin did. Pin the other
 tools by their own settings before reading their dollars against Ryter's;
 OpenRouter's `:floor` suffix on a model id (`opencode=openrouter/z-ai/glm-5.3:floor`)
 is the cheapest host for any tool that passes the id through.

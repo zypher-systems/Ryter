@@ -618,7 +618,7 @@ pub fn explain_error(e: &str) -> Option<String> {
     if lower.contains("max price") || lower.contains("[routing]") {
         return Some(
             "no host passes the connection's [routing] (its max_price, or another of its \
-             terms); loosen it in config.toml or pick another model"
+             terms); loosen it with r on the connection's row in /provider, or in its config.toml table, or pick another model"
                 .into(),
         );
     }

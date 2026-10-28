@@ -1265,15 +1265,14 @@ fn set_routing(
 ) {
     // Saved first, applied after, as the web-search row does: a save that
     // fails leaves the connection and the worker as they were.
+    // A clear is saved as an empty table, not as no entry: the file lays
+    // over config.toml, and an absent name would let a table written there
+    // come back on the next launch. The name goes only with the connection.
     let mut file = config::load_routing(&cx.home);
-    match &routing {
-        Some(r) => {
-            file.insert(name.to_string(), (**r).clone());
-        }
-        None => {
-            file.remove(name);
-        }
-    }
+    file.insert(
+        name.to_string(),
+        routing.as_deref().cloned().unwrap_or_default(),
+    );
     if let Err(e) = config::save_routing(&cx.home, &file) {
         view.error(e.to_string());
         return;
@@ -1293,7 +1292,9 @@ fn set_routing(
             "{name} · {} · saved to ~/.ryter/routing.toml",
             panel::routing::summary(r)
         )),
-        None => view.system(format!("{name} · host left to OpenRouter")),
+        None => view.system(format!(
+            "{name} · host left to OpenRouter · saved to ~/.ryter/routing.toml"
+        )),
     }
 }
 

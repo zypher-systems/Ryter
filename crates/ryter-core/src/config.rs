@@ -1077,6 +1077,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     // project that sets its own value wins: applied last, a saved budget
     // silently overrode every project's cap.
     apply_settings_file(&mut cfg, &home.join("settings.toml"));
+    let mut project_routing: Vec<(String, Option<Box<RoutingConfig>>)> = Vec::new();
     if trusted {
         if let Some(root) = project_root {
             let project = root.join(".ryter").join("config.toml");
@@ -1091,7 +1092,22 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                 // address, or turn the web back on over the user's no.
                 let own_search = cfg.search.clone();
                 let own_features = cfg.features.clone();
+                let routing_before: BTreeMap<String, Option<Box<RoutingConfig>>> = cfg
+                    .connections
+                    .iter()
+                    .map(|(n, c)| (n.clone(), c.routing.clone()))
+                    .collect();
                 merge_file(&mut cfg, &project)?;
+                // The project's own routing tables, to lay over the file
+                // saved from /provider below: that file is the user's
+                // default, and a project that pins its host (a bench arm)
+                // means that host.
+                project_routing = cfg
+                    .connections
+                    .iter()
+                    .filter(|(n, c)| routing_before.get(*n) != Some(&c.routing))
+                    .map(|(n, c)| (n.clone(), c.routing.clone()))
+                    .collect();
                 if cfg.permissions != own_rules {
                     cfg.warnings.push(format!(
                         "{}: [permissions] ignored; the gate's rules come from ~/.ryter/config.toml only",
@@ -1122,6 +1138,11 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
     apply_routing_file(&mut cfg, &routing_path(home));
+    for (name, routing) in project_routing {
+        if let Some(c) = cfg.connections.get_mut(&name) {
+            c.routing = routing;
+        }
+    }
     apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
     // TUI `/permissions` writes here; once present it is the gate's rules
     // (config.toml's `[permissions]` still applies until the first save).
@@ -3148,6 +3169,55 @@ mod tests {
             "{:?}",
             cfg.warnings
         );
+    }
+
+    /// The file saved from `/provider` is the user's default; a trusted
+    /// project's own table (a bench arm pinning its host) wins over it,
+    /// and over config.toml's.
+    #[test]
+    fn a_trusted_projects_own_routing_wins_over_the_screens_file() {
+        let home = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        fs::write(
+            home.path().join("config.toml"),
+            "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n[connections.openrouter.routing]\nsort = \"latency\"\n",
+        )
+        .unwrap();
+        let mut map = BTreeMap::new();
+        map.insert(
+            "openrouter".to_string(),
+            RoutingConfig {
+                sort: Some(RoutingSort::By("price".into())),
+                ..Default::default()
+            },
+        );
+        save_routing(home.path(), &map).unwrap();
+        let sort_of = |cfg: &Config| {
+            cfg.connections["openrouter"]
+                .routing
+                .as_ref()
+                .and_then(|r| r.sort.clone())
+        };
+        // No project table: the screen's file.
+        fs::create_dir_all(project.path().join(".ryter")).unwrap();
+        fs::write(
+            project.path().join(".ryter/config.toml"),
+            "[spend]\nsession_budget_usd = 1\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(project.path()), true).unwrap();
+        assert_eq!(sort_of(&cfg), Some(RoutingSort::By("price".into())));
+        // The project's own table wins (a connection row is given whole).
+        fs::write(
+            project.path().join(".ryter/config.toml"),
+            "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n[connections.openrouter.routing]\nsort = \"throughput\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(project.path()), true).unwrap();
+        assert_eq!(sort_of(&cfg), Some(RoutingSort::By("throughput".into())));
+        // Untrusted, the project's file is not read at all.
+        let cfg = load_at(home.path(), Some(project.path()), false).unwrap();
+        assert_eq!(sort_of(&cfg), Some(RoutingSort::By("price".into())));
     }
 
     #[test]

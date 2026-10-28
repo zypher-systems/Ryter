@@ -884,7 +884,7 @@ fn routing_refusal(body: &str) -> Option<String> {
     let message = v["error"]["message"].as_str().unwrap_or("no host left");
     Some(format!(
         "no OpenRouter host passes this connection's [routing] ({message}; stopped at: {step}); \
-         loosen it in config.toml or pick another model"
+         loosen it with r on the connection's row in /provider, or in its config.toml table, or pick another model"
     ))
 }
 
@@ -1238,7 +1238,7 @@ mod tests {
             routing_refusal(body).unwrap(),
             "no OpenRouter host passes this connection's [routing] (No endpoints found that \
              satisfy the max price for this request; stopped at: Filter by Max Price); \
-             loosen it in config.toml or pick another model"
+             loosen it with r on the connection's row in /provider, or in its config.toml table, or pick another model"
         );
         assert_eq!(
             routing_refusal(r#"{"error":{"message":"Not Found","code":404}}"#),

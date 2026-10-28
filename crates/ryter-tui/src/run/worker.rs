@@ -789,10 +789,19 @@ pub fn run(init: WorkerInit) {
                 let Some(c) = cfg.connections.get_mut(&name) else {
                     continue;
                 };
-                c.routing = routing;
-                // The provider was built with the rules at connect: rebuilt
-                // here, or the session's calls would keep the old host.
+                c.routing = routing.clone();
                 if let Some(a) = &mut agent {
+                    // A hat or the scout on another connection builds its
+                    // provider from the agent's own copy of the config, so
+                    // that copy learns the rules too.
+                    if let Some(cfg) = &mut a.cfg {
+                        if let Some(c) = cfg.connections.get_mut(&name) {
+                            c.routing = routing;
+                        }
+                    }
+                    // The provider was built with the rules at connect:
+                    // rebuilt here, or the session's calls would keep the
+                    // old host.
                     if a.connection == name {
                         match resolve_secret(&cfg, &ConnectionId::new(&name)) {
                             Ok(key) => {
