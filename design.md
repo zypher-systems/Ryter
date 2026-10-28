@@ -968,7 +968,7 @@ Every configuration panel is built from these, in `panel/widgets.rs`:
 - **R-POP-15** `ListRow` — icon, primary text, secondary dim text, right-aligned status,
   and per-row actions surfaced in the bottom legend.
 - **R-POP-16** `Gauge` — label, bar, value, threshold colors.
-- **R-POP-17** `Table` — column headers, alignment, selection.
+- **R-POP-17** `Table` — column headers, alignment, selection. A table that scrolls sizes its columns by every row it can show, not by the rows on screen, so the columns stay where they are as the list moves (the model, session and benchmark lists).
 - **R-POP-18** Every form panel has explicit `save` / `cancel` semantics shown in the
   legend. Nothing is written on keystroke unless the panel says `changes apply immediately`
   in its legend.

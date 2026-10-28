@@ -207,28 +207,32 @@ impl Panel for Sessions {
         if n == 0 {
             lines.push(widgets::note("no saved sessions in this directory", theme));
         }
+        let cells = |r: &Row| -> Vec<String> {
+            let mut title = r.title.clone();
+            if r.id == view.session_id {
+                title.push_str("  ●");
+            }
+            vec![
+                wrap::truncate(&title, w.saturating_sub(44).max(12)),
+                relative(now, r.updated_ms),
+                r.messages.to_string(),
+                format_usd(r.spend),
+                r.hat.clone(),
+                r.short.clone(),
+            ]
+        };
+        // Sized by the whole list: the columns stay put as it scrolls.
+        let measure: Vec<Vec<String>> = list.iter().map(|r| cells(r)).collect();
         let rows: Vec<Vec<String>> = list
             .iter()
             .skip(first)
             .take(rows_h)
-            .map(|r| {
-                let mut title = r.title.clone();
-                if r.id == view.session_id {
-                    title.push_str("  ●");
-                }
-                vec![
-                    wrap::truncate(&title, w.saturating_sub(44).max(12)),
-                    relative(now, r.updated_ms),
-                    r.messages.to_string(),
-                    format_usd(r.spend),
-                    r.hat.clone(),
-                    r.short.clone(),
-                ]
-            })
+            .map(|r| cells(r))
             .collect();
         if n > 0 {
-            lines.extend(widgets::table(
+            lines.extend(widgets::table_sized(
                 &["title", "updated", "msgs", "spend", "hat", "id"],
+                &measure,
                 &rows,
                 &[
                     widgets::Al::L,
