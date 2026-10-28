@@ -270,7 +270,8 @@ Ryter's is a `routing` table on the connection in your `~/.ryter/config.toml`
 arm's `--ryter-config` file with the whole connection row. The arm's file is
 the project's own, so its table wins over the rules saved from `/provider`
 (`~/.ryter/routing.toml`), which in turn win over `~/.ryter/config.toml`;
-the hosts line under the table shows what the pin did. Pin the other
+the hosts line under the table shows what the pin did. A row in the
+arm's file without a `routing` table leaves the saved rules alone. Pin the other
 tools by their own settings before reading their dollars against Ryter's;
 OpenRouter's `:floor` suffix on a model id (`opencode=openrouter/z-ai/glm-5.3:floor`)
 is the cheapest host for any tool that passes the id through.

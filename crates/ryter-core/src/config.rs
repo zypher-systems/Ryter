@@ -1092,21 +1092,22 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
                 // address, or turn the web back on over the user's no.
                 let own_search = cfg.search.clone();
                 let own_features = cfg.features.clone();
-                let routing_before: BTreeMap<String, Option<Box<RoutingConfig>>> = cfg
-                    .connections
-                    .iter()
-                    .map(|(n, c)| (n.clone(), c.routing.clone()))
-                    .collect();
                 merge_file(&mut cfg, &project)?;
                 // The project's own routing tables, to lay over the file
                 // saved from /provider below: that file is the user's
                 // default, and a project that pins its host (a bench arm)
-                // means that host.
-                project_routing = cfg
-                    .connections
-                    .iter()
-                    .filter(|(n, c)| routing_before.get(*n) != Some(&c.routing))
-                    .map(|(n, c)| (n.clone(), c.routing.clone()))
+                // means that host. A name counts when the project file
+                // has a `routing` table for it, whatever it says: one that
+                // restates config.toml's choice pins it all the same, and
+                // an empty one is a clear. A row without the key leaves
+                // the connection's rules alone.
+                project_routing = project_routing_tables(&project)
+                    .into_iter()
+                    .filter_map(|name| {
+                        let routing = cfg.connections.get(&name)?.routing.clone();
+                        let routing = routing.filter(|r| **r != RoutingConfig::default());
+                        Some((name, routing))
+                    })
                     .collect();
                 if cfg.permissions != own_rules {
                     cfg.warnings.push(format!(
@@ -1477,6 +1478,28 @@ fn apply_routing_file(cfg: &mut Config, path: &Path) {
         }
         conn.routing = (routing != RoutingConfig::default()).then(|| Box::new(routing));
     }
+}
+
+/// The connections a config file sets a `routing` table on, whatever the
+/// table says.
+fn project_routing_tables(path: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = toml::from_str::<toml::Value>(&text) else {
+        return Vec::new();
+    };
+    value
+        .get("connections")
+        .and_then(toml::Value::as_table)
+        .map(|conns| {
+            conns
+                .iter()
+                .filter(|(_, c)| c.get("routing").is_some())
+                .map(|(name, _)| name.clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The rules saved from `/provider`, by connection name.
@@ -3218,6 +3241,30 @@ mod tests {
         // Untrusted, the project's file is not read at all.
         let cfg = load_at(home.path(), Some(project.path()), false).unwrap();
         assert_eq!(sort_of(&cfg), Some(RoutingSort::By("price".into())));
+        // A pin that restates config.toml's own choice is a pin all the same.
+        fs::write(
+            project.path().join(".ryter/config.toml"),
+            "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n[connections.openrouter.routing]\nsort = \"latency\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(project.path()), true).unwrap();
+        assert_eq!(sort_of(&cfg), Some(RoutingSort::By("latency".into())));
+        // A row without a routing table leaves the screen's rules alone.
+        fs::write(
+            project.path().join(".ryter/config.toml"),
+            "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(project.path()), true).unwrap();
+        assert_eq!(sort_of(&cfg), Some(RoutingSort::By("price".into())));
+        // An empty table is the project's clear.
+        fs::write(
+            project.path().join(".ryter/config.toml"),
+            "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n[connections.openrouter.routing]\n",
+        )
+        .unwrap();
+        let cfg = load_at(home.path(), Some(project.path()), true).unwrap();
+        assert_eq!(cfg.connections["openrouter"].routing, None);
     }
 
     #[test]
