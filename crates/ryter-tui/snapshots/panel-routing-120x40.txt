@@ -1,0 +1,40 @@
+
+ ●●● RYTER
+
+
+  New session                                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+        ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖        ┊
+          routing · openrouter                                                 ┃        ┊ HATS
+          ORDER OF HOSTS                                                       ┃        ┊ ● Plan   grok-4.6         $0
+         › sort hosts by           ‹ price ›                               set ┃        ┊ ┃ Build                   $0
+             price: the cheapest host; throughput: the fastest; latency: the   ┃        ┊   grok-4.6
+             soonest to answer. A sort turns OpenRouter's load balancing off   ┃        ┊   asks first
+           sort within             ‹ default ›                         default ┃        ┊ ● Audit  grok-4.6         $0
+           try first                                                   default ┃        ┊ ● Scribe follows all ha…  $0
+           fallbacks past them     ‹ default ›                         default ┃        ┊
+           only these hosts                                            default ┃        ┊
+           never these hosts                                           default ┃        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                                                                               ┃        ┊ Context
+          WHAT A HOST MUST OFFER                                               ┃        ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+           quantizations           fp8, bf16, fp16                         set ┃        ┊  ⢰⠋      ⠙⡆ 12k
+           every parameter         ‹ default ›                         default ┃        ┊  ⢸   5%   ⡧ of 256k
+           data collection         ‹ default ›                         default ┃        ┊  ⠸⣄      ⣠⠇
+           zero data retention     ‹ default ›                         default ┃        ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+           distillable text only   ‹ default ›                         default ┃        ┊
+                                                                               ┃        ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+          SPEED, A PREFERENCE                                                  ┃        ┊ Spend · no cap
+           min throughput, tok/s                                       default ┃        ┊ $0
+           max latency, seconds                                        default ┃        ┊ Build  ╌╌╌╌╌╌╌╌           $0
+                                                                               ┃        ┊
+          PRICE, A BAR                                                         ┃        ┊
+           max $ per M prompt      0.5                                     set ┃        ┊
+           max $ per M completion  2                                       set ┃        ┊
+           max $ per request                                           default ┆        ┊
+           max $ per image                                             default ┆        ┊
+          ↑↓ field   ←→ change   enter edit   ^s save   esc                    ┆        ┊
+        ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘        ┊
+  ╭──────────────────────────────────────────────────────────────────────────────────╮  ┊
+  │ Build  › what should change?                                                     │  ┊
+  ╰──────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                        ┊
+ tab hat  ⇧tab mode  / commands  f2 instruments

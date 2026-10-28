@@ -19,6 +19,24 @@ env_key = "OPENROUTER_API_KEY"
 default_model = "anthropic/claude-sonnet-4.6"
 http_referer = "https://github.com/zypher-systems/ryter"
 x_title = "Ryter"
+# Which host serves a model: OpenRouter's `provider` object, sent with every
+# request. Unset, OpenRouter chooses, and its choice is not the cheapest; the
+# host that served each call is shown in /spend and `ryter spend`. Set in
+# /provider (r on the OpenRouter row), saved to ~/.ryter/routing.toml, which
+# lays over a table written here:
+# [connections.openrouter.routing]
+# sort = "price"                           # or "throughput" (fastest), "latency"
+# quantizations = ["fp8", "bf16", "fp16"]  # not a host serving a lossier quant
+# max_price = { prompt = 0.5, completion = 2 }  # $/million; fails rather than run dearer
+# preferred_min_throughput = 80            # tokens/s, a preference; or { p50 = 80, p90 = 40 }
+# preferred_max_latency = 2                # seconds to the first token, likewise
+# order = ["baseten", "fireworks"]         # hosts to try first, by OpenRouter's slug
+# allow_fallbacks = false                  # and no other when those fail
+# only = ["baseten/fp8/us"]                # the only hosts allowed; a slug names its region
+# ignore = ["wafer"]                       # hosts never used
+# zdr = true                               # zero-data-retention endpoints only
+# data_collection = "deny"                 # no host that keeps or trains on prompts
+# require_parameters = true                # only hosts taking every parameter sent
 
 [connections.anthropic]
 kind = "anthropic"

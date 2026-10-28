@@ -321,21 +321,24 @@ impl Benchmark {
                 .iter()
                 .any(|s| s.connection == connection && s.model == id)
         };
+        let cells = |m: &ModelInfo| -> Vec<String> {
+            vec![
+                if picked(&m.id) { "✓" } else { "" }.to_string(),
+                m.id.clone(),
+                m.context_length
+                    .map(format_tokens)
+                    .unwrap_or_else(|| "?".into()),
+                price(m.input_per_million),
+                price(m.output_per_million),
+            ]
+        };
+        // Sized by the whole list: the columns stay put as it scrolls.
+        let measure: Vec<Vec<String>> = list.iter().map(|m| cells(m)).collect();
         let rows: Vec<Vec<String>> = list
             .iter()
             .skip(first)
             .take(rows_h)
-            .map(|m| {
-                vec![
-                    if picked(&m.id) { "✓" } else { "" }.to_string(),
-                    m.id.clone(),
-                    m.context_length
-                        .map(format_tokens)
-                        .unwrap_or_else(|| "?".into()),
-                    price(m.input_per_million),
-                    price(m.output_per_million),
-                ]
-            })
+            .map(|m| cells(m))
             .collect();
         let toolless: Vec<bool> = list
             .iter()
@@ -347,8 +350,9 @@ impl Benchmark {
             &format!("models on {connection} · enter adds or removes · type to filter"),
             theme,
         )];
-        let mut table = widgets::table(
+        let mut table = widgets::table_sized(
             &["", "model", "context", "in/M", "out/M"],
+            &measure,
             &rows,
             &[Al::L, Al::L, Al::R, Al::R, Al::R],
             (n > 0).then_some(sel.saturating_sub(first)),
@@ -1165,6 +1169,8 @@ mod tests {
                 kind: name.into(),
                 model: model.into(),
                 has_key: true,
+                openrouter: false,
+                routing: None,
             });
         }
         v

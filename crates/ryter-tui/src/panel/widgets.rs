@@ -442,9 +442,26 @@ pub fn table(
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
+    table_sized(headers, rows, rows, aligns, selected, width, theme)
+}
+
+/// A table whose columns are sized by `measure`, not only by the `rows`
+/// drawn. A scrolling list passes every row as `measure` and the window
+/// on screen as `rows`, so the columns stay where they are as the window
+/// moves: sized by the rows shown, they would shift with each window's
+/// longest name.
+pub fn table_sized(
+    headers: &[&str],
+    measure: &[Vec<String>],
+    rows: &[Vec<String>],
+    aligns: &[Al],
+    selected: Option<usize>,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     let cols = headers.len();
     let mut widths: Vec<usize> = headers.iter().map(|h| wrap::width(h)).collect();
-    for r in rows {
+    for r in measure.iter().chain(rows) {
         for (i, c) in r.iter().enumerate().take(cols) {
             widths[i] = widths[i].max(wrap::width(c));
         }

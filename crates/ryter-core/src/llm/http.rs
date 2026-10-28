@@ -89,6 +89,8 @@ pub struct HttpProvider {
     kind: String,
     http_referer: Option<String>,
     x_title: Option<String>,
+    /// OpenRouter's `provider` object, from the connection's `[routing]`.
+    routing: Option<Value>,
 }
 
 impl HttpProvider {
@@ -122,6 +124,11 @@ impl HttpProvider {
             kind: conn.kind.clone(),
             http_referer: conn.http_referer.clone(),
             x_title: conn.x_title.clone(),
+            routing: conn
+                .routing
+                .as_ref()
+                .filter(|_| conn.is_openrouter())
+                .and_then(|r| r.provider_object()),
         }
     }
 
@@ -183,6 +190,11 @@ impl HttpProvider {
             if let Some(effort) = &req.reasoning {
                 body["reasoning"] = json!({ "effort": effort });
             }
+        }
+        // Which host serves the model is the user's choice on OpenRouter;
+        // without one, OpenRouter's own, which is not the cheapest.
+        if let Some(routing) = &self.routing {
+            body["provider"] = routing.clone();
         }
         // Direct Anthropic Messages: turn the same effort knob into extended
         // thinking. Without this, thinking stays off and there is nothing to
@@ -254,6 +266,13 @@ impl Provider for HttpProvider {
             }
             let wait = retry_after(resp.headers());
             let text = resp.text().await.unwrap_or_default();
+            // A refusal of the connection's own routing is said in those
+            // terms, not as a page of OpenRouter's funnel.
+            if self.routing.is_some() {
+                if let Some(why) = routing_refusal(&text) {
+                    return Err(Error::Provider(why));
+                }
+            }
             last = format!("http {status}: {text}");
             if !is_retryable_status(status.as_u16()) || attempt == MAX_RETRIES {
                 return Err(Error::Provider(last));
@@ -855,6 +874,20 @@ fn is_openrouter(base_url: &str) -> bool {
     base_url.contains("openrouter.ai")
 }
 
+/// OpenRouter's refusal when no host passes the request's routing, as a
+/// line a person can act on. Its body names the step the funnel stopped at
+/// (`"failed_routing_step": "Filter by Max Price"`) under a page of
+/// metadata; that step, and the message, are what matter.
+fn routing_refusal(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let step = v["error"]["metadata"]["failed_routing_step"].as_str()?;
+    let message = v["error"]["message"].as_str().unwrap_or("no host left");
+    Some(format!(
+        "no OpenRouter host passes this connection's [routing] ({message}; stopped at: {step}); \
+         loosen it with r on the connection's row in /provider (its config.toml table only counts while nothing is saved there), or pick another model"
+    ))
+}
+
 /// OpenRouter's models that take tools (all Ryter can drive), whatever the
 /// account allows. Its whole catalog has stalled near its end for minutes at
 /// a time; this comes back in a fraction of a second.
@@ -1121,6 +1154,97 @@ mod tests {
                 "{d:?}"
             );
         }
+    }
+
+    /// The connection's `[routing]` goes to OpenRouter as its `provider`
+    /// object, the fields set and no other; a connection without one sends
+    /// nothing, and OpenRouter's own choice stands.
+    #[test]
+    fn routing_goes_to_openrouter_as_its_provider_object() {
+        let req = CompletionRequest {
+            model: "z-ai/glm-5.3".into(),
+            system: None,
+            messages: vec![],
+            tools: vec![],
+            max_tokens: Some(16),
+            reasoning: None,
+        };
+        let mut or = crate::config::connection_template("openrouter").unwrap();
+        assert!(
+            HttpProvider::new(&or, "k".into())
+                .body(&req)
+                .get("provider")
+                .is_none(),
+            "no routing, no provider object"
+        );
+        or.routing = Some(Box::new(crate::config::RoutingConfig {
+            sort: Some(crate::config::RoutingSort::By("price".into())),
+            quantizations: vec!["fp8".into(), "bf16".into()],
+            ..Default::default()
+        }));
+        let body = HttpProvider::new(&or, "k".into()).body(&req);
+        assert_eq!(
+            body["provider"],
+            json!({"sort": "price", "quantizations": ["fp8", "bf16"]}),
+            "{body}"
+        );
+        // Every field is set: the names are OpenRouter's own.
+        or.routing = Some(Box::new(crate::config::RoutingConfig {
+            sort: None,
+            quantizations: vec![],
+            order: vec!["baseten".into()],
+            allow_fallbacks: Some(false),
+            only: vec!["baseten".into(), "fireworks".into()],
+            ignore: vec!["wafer".into()],
+            require_parameters: Some(true),
+            data_collection: Some("deny".into()),
+            zdr: Some(true),
+            enforce_distillable_text: None,
+            preferred_min_throughput: Some(crate::config::RoutingPercentiles::Median(80.0)),
+            preferred_max_latency: None,
+            max_price: Some(crate::config::RoutingMaxPrice {
+                prompt: Some(0.5),
+                completion: Some(2.0),
+                ..Default::default()
+            }),
+        }));
+        let body = HttpProvider::new(&or, "k".into()).body(&req);
+        assert_eq!(
+            body["provider"],
+            json!({"order": ["baseten"], "allow_fallbacks": false,
+                   "only": ["baseten", "fireworks"], "ignore": ["wafer"],
+                   "require_parameters": true, "data_collection": "deny", "zdr": true,
+                   "preferred_min_throughput": 80.0,
+                   "max_price": {"prompt": 0.5, "completion": 2.0}}),
+            "{body}"
+        );
+        // An empty table is no routing.
+        or.routing = Some(Default::default());
+        assert!(
+            HttpProvider::new(&or, "k".into())
+                .body(&req)
+                .get("provider")
+                .is_none()
+        );
+    }
+
+    /// When no host passes the routing, OpenRouter answers 404 with its
+    /// funnel; the line kept names the step it stopped at and the message.
+    /// Any other 404, or a body with no funnel, is not read as that.
+    #[test]
+    fn a_routing_refusal_names_the_step_the_funnel_stopped_at() {
+        let body = r#"{"error":{"message":"No endpoints found that satisfy the max price for this request","code":404,"metadata":{"routing_funnel":[{"step":"Initial Endpoints","endpoint_count":48},{"step":"Filter by Regional Surcharge","endpoint_count":47}],"failed_routing_step":"Filter by Max Price"}}}"#;
+        assert_eq!(
+            routing_refusal(body).unwrap(),
+            "no OpenRouter host passes this connection's [routing] (No endpoints found that \
+             satisfy the max price for this request; stopped at: Filter by Max Price); \
+             loosen it with r on the connection's row in /provider (its config.toml table only counts while nothing is saved there), or pick another model"
+        );
+        assert_eq!(
+            routing_refusal(r#"{"error":{"message":"Not Found","code":404}}"#),
+            None
+        );
+        assert_eq!(routing_refusal("<html>gateway timeout</html>"), None);
     }
 
     /// OpenRouter and OpenAI get the reasoning setting; other servers never

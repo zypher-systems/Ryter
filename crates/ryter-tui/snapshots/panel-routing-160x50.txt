@@ -1,0 +1,50 @@
+
+ ●●● RYTER
+
+
+    New session                                                                                 ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
+    0.2.0-patch                                                                                                     ┊
+                                                                                                                    ┊ HATS
+           ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
+                                                                                                                    ┊ ┃ Build                               $0
+                       ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                     ┊   grok-4.6
+                         routing · openrouter                                                 ┃                     ┊   asks first
+                         ORDER OF HOSTS                                                       ┃                     ┊ ● Audit  grok-4.6                     $0
+                        › sort hosts by           ‹ price ›                               set ┃                     ┊ ● Scribe follows all hats             $0
+                            price: the cheapest host; throughput: the fastest; latency: the   ┃                     ┊
+                            soonest to answer. A sort turns OpenRouter's load balancing off   ┃                     ┊
+                          sort within             ‹ default ›                         default ┃                     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                          try first                                                   default ┃                     ┊ Context
+                          fallbacks past them     ‹ default ›                         default ┃                     ┊   ⢀⡴⠒⠒⠒⠒⢦⡀
+                          only these hosts                                            default ┃                     ┊  ⢰⠋      ⠙⡆ 12k
+                          never these hosts                                           default ┃                     ┊  ⢸   5%   ⡧ of 256k
+                                                                                              ┃                     ┊  ⠸⣄      ⣠⠇
+                         WHAT A HOST MUST OFFER                                               ┃                     ┊   ⠈⠳⠤⠤⡤⠤⠞⠁
+                          quantizations           fp8, bf16, fp16                         set ┃                     ┊
+                          every parameter         ‹ default ›                         default ┃                     ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+                          data collection         ‹ default ›                         default ┃                     ┊ Spend · no cap
+                          zero data retention     ‹ default ›                         default ┃                     ┊ $0
+                          distillable text only   ‹ default ›                         default ┃                     ┊ Build  ╌╌╌╌╌╌╌╌                       $0
+                                                                                              ┃                     ┊
+                         SPEED, A PREFERENCE                                                  ┃                     ┊
+                          min throughput, tok/s                                       default ┃                     ┊
+                          max latency, seconds                                        default ┃                     ┊
+                                                                                              ┃                     ┊
+                         PRICE, A BAR                                                         ┃                     ┊
+                          max $ per M prompt      0.5                                     set ┃                     ┊
+                          max $ per M completion  2                                       set ┃                     ┊
+                          max $ per request                                           default ┆                     ┊
+                          max $ per image                                             default ┆                     ┊
+                         ↑↓ field   ←→ change   enter edit   ^s save   esc                    ┆                     ┊
+                       ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘                     ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+                                                                                                                    ┊
+    ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  ┊
+    │ Build  › what should change?                                                                               │  ┊
+    ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯  ┊
+                                                                                                                    ┊
+ tab hat  ⇧tab mode  / commands  f2 instruments

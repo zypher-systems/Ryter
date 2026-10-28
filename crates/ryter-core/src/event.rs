@@ -133,6 +133,9 @@ pub enum AgentEvent {
         /// A scout's call: the hat's spend, not the hat's context size.
         #[serde(default)]
         scout: bool,
+        /// The host that served the call, where a router names one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
     },
     /// The product run_project started is up, or was stopped. While it is up the
     /// user can stop it (`/stop`), and is asked about it on quit.

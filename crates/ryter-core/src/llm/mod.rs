@@ -63,6 +63,9 @@ pub enum StreamDelta {
     Usage(Usage),
     /// Provider-reported USD (OpenRouter generation cost). Wins over the price book.
     ReportedCost(f64),
+    /// The host that served the call, where a router names one: OpenRouter's
+    /// `provider` on every chunk. What a call cost depends on it.
+    Host(String),
     /// The model ran into the output-token ceiling mid-answer. Without this a
     /// truncated turn is indistinguishable from a finished one.
     Truncated,
@@ -612,6 +615,13 @@ pub fn explain_error(e: &str) -> Option<String> {
     if lower.contains("not a valid model") {
         return Some("not a model this connection knows (renamed or retired?)".into());
     }
+    if lower.contains("max price") || lower.contains("[routing]") {
+        return Some(
+            "no host passes the connection's [routing] (its max_price, or another of its \
+             terms); loosen it with r on the connection's row in /provider (its config.toml table only counts while nothing is saved there), or pick another model"
+                .into(),
+        );
+    }
     if lower.contains("401") || lower.contains("403") || lower.contains("unauthorized") {
         return Some("the key was refused for this model".into());
     }
@@ -1059,6 +1069,10 @@ mod tests {
             (
                 r#"http 404: {"error":{"message":"No endpoints found that support tool use"}}"#,
                 "tool use",
+            ),
+            (
+                r#"http 404: {"error":{"message":"No endpoints found that satisfy the max price for this request","metadata":{"failed_routing_step":"Filter by Max Price"}}}"#,
+                "[routing]",
             ),
             (
                 r#"http 402: {"error":{"message":"Insufficient credits"}}"#,

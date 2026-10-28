@@ -1,0 +1,30 @@
+
+ ●●● RYTER
+
+ ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖ ┊ ryter  ⎇ 0.2.0-patch
+   routing · openrouter                                               ┃ ┊
+   ORDER OF HOSTS                                                     ┃ ┊ HATS
+  › sort hosts by           ‹ price ›                             set ┃ ┊ ● Plan   grok-4.6     $0
+      price: the cheapest host; throughput: the fastest; latency: the ┃ ┊ ┃ Build               $0
+      soonest to answer. A sort turns OpenRouter's load balancing off ┃ ┊   grok-4.6
+    sort within             ‹ default ›                       default ┃ ┊   asks first
+    try first                                                 default ┃ ┊ ● Audit  grok-4.6     $0
+    fallbacks past them     ‹ default ›                       default ┃ ┊ ● Scribe follows al…  $0
+    only these hosts                                          default ┃ ┊
+    never these hosts                                         default ┃ ┊
+                                                                      ┃ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+   WHAT A HOST MUST OFFER                                             ┃ ┊ Context
+    quantizations           fp8, bf16, fp16                       set ┃ ┊ ━╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+    every parameter         ‹ default ›                       default ┃ ┊ 12k of 256k           5%
+    data collection         ‹ default ›                       default ┃ ┊
+    zero data retention     ‹ default ›                       default ┆ ┊ ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
+    distillable text only   ‹ default ›                       default ┆ ┊ Spend · no cap
+                                                                      ┆ ┊ $0
+   SPEED, A PREFERENCE                                                ┆ ┊ Build  ╌╌╌╌╌╌╌╌       $0
+    min throughput, tok/s                                     default ┆ ┊
+    max latency, seconds                                      default ┆ ┊
+   ↑↓ field   ←→ change   enter edit   ^s save   esc                  ┆ ┊
+ ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘ ┊
+  ╰──────────────────────────────────────────────────────────────────╯  ┊
+                                                                        ┊
+ tab hat  ⇧tab mode  / commands  f2 instruments

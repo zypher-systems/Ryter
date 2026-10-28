@@ -44,22 +44,30 @@ SCOPE = (ROOT / 'bench' / 'scope.txt').read_text().strip() + '\n\n'
 
 class Run:
     """One tool on one model. `spec` is `tool=model`; for ryter the model is
-    `connection:model`."""
+    `connection:model`. `ryter@label=connection:model` is a second Ryter arm
+    on the same model, told apart by its label, for an ablation: the label's
+    `--ryter-config` text goes into that arm's project config."""
 
     def __init__(self, spec):
         tool, sep, model = spec.partition('=')
+        tool, at, label = tool.partition('@')
         if tool not in TOOLS or not sep or not model:
             raise ValueError(f'--run takes tool=model with tool one of {", ".join(TOOLS)}: {spec!r}')
-        self.tool, self.connection = tool, None
+        if at and (tool != 'ryter' or not re.fullmatch(r'[A-Za-z0-9_-]+', label)):
+            raise ValueError(f'--run takes a @label on ryter only, letters, digits, - and _: {spec!r}')
+        self.tool, self.connection, self.label = tool, None, label or None
         if tool == 'ryter':
             self.connection, sep, model = model.partition(':')
             if not sep or not model or not self.connection:
                 raise ValueError(f'--run ryter takes connection:model: {spec!r}')
         self.model = model
+        # TOML appended to the arm's project config, from `--ryter-config`.
+        self.config_text = ''
 
     @property
     def key(self):
-        return f'{self.tool}={self.connection + ":" if self.connection else ""}{self.model}'
+        label = f'@{self.label}' if self.label else ''
+        return f'{self.tool}{label}={self.connection + ":" if self.connection else ""}{self.model}'
 
     @property
     def directory(self):
@@ -69,6 +77,22 @@ class Run:
 
     def __repr__(self):
         return self.key
+
+
+def parse_config(spec):
+    """`label=FILE`: the TOML in FILE, for the Ryter arm with that label."""
+    label, sep, path = spec.partition('=')
+    if not sep or not label or not path:
+        raise ValueError(f'--ryter-config takes label=FILE: {spec!r}')
+    try:
+        text = Path(path).read_text()
+    except OSError as e:
+        raise ValueError(f'--ryter-config {spec!r}: {e}') from None
+    try:
+        tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f'--ryter-config {path}: not TOML: {e}') from None
+    return label, text
 
 
 def parse_price(spec):
@@ -142,7 +166,10 @@ def charge(run, stdout, price=None):
     """What the tool says the task cost: {usd, priced_by, input, cached,
     output, calls, complete}. `usd` is None when nothing priced it;
     `complete` is False when the tool said its own accounting was not."""
-    out = {'usd': None, 'priced_by': None, 'input': 0, 'cached': 0, 'output': 0, 'calls': 0, 'complete': True}
+    out = {'usd': None, 'priced_by': None, 'input': 0, 'cached': 0, 'output': 0, 'calls': 0, 'complete': True,
+           # Calls per host that served them, where the tool names one
+           # (Ryter's spend events on OpenRouter): the host sets the price.
+           'hosts': {}}
     if run.tool == 'ryter':
         spend = [e for e in json_lines(stdout) if e.get('kind') == 'spend']
         for e in spend:
@@ -151,6 +178,8 @@ def charge(run, stdout, price=None):
             out['output'] += e.get('output_tokens', 0)
             if e.get('total_usd') is None or e.get('incomplete'):
                 out['complete'] = False
+            if e.get('host'):
+                out['hosts'][e['host']] = out['hosts'].get(e['host'], 0) + 1
         out['calls'] = len(spend)
         if spend and out['complete']:
             out['usd'], out['priced_by'] = sum(e['total_usd'] for e in spend), 'tool'
@@ -285,7 +314,10 @@ def execute(run, task, spec, directory, binary, env, timeout, cap_usd, price):
         # The run file is the project's own: its test and its fast check.
         (ryter / 'run.toml').write_text('test = ' + json.dumps(spec['checks']) + '\n'
                                         + 'check = ' + json.dumps(spec['checks'][0]) + '\n')
-        (ryter / 'config.toml').write_text(f'[spend]\nsession_budget_usd = {cap_text(cap_usd)}\n[update]\nmode = "off"\n')
+        # The arm's own settings (an ablation's `[map] chars = 0`) go after
+        # the cap, which every arm has alike.
+        (ryter / 'config.toml').write_text(f'[spend]\nsession_budget_usd = {cap_text(cap_usd)}\n[update]\nmode = "off"\n'
+                                           + run.config_text)
         trust = subprocess.run([str(binary), 'trust'], cwd=project, env=env, capture_output=True,
                                text=True, timeout=15)
         if trust.returncode:
@@ -329,11 +361,17 @@ def summarize(report):
         solved = sum(r['solved'] for r in done)
         priced = all(r.get('usd') is not None for r in done) and bool(done)
         usd = sum(r['usd'] for r in done) if priced else None
-        rows.append({'run': key, 'tasks': len(done), 'solved': solved, 'usd': usd,
+        hosts = {}
+        for r in done:
+            for host, calls in r.get('charge', {}).get('hosts', {}).items():
+                hosts[host] = hosts.get(host, 0) + calls
+        rows.append({'run': key, 'tasks': len(done), 'solved': solved, 'usd': usd, 'hosts': hosts,
                      'usd_per_solved': (usd / solved) if priced and solved else None,
                      'solved_per_usd': (solved / usd) if priced and usd else None,
                      'timed_out': sum(r.get('timed_out', False) for r in done),
                      'median_minutes': statistics.median(r['seconds'] for r in done) / 60 if done else None,
+                     # The tool's rounds with the model, as it counts them.
+                     'median_rounds': statistics.median(r.get('charge', {}).get('calls', 0) for r in done) if done else None,
                      'table_priced': any(r.get('charge', {}).get('priced_by') == 'table' for r in done),
                      'estimated': key.startswith('claude=')
                      or any(r.get('charge', {}).get('priced_by') == 'tool estimate' for r in done)})
@@ -352,15 +390,16 @@ def markdown(report):
              f'Budget ${budget:.2f}, spent {usd(report["total_usd"])}; '
              f'{report["timeout_seconds"]} s per task; one attempt per task'
              + (f'; the {report["level"]} tasks only' if report.get('level') else '') + '.', '',
-             '| Run | Solved | Cost | Cost per solved | Solved per $ | Median minutes | Timed out |',
-             '|---|---|---|---|---|---|---|']
+             '| Run | Solved | Cost | Cost per solved | Solved per $ | Median minutes | Median rounds | Timed out |',
+             '|---|---|---|---|---|---|---|---|']
     summary = summarize(report)
     for s in summary:
         flag = (' *' if s['table_priced'] else '') + (' †' if s['estimated'] else '')
         lines.append(f'| `{s["run"]}` | {s["solved"]}/{s["tasks"]} | {usd(s["usd"])}{flag} | '
                      f'{usd(s["usd_per_solved"])} | '
                      f'{"—" if s["solved_per_usd"] is None else f"{s["solved_per_usd"]:.1f}"} | '
-                     f'{"—" if s["median_minutes"] is None else f"{s["median_minutes"]:.1f}"} | {s["timed_out"]} |')
+                     f'{"—" if s["median_minutes"] is None else f"{s["median_minutes"]:.1f}"} | '
+                     f'{"—" if s["median_rounds"] is None else f"{s["median_rounds"]:g}"} | {s["timed_out"]} |')
     if any(s['table_priced'] for s in summary):
         lines += ['', '\\* priced from the token counts at the rates given: '
                   + ', '.join(f'`{m}` ${p["input"]}/{p["cached"]}/{p["output"]} per million input/cached/output'
@@ -368,6 +407,16 @@ def markdown(report):
     if any(s['estimated'] for s in summary):
         lines += ['', "† the tool's own estimate of the cost at list prices, not a provider's charge: "
                   "Claude Code prices its usage itself, and on a subscription login nothing is billed per token."]
+    if any(s['hosts'] for s in summary):
+        # On OpenRouter the host sets the price, by an order of magnitude
+        # between hosts of one model; a cost column compares tools only
+        # where every run was served by the same hosts.
+        lines += ['', 'Hosts that served the calls, where the tool names them: '
+                  + '; '.join(f'`{s["run"]}` ' + ', '.join(f'{h} ({n})' for h, n in
+                                                           sorted(s['hosts'].items(), key=lambda kv: -kv[1]))
+                              for s in summary if s['hosts'])
+                  + ". On OpenRouter the host sets the price, so two runs served by different hosts "
+                    "compare hosts, not tools; pin the host on every tool before reading the cost column."]
     lines += ['', '| Task | ' + ' | '.join(f'`{k}`' for k in report['runs']) + ' |',
               '|---|' + '---|' * len(report['runs'])]
     for name, task in report['tasks'].items():
@@ -393,6 +442,8 @@ def main(argv=None):
     parser.add_argument('--run', action='append', default=[], help='tool=model; ryter=connection:model')
     parser.add_argument('--price', action='append', default=[],
                         help='model=input,cached,output dollars per million, for a tool that reports tokens only')
+    parser.add_argument('--ryter-config', action='append', default=[],
+                        help='label=FILE: TOML added to the project config of the ryter@label arm (an ablation)')
     parser.add_argument('--task', action='append', default=[])
     parser.add_argument('--level', choices=LEVELS, help='only the tasks at this level; every level when absent')
     parser.add_argument('--budget', type=float, help='dollars for the whole run, all tools; required to run')
@@ -413,8 +464,15 @@ def main(argv=None):
     try:
         runs = [Run(s) for s in args.run]
         prices = dict(parse_price(s) for s in args.price)
+        configs = dict(parse_config(s) for s in args.ryter_config)
     except ValueError as e:
         parser.error(str(e))
+    for label in configs:
+        arms = [r for r in runs if r.label == label]
+        if not arms:
+            parser.error(f'--ryter-config {label}: no --run ryter@{label}=…')
+        for r in arms:
+            r.config_text = configs[label]
     if not runs:
         parser.error('at least one --run')
     if args.budget is None:
@@ -451,6 +509,7 @@ def main(argv=None):
                       ['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip(),
                   'runs': [r.key for r in runs], 'versions': {r.tool: tool_version(r, args.binary) for r in runs},
                   'budget_usd': args.budget, 'timeout_seconds': args.timeout, 'prices': prices,
+                  'configs': {r.key: r.config_text for r in runs if r.config_text},
                   'level': args.level, 'total_usd': 0.0, 'tasks': {}, 'command': sys.argv[1:]}
         tasks = select_tasks(ROOT / 'bench', args.task, args.level)
         if not tasks:
@@ -496,6 +555,9 @@ def main(argv=None):
         for r in runs:
             print('  ' + ' '.join(repr(a) if ' ' in a else a for a in
                                   command_for(r, args.binary, '<prompt>', cap)))
+            if r.config_text:
+                lines = [l.strip() for l in r.config_text.splitlines() if l.strip() and not l.lstrip().startswith('#')]
+                print('    with, in its .ryter/config.toml: ' + ' '.join(lines))
         print(f'\nThe prompt:\n{prompt_for(spec)}')
         return 0
     for task, spec in tasks:

@@ -563,6 +563,8 @@ pub(crate) fn populate_view(
             kind: c.kind.clone(),
             model: c.default_model.clone().unwrap_or_default(),
             has_key: config::has_secret(cfg, n),
+            openrouter: c.is_openrouter(),
+            routing: c.routing.clone(),
         })
         .collect();
     let _ = HookSet::from_config(&cfg.hooks);

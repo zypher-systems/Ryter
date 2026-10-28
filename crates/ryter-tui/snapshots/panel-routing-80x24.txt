@@ -1,0 +1,24 @@
+ ●●● RYTER
+    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
+      routing · openrouter                                                 ┃
+      ORDER OF HOSTS                                                       ┃
+     › sort hosts by           ‹ price ›                               set ┃
+         price: the cheapest host; throughput: the fastest; latency: the   ┃
+         soonest to answer. A sort turns OpenRouter's load balancing off   ┃
+       sort within             ‹ default ›                         default ┃
+       try first                                                   default ┃
+       fallbacks past them     ‹ default ›                         default ┃
+       only these hosts                                            default ┃
+       never these hosts                                           default ┆
+                                                                           ┆
+      WHAT A HOST MUST OFFER                                               ┆
+       quantizations           fp8, bf16, fp16                         set ┆
+       every parameter         ‹ default ›                         default ┆
+       data collection         ‹ default ›                         default ┆
+       zero data retention     ‹ default ›                         default ┆
+       distillable text only   ‹ default ›                         default ┆
+      ↑↓ field   ←→ change   enter edit   ^s save   esc                    ┆
+    ▝▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▘
+  ╰──────────────────────────────────────────────────────────────────────────╯
+
+ tab hat  ⇧tab mode  / commands  f2 instruments                   Build · $?.??

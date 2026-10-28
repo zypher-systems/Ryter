@@ -154,7 +154,12 @@ impl Models {
     }
 
     fn filtered(&self, view: &View) -> Vec<&ModelInfo> {
-        let f = view.composer.text().trim().to_ascii_lowercase();
+        self.filtered_by(view.composer.text())
+    }
+
+    /// The rows a search of `text` leaves, in the panel's sort.
+    fn filtered_by(&self, text: &str) -> Vec<&ModelInfo> {
+        let f = text.trim().to_ascii_lowercase();
         let mut v: Vec<&ModelInfo> = self
             .items
             .iter()
@@ -579,37 +584,42 @@ impl Panel for Models {
         let n = list.len();
         let sel = self.selected.min(n.saturating_sub(1));
         let first = super::window(sel, n, rows_h);
+        let cells = |m: &ModelInfo| -> Vec<String> {
+            if m.id.is_empty() {
+                return vec![
+                    "default (follows all hats)".into(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    // The connection the session is on now: the row
+                    // was made as the panel opened, and All hats may
+                    // have moved the session since.
+                    view.connection.clone(),
+                ];
+            }
+            vec![
+                m.id.clone(),
+                m.context_length
+                    .map(format_tokens)
+                    .unwrap_or_else(|| "?".into()),
+                price(m.input_per_million),
+                price(m.output_per_million),
+                view.reasoning_label(&m.id).to_string(),
+                m.connection
+                    .clone()
+                    .unwrap_or_else(|| view.connection.clone()),
+            ]
+        };
+        // The columns are sized by every model the panel can list, not by
+        // the rows on screen: scrolling or searching then never moves the
+        // context, price, reasoning and connection columns.
+        let measure: Vec<Vec<String>> = self.filtered_by("").into_iter().map(cells).collect();
         let rows: Vec<Vec<String>> = list
             .iter()
             .skip(first)
             .take(rows_h)
-            .map(|m| {
-                if m.id.is_empty() {
-                    return vec![
-                        "default (follows all hats)".into(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        String::new(),
-                        // The connection the session is on now: the row
-                        // was made as the panel opened, and All hats may
-                        // have moved the session since.
-                        view.connection.clone(),
-                    ];
-                }
-                vec![
-                    m.id.clone(),
-                    m.context_length
-                        .map(format_tokens)
-                        .unwrap_or_else(|| "?".into()),
-                    price(m.input_per_million),
-                    price(m.output_per_million),
-                    view.reasoning_label(&m.id).to_string(),
-                    m.connection
-                        .clone()
-                        .unwrap_or_else(|| view.connection.clone()),
-                ]
-            })
+            .map(|m| cells(m))
             .collect();
         // Models that can't call tools can't read a file or run a test:
         // listed, but dimmed.
@@ -632,10 +642,13 @@ impl Panel for Models {
             &[0, 2, 3]
         };
         let pick = |all: &[&'static str]| shown.iter().map(|&i| all[i]).collect::<Vec<_>>();
-        let rows: Vec<Vec<String>> = rows
-            .into_iter()
-            .map(|r| shown.iter().map(|&i| r[i].clone()).collect())
-            .collect();
+        let pick_cols = |rows: Vec<Vec<String>>| -> Vec<Vec<String>> {
+            rows.into_iter()
+                .map(|r| shown.iter().map(|&i| r[i].clone()).collect())
+                .collect()
+        };
+        let measure = pick_cols(measure);
+        let rows = pick_cols(rows);
         let aligns = [
             widgets::Al::L,
             widgets::Al::R,
@@ -644,7 +657,7 @@ impl Panel for Models {
             widgets::Al::L,
             widgets::Al::L,
         ];
-        let mut table = widgets::table(
+        let mut table = widgets::table_sized(
             &pick(&[
                 "model",
                 "context",
@@ -653,6 +666,7 @@ impl Panel for Models {
                 "reasoning",
                 "connection",
             ]),
+            &measure,
             &rows,
             &shown.iter().map(|&i| aligns[i]).collect::<Vec<_>>(),
             cursor,
@@ -982,6 +996,8 @@ mod tests {
                 kind: name.into(),
                 model: String::new(),
                 has_key: true,
+                openrouter: false,
+                routing: None,
             });
         }
         v.hats.insert(
@@ -1426,6 +1442,59 @@ mod tests {
                 "{width}: {t}"
             );
         }
+    }
+
+    /// The columns are sized by every model, not by the rows on screen, so
+    /// scrolling to a window with a longer name moves nothing to the right
+    /// of it.
+    #[test]
+    fn the_columns_stay_put_while_the_list_scrolls() {
+        let mut v = hats_view();
+        let mut models: Vec<ModelInfo> = (0..12)
+            .map(|i| row(&format!("short/m{i}"), "openrouter", Some((0.1, 0.2))))
+            .collect();
+        models.push(row(
+            "anthropic/claude-3.7-sonnet:thinking-long-name",
+            "openrouter",
+            Some((3.0, 15.0)),
+        ));
+        let mut p = Models::new(&mut v, Some("build".into()));
+        p.set_models(&v, &models, &[], &[]);
+        p.focus = Focus::Models;
+        let header_col = |p: &Models| -> (usize, String) {
+            let t: String = p
+                .render(&v, 110, 8, Theme::truecolor_dark())
+                .lines
+                .iter()
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.as_ref())
+                        .collect::<String>()
+                        + "\n"
+                })
+                .collect();
+            let head = t
+                .lines()
+                .find(|l| l.contains("in/M"))
+                .unwrap_or_else(|| panic!("no header: {t}"))
+                .to_string();
+            (head.find("in/M").unwrap(), t)
+        };
+        p.selected = 0;
+        let (top, top_screen) = header_col(&p);
+        assert!(
+            !top_screen.contains("thinking-long-name"),
+            "the long name is off the first window: {top_screen}"
+        );
+        p.selected = p
+            .filtered(&v)
+            .iter()
+            .position(|m| m.id.starts_with("anthropic"))
+            .unwrap();
+        let (bottom, bottom_screen) = header_col(&p);
+        assert!(bottom_screen.contains("thinking-long"), "{bottom_screen}");
+        assert_eq!(top, bottom, "in/M moved\n{top_screen}\n{bottom_screen}");
     }
 
     #[test]

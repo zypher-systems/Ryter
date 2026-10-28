@@ -41,7 +41,7 @@ const FLASH_MS: u64 = 1800;
 const PULL_MS: u64 = 40;
 
 /// One configured connection for `/provider` and the info panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConnRow {
     /// Name (`spacexsi`).
     pub name: String,
@@ -51,6 +51,10 @@ pub struct ConnRow {
     pub model: String,
     /// Whether a key is resolvable (never the secret).
     pub has_key: bool,
+    /// Served by OpenRouter (by kind or by host), so routing rules apply.
+    pub openrouter: bool,
+    /// The routing rules in force, set in `/provider` or in config.toml.
+    pub routing: Option<Box<ryter_core::RoutingConfig>>,
 }
 
 /// The search provider as the `/provider` panel shows it.
@@ -403,6 +407,17 @@ pub struct View {
     pub ryter_home: Option<std::path::PathBuf>,
     /// Checkbox lines of `.ryter/plan.md`, in order.
     pub plan_steps: Vec<(bool, String)>,
+}
+
+/// The `/spend` row a call goes in under "by connection": the connection,
+/// and the host that served it where a router named one. OpenRouter serves
+/// one model from hosts whose prices differ by an order of magnitude, so
+/// the host is where a bill is explained.
+pub fn connection_row(connection: &str, host: Option<&str>) -> String {
+    match host {
+        Some(h) if !h.is_empty() => format!("{connection} · {h}"),
+        _ => connection.to_string(),
+    }
 }
 
 /// Aggregated spend row for `/spend`.

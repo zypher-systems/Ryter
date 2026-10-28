@@ -1437,7 +1437,7 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
     }
     for rec in session.spend_log()? {
         println!(
-            "  {}  {:<14}  in={} (cached {} written {}) out={}  {}{}",
+            "  {}  {:<14}  in={} (cached {} written {}) out={}  {}{}{}",
             rec.role,
             rec.model,
             rec.input_tokens,
@@ -1445,6 +1445,10 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
             rec.cache_write_tokens,
             rec.output_tokens,
             format_usd(rec.total_usd),
+            rec.host
+                .as_deref()
+                .map(|h| format!("  via {h}"))
+                .unwrap_or_default(),
             if rec.incomplete { " (incomplete)" } else { "" }
         );
     }

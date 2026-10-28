@@ -19,6 +19,7 @@ pub mod models;
 pub mod permissions;
 pub mod plan;
 pub mod providers;
+pub mod routing;
 pub mod rules;
 pub mod sessions;
 pub mod settings;
