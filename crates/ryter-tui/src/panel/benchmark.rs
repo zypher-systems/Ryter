@@ -1165,6 +1165,8 @@ mod tests {
                 kind: name.into(),
                 model: model.into(),
                 has_key: true,
+                openrouter: false,
+                routing: None,
             });
         }
         v

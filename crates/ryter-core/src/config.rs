@@ -449,7 +449,8 @@ pub enum RoutingSort {
 }
 
 impl RoutingSort {
-    fn by(&self) -> &str {
+    /// The sort word.
+    pub fn by(&self) -> &str {
         match self {
             Self::By(b) | Self::Detailed { by: b, .. } => b,
         }
@@ -1120,6 +1121,7 @@ pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Resul
     apply_mcp_file(&mut cfg, &home.join("mcp.toml"));
     apply_hooks_file(&mut cfg, &home.join("hooks.toml"));
     apply_connections_file(&mut cfg, &home.join("connections.toml"));
+    apply_routing_file(&mut cfg, &routing_path(home));
     apply_model_reasoning_file(&mut cfg, &model_reasoning_path(home));
     // TUI `/permissions` writes here; once present it is the gate's rules
     // (config.toml's `[permissions]` still applies until the first save).
@@ -1415,6 +1417,60 @@ pub fn user_connection_names(home: &Path) -> Vec<String> {
     toml::from_str::<ConnectionsFile>(&text)
         .map(|f| f.connections.keys().cloned().collect())
         .unwrap_or_default()
+}
+
+/// `~/.ryter/routing.toml`: the routing rules set in `/provider`, one table
+/// per connection name.
+pub fn routing_path(home: &Path) -> PathBuf {
+    home.join("routing.toml")
+}
+
+/// The rules from `routing.toml` laid over the connections, after the
+/// connection files: what the screen saved wins over a `routing` table in
+/// `config.toml`. A name with no connection is skipped; a connection that is
+/// not OpenRouter's keeps no rules and the user is told, where `validate`
+/// would have refused to start on a file the screen never writes that way.
+fn apply_routing_file(cfg: &mut Config, path: &Path) {
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
+    let map = match toml::from_str::<BTreeMap<String, RoutingConfig>>(&text) {
+        Ok(map) => map,
+        Err(e) => {
+            cfg.warnings
+                .push(format!("{}: ignored: {}", path.display(), e.message()));
+            return;
+        }
+    };
+    for (name, routing) in map {
+        let Some(conn) = cfg.connections.get_mut(&name) else {
+            continue;
+        };
+        if !conn.is_openrouter() {
+            cfg.warnings.push(format!(
+                "{}: [{name}] ignored; routing is for OpenRouter connections and {name} is {}",
+                path.display(),
+                conn.kind
+            ));
+            continue;
+        }
+        conn.routing = (routing != RoutingConfig::default()).then(|| Box::new(routing));
+    }
+}
+
+/// The rules saved from `/provider`, by connection name.
+pub fn load_routing(home: &Path) -> BTreeMap<String, RoutingConfig> {
+    let Ok(text) = fs::read_to_string(routing_path(home)) else {
+        return BTreeMap::new();
+    };
+    toml::from_str(&text).unwrap_or_default()
+}
+
+/// Save the rules set in `/provider`.
+pub fn save_routing(home: &Path, routing: &BTreeMap<String, RoutingConfig>) -> Result<()> {
+    fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
+    let body = toml::to_string(routing).map_err(|e| Error::Config(e.to_string()))?;
+    fs::write(routing_path(home), body).map_err(|e| Error::Config(e.to_string()))
 }
 
 fn default_tools_mode() -> String {
@@ -3021,6 +3077,79 @@ mod tests {
     /// saved back with the connection, and refused where it can't apply (a
     /// connection that is not OpenRouter's) or says what OpenRouter won't
     /// take (a sort it has no such thing as).
+    /// `routing.toml`, written by `/provider`, lays its table over the named
+    /// connection: over a built-in, over `config.toml`'s own table, never on
+    /// a connection that is not OpenRouter's (told, not refused), and an
+    /// empty table clears the rules.
+    #[test]
+    fn the_rules_saved_from_the_screen_lay_over_the_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let price = RoutingConfig {
+            sort: Some(RoutingSort::By("price".into())),
+            quantizations: vec!["fp8".into(), "bf16".into()],
+            ..Default::default()
+        };
+        let mut map = BTreeMap::new();
+        map.insert("openrouter".to_string(), price.clone());
+        map.insert(
+            "openai".to_string(),
+            RoutingConfig {
+                sort: Some(RoutingSort::By("price".into())),
+                ..Default::default()
+            },
+        );
+        map.insert(
+            "gone".to_string(),
+            RoutingConfig {
+                zdr: Some(true),
+                ..Default::default()
+            },
+        );
+        save_routing(dir.path(), &map).unwrap();
+        assert_eq!(load_routing(dir.path()), map);
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            cfg.connections["openrouter"].routing.as_deref(),
+            Some(&price)
+        );
+        assert_eq!(cfg.connections["openai"].routing, None);
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("[openai] ignored") && w.contains("openai is openai")),
+            "{:?}",
+            cfg.warnings
+        );
+        assert!(!cfg.warnings.iter().any(|w| w.contains("gone")));
+        // The screen's table wins over the one in config.toml.
+        fs::write(
+            dir.path().join("config.toml"),
+            "[connections.openrouter]\nkind = \"openrouter\"\nbase_url = \"https://openrouter.ai/api/v1\"\n[connections.openrouter.routing]\nsort = \"latency\"\n",
+        )
+        .unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(
+            cfg.connections["openrouter"].routing.as_deref(),
+            Some(&price)
+        );
+        // An empty table clears the rules rather than carrying an empty object.
+        let mut map = BTreeMap::new();
+        map.insert("openrouter".to_string(), RoutingConfig::default());
+        save_routing(dir.path(), &map).unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert_eq!(cfg.connections["openrouter"].routing, None);
+        // A file that is not TOML is told, not fatal.
+        fs::write(routing_path(dir.path()), "not = [toml").unwrap();
+        let cfg = load_at(dir.path(), None, false).unwrap();
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("routing.toml: ignored")),
+            "{:?}",
+            cfg.warnings
+        );
+    }
+
     #[test]
     fn routing_is_read_saved_and_refused_where_it_cannot_apply() {
         let dir = TempDir::new().unwrap();

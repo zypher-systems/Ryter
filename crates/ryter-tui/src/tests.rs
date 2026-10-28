@@ -90,12 +90,16 @@ fn idle() -> View {
         kind: "spacexsi".into(),
         model: "grok-4.6".into(),
         has_key: true,
+        openrouter: false,
+        routing: None,
     });
     v.connections.push(crate::view::ConnRow {
         name: "openrouter".into(),
         kind: "openrouter".into(),
         model: "anthropic/claude-sonnet-4.6".into(),
         has_key: false,
+        openrouter: true,
+        routing: None,
     });
     v.system("welcome · /help for keys");
     v
@@ -193,6 +197,63 @@ fn snapshot_palette_open() {
     crate::palette::refresh(&mut v);
     assert!(v.palette.is_some());
     all_sizes("palette", &v);
+}
+
+/// `r` on a connection OpenRouter serves opens its routing form over the
+/// list, and only there: a SpaceXSI row says why not. A row with rules
+/// says them in a word, and the legend offers the key.
+#[test]
+fn the_provider_panel_opens_routing_on_openrouter_rows() {
+    use crate::panel::providers::Providers;
+    use crate::panel::{Outcome, Panel};
+    let key = |c: KeyCode| KeyEvent::new(c, KeyModifiers::NONE);
+    let mut v = idle();
+    let mut p = Providers::new(&v);
+    // The first row is spacexsi.
+    assert!(!p.legend(&v).contains("r routing"), "{}", p.legend(&v));
+    assert!(matches!(
+        p.key(key(KeyCode::Char('r')), &mut v),
+        Outcome::Stay
+    ));
+    assert!(
+        v.messages
+            .iter()
+            .any(|m| m.body.contains("routing is for OpenRouter connections")),
+        "no word on why not"
+    );
+    p.key(key(KeyCode::Down), &mut v);
+    assert!(p.legend(&v).contains("r routing"), "{}", p.legend(&v));
+    match p.key(key(KeyCode::Char('r')), &mut v) {
+        Outcome::Push(child) => assert_eq!(child.kind(), "routing"),
+        _ => panic!("r did not open the routing form"),
+    }
+    v.connections[1].routing = Some(Box::new(ryter_core::RoutingConfig {
+        sort: Some(ryter_core::RoutingSort::By("price".into())),
+        ..Default::default()
+    }));
+    let body = p.render(&v, 70, 20, Theme::truecolor_dark());
+    let text: String = body.lines.iter().map(|l| l.to_string() + "\n").collect();
+    assert!(text.contains("cheapest host"), "{text}");
+}
+
+#[test]
+fn snapshot_routing_panel() {
+    let mut v = idle();
+    v.panels.push(Box::new(crate::panel::routing::Routing::new(
+        "openrouter",
+        Some(&ryter_core::RoutingConfig {
+            sort: Some(ryter_core::RoutingSort::By("price".into())),
+            quantizations: vec!["fp8".into(), "bf16".into(), "fp16".into()],
+            max_price: Some(ryter_core::RoutingMaxPrice {
+                prompt: Some(0.5),
+                completion: Some(2.0),
+                request: None,
+                image: None,
+            }),
+            ..Default::default()
+        }),
+    )));
+    all_sizes("panel-routing", &v);
 }
 
 /// `/provider` has a web-search row under the connections. Enter on it

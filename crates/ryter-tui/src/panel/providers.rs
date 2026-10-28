@@ -191,6 +191,14 @@ impl Panel for Providers {
                     "enter choose · esc".into()
                 }
             }
+            Mode::Browse
+                if view
+                    .connections
+                    .get(self.selected)
+                    .is_some_and(|c| c.openrouter) =>
+            {
+                "enter use · k set key · r routing · t test · d remove · esc".into()
+            }
             Mode::Browse => "enter use · k set key · t test · d remove · esc".into(),
             Mode::Add(Step::Kind { .. }) => "↑↓ choose · enter next · esc back".into(),
             Mode::Add(Step::Review { .. }) => {
@@ -249,6 +257,12 @@ impl Panel for Providers {
                     if !model.is_empty() {
                         secondary.push_str(" · ");
                         secondary.push_str(crate::chat::short_model(model));
+                    }
+                    // The routing rules in force, in a word: the host is
+                    // the price on OpenRouter.
+                    if let Some(r) = &c.routing {
+                        secondary.push_str(" · ");
+                        secondary.push_str(&super::routing::summary(r));
                     }
                     let mut status = if c.has_key {
                         "key set".to_string()
@@ -510,6 +524,17 @@ impl Panel for Providers {
                     }
                     KeyCode::Char('k') => match view.connections.get(self.selected) {
                         Some(c) => Outcome::CloseAct(Action::BeginSetKey(c.name.clone())),
+                        None => Outcome::Stay,
+                    },
+                    // The routing form, on a connection OpenRouter serves.
+                    KeyCode::Char('r') => match view.connections.get(self.selected) {
+                        Some(c) if c.openrouter => Outcome::Push(Box::new(
+                            super::routing::Routing::new(&c.name, c.routing.as_deref()),
+                        )),
+                        Some(_) => {
+                            view.warn("routing is for OpenRouter connections: the host sets the price there");
+                            Outcome::Stay
+                        }
                         None => Outcome::Stay,
                     },
                     KeyCode::Char('t') => match view.connections.get(self.selected) {

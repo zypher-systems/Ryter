@@ -982,6 +982,8 @@ mod tests {
                 kind: name.into(),
                 model: String::new(),
                 has_key: true,
+                openrouter: false,
+                routing: None,
             });
         }
         v.hats.insert(

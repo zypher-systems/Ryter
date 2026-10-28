@@ -341,6 +341,10 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::AddConnection { name, conn } => add_connection(view, cx, &name, conn),
         Action::SetSearch { provider, url } => set_search(view, cx, provider, url),
         Action::RemoveConnection(name) => remove_connection(view, cx, &name),
+        Action::SetRouting {
+            connection,
+            routing,
+        } => set_routing(view, cx, &connection, routing),
         Action::SetModel { connection, model } => set_model(view, cx, connection, model),
         Action::SetHatModel {
             role,
@@ -1206,6 +1210,8 @@ fn add_connection(view: &mut View, cx: &mut Ctx, name: &str, conn: ryter_core::C
         kind: conn.kind.clone(),
         model: conn.default_model.clone().unwrap_or_default(),
         has_key: config::has_secret(&cx.cfg, name),
+        openrouter: conn.is_openrouter(),
+        routing: conn.routing.clone(),
     });
     view.connections.sort_by(|a, b| a.name.cmp(&b.name));
     view.system(format!("added connection {name}"));
@@ -1232,12 +1238,62 @@ fn remove_connection(view: &mut View, cx: &mut Ctx, name: &str) {
     user.remove(name);
     match config::save_user_connections(&cx.home, &user) {
         Ok(()) => {
+            // Its routing rules go with it; a later connection of the same
+            // name starts with none.
+            let mut routing = config::load_routing(&cx.home);
+            if routing.remove(name).is_some() {
+                if let Err(e) = config::save_routing(&cx.home, &routing) {
+                    view.error(e.to_string());
+                }
+            }
             cx.cfg.connections.remove(name);
             cx.send(Work::SetConnections(cx.cfg.connections.clone()));
             view.connections.retain(|c| c.name != name);
             view.system(format!("removed connection {name}"));
         }
         Err(e) => view.error(e.to_string()),
+    }
+}
+
+/// `/provider`'s routing form: save the rules to routing.toml, lay them on
+/// the connection here and in the worker, and say what they do.
+fn set_routing(
+    view: &mut View,
+    cx: &mut Ctx,
+    name: &str,
+    routing: Option<Box<ryter_core::RoutingConfig>>,
+) {
+    // Saved first, applied after, as the web-search row does: a save that
+    // fails leaves the connection and the worker as they were.
+    let mut file = config::load_routing(&cx.home);
+    match &routing {
+        Some(r) => {
+            file.insert(name.to_string(), (**r).clone());
+        }
+        None => {
+            file.remove(name);
+        }
+    }
+    if let Err(e) = config::save_routing(&cx.home, &file) {
+        view.error(e.to_string());
+        return;
+    }
+    if let Some(c) = cx.cfg.connections.get_mut(name) {
+        c.routing = routing.clone();
+    }
+    cx.send(Work::SetRouting {
+        name: name.to_string(),
+        routing: routing.clone(),
+    });
+    if let Some(row) = view.connections.iter_mut().find(|c| c.name == name) {
+        row.routing = routing.clone();
+    }
+    match &routing {
+        Some(r) => view.system(format!(
+            "{name} · {} · saved to ~/.ryter/routing.toml",
+            panel::routing::summary(r)
+        )),
+        None => view.system(format!("{name} · host left to OpenRouter")),
     }
 }
 

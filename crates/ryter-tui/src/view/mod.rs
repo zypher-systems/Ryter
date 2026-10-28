@@ -41,7 +41,7 @@ const FLASH_MS: u64 = 1800;
 const PULL_MS: u64 = 40;
 
 /// One configured connection for `/provider` and the info panel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ConnRow {
     /// Name (`spacexsi`).
     pub name: String,
@@ -51,6 +51,10 @@ pub struct ConnRow {
     pub model: String,
     /// Whether a key is resolvable (never the secret).
     pub has_key: bool,
+    /// Served by OpenRouter (by kind or by host), so routing rules apply.
+    pub openrouter: bool,
+    /// The routing rules in force, set in `/provider` or in config.toml.
+    pub routing: Option<Box<ryter_core::RoutingConfig>>,
 }
 
 /// The search provider as the `/provider` panel shows it.

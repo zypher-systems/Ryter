@@ -59,6 +59,15 @@ pub enum Work {
     /// The connections changed in `/provider` (one added or removed): the
     /// worker's copy, which `ListAllModels` and `Reconnect` read.
     SetConnections(BTreeMap<String, ConnectionConfig>),
+    /// The routing rules on a connection changed in `/provider`: the
+    /// worker's copy, and the live provider when it is the one in use, so
+    /// the next call carries them.
+    SetRouting {
+        /// The connection's name.
+        name: String,
+        /// The rules, or none.
+        routing: Option<Box<ryter_core::RoutingConfig>>,
+    },
     /// The price catalog was pulled: price with it from here on.
     ReloadPrices,
     /// Replace each hat's own model.
@@ -775,6 +784,24 @@ pub fn run(init: WorkerInit) {
                 standing.retain(|n, _| connections.contains_key(n));
                 fetching.retain(|n, _| connections.contains_key(n));
                 cfg.connections = connections;
+            }
+            Ok(Work::SetRouting { name, routing }) => {
+                let Some(c) = cfg.connections.get_mut(&name) else {
+                    continue;
+                };
+                c.routing = routing;
+                // The provider was built with the rules at connect: rebuilt
+                // here, or the session's calls would keep the old host.
+                if let Some(a) = &mut agent {
+                    if a.connection == name {
+                        match resolve_secret(&cfg, &ConnectionId::new(&name)) {
+                            Ok(key) => {
+                                a.provider = Arc::new(http_provider(&cfg.connections[&name], key))
+                            }
+                            Err(e) => send_err(&ev_tx, e.to_string()),
+                        }
+                    }
+                }
             }
             Ok(Work::ReloadPrices) => {
                 if let Some(a) = &mut agent {

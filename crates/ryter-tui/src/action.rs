@@ -1,6 +1,6 @@
 //! Side effects the event loop performs on behalf of commands, keys, and panels.
 
-use ryter_core::{ConnectionConfig, Permission};
+use ryter_core::{ConnectionConfig, Permission, RoutingConfig};
 
 /// Session browser entry mode (`R-POP-38`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +113,15 @@ pub enum Action {
     },
     /// Remove a user connection.
     RemoveConnection(String),
+    /// The routing rules for an OpenRouter connection, from `/provider`'s
+    /// routing form: a table, or none to leave the host to OpenRouter.
+    /// Saved to `~/.ryter/routing.toml`.
+    SetRouting {
+        /// The connection's name.
+        connection: String,
+        /// The rules, or none.
+        routing: Option<Box<RoutingConfig>>,
+    },
     /// The model every hat runs on: on `connection` when given (the
     /// session switches to it), else on the current one.
     SetModel {

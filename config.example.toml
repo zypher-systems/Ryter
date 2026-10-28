@@ -21,7 +21,9 @@ http_referer = "https://github.com/zypher-systems/ryter"
 x_title = "Ryter"
 # Which host serves a model: OpenRouter's `provider` object, sent with every
 # request. Unset, OpenRouter chooses, and its choice is not the cheapest; the
-# host that served each call is shown in /spend and `ryter spend`.
+# host that served each call is shown in /spend and `ryter spend`. Set in
+# /provider (r on the OpenRouter row), saved to ~/.ryter/routing.toml, which
+# lays over a table written here:
 # [connections.openrouter.routing]
 # sort = "price"                           # or "throughput" (fastest), "latency"
 # quantizations = ["fp8", "bf16", "fp16"]  # not a host serving a lossier quant
