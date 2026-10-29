@@ -2,7 +2,7 @@
 
 Ryter is a Bring-Your-Own-Key terminal coding harness. One model works in your project, with you. It wears one of four hats at a time (**plan** and **build**, then the specialists **audit** and **scribe**), and each hat can run on a model of its own.
 
-Linux is the first platform. Release binaries also support macOS; Landlock requires Linux. Windows is not currently supported.
+Linux is the first platform. Release binaries also support macOS, where everything works except the Landlock sandbox and the bench, which are Linux-only. On Windows, Ryter runs under WSL2: the installer sees Linux there and installs the Linux binary, and the project lives in the WSL filesystem like any Linux project. There is no native Windows build, and none is planned before 1.0: the command gate reads POSIX shell words and POSIX paths, and a port of that would be a second security boundary to prove. Nobody has run Ryter under WSL2 yet. Whether WSL's kernel enforces Landlock is untested; `ryter doctor` says whether yours can, and a sandbox profile refuses to start rather than run unenforced.
 
 ## Install
 
@@ -757,7 +757,7 @@ Plans, decisions and audits stored in the project follow the workspace’s acces
 - **It does limit signals, on Linux 6.12 and later.** A sandboxed command may signal only processes inside the sandbox: what the model started, not Ryter, not your other programs. On an older kernel the rest of the sandbox holds and this part is simply absent; `ryter bench` says so at its start, since it is what keeps a model from ending the guard around its processes.
 - **It doesn't contain Docker.** A command that can reach the Docker socket can mount the whole machine. If that matters, don't give the account Docker access. `docker build` works under a profile (its lock folder, `~/.docker/buildx`, is writable; the registry logins beside it stay shut).
 - **Rootless Podman can't run under it.** Podman keeps its state in your home folder and starts containers in a user namespace of its own, and a sandboxed command can do neither. Use Docker, or the `off` profile, for a project that needs Podman.
-- **It needs Linux.** Elsewhere Ryter refuses to start with `workspace` or `read-only`, and it also refuses on a Linux kernel that can't enforce Landlock. On a kernel older than 5.19 a profile works, but a file can't be moved from one folder to another under it, so some builds fail (`cargo` building a library, for one).
+- **It needs Linux.** Elsewhere Ryter refuses to start with `workspace` or `read-only`, and it also refuses on a Linux kernel that can't enforce Landlock (whether WSL2's kernel can is untested; `ryter doctor` says). On a kernel older than 5.19 a profile works, but a file can't be moved from one folder to another under it, so some builds fail (`cargo` building a library, for one).
 - **Some of Ryter's own features are off under it:** your every-project rules can't be changed, and pages aren't opened in a browser.
 
 
