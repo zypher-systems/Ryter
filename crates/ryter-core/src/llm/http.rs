@@ -91,7 +91,15 @@ pub struct HttpProvider {
     x_title: Option<String>,
     /// OpenRouter's `provider` object, from the connection's `[routing]`.
     routing: Option<Value>,
+    #[cfg(test)]
+    tap: Option<Tap>,
 }
+
+/// The bytes of each streamed reply as the provider sent them, one entry per
+/// request: what a provider proof keeps. Test builds only, so no release can
+/// write a reply to disk.
+#[cfg(test)]
+pub(crate) type Tap = std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>;
 
 impl HttpProvider {
     /// New client. Does not touch the network until `stream` / `list_models`.
@@ -129,7 +137,37 @@ impl HttpProvider {
                 .as_ref()
                 .filter(|_| conn.is_openrouter())
                 .and_then(|r| r.provider_object()),
+            #[cfg(test)]
+            tap: None,
         }
+    }
+
+    /// Keep every streamed reply's bytes in `tap`.
+    #[cfg(test)]
+    pub(crate) fn tapped(mut self, tap: Tap) -> Self {
+        self.tap = Some(tap);
+        self
+    }
+
+    #[cfg(test)]
+    fn tapping<S>(
+        &self,
+        bytes: S,
+    ) -> impl Stream<Item = reqwest::Result<Bytes>> + Send + Unpin + use<S>
+    where
+        S: Stream<Item = reqwest::Result<Bytes>> + Send + Unpin,
+    {
+        let tap = self.tap.clone();
+        let reply = tap.as_ref().map(|t| {
+            let mut replies = t.lock().unwrap();
+            replies.push(Vec::new());
+            replies.len() - 1
+        });
+        bytes.inspect(move |chunk| {
+            if let (Some(tap), Some(reply), Ok(chunk)) = (&tap, reply, chunk) {
+                tap.lock().unwrap()[reply].extend_from_slice(chunk);
+            }
+        })
     }
 
     fn headers(&self) -> Result<HeaderMap> {
@@ -258,11 +296,10 @@ impl Provider for HttpProvider {
                 } else {
                     STALL_TIMEOUT
                 };
-                return Ok(Box::pin(sse_delta_stream(
-                    self.backend,
-                    resp.bytes_stream(),
-                    stall,
-                )));
+                let bytes = resp.bytes_stream();
+                #[cfg(test)]
+                let bytes = self.tapping(bytes);
+                return Ok(Box::pin(sse_delta_stream(self.backend, bytes, stall)));
             }
             let wait = retry_after(resp.headers());
             let text = resp.text().await.unwrap_or_default();
@@ -363,6 +400,7 @@ fn sse_delta_stream<E: std::fmt::Display>(
             buf: String::new(),
             pending: VecDeque::new(),
             done: false,
+            finished: false,
             stall,
             progress: tokio::time::Instant::now(),
         },
@@ -417,6 +455,16 @@ fn sse_delta_stream<E: std::fmt::Display>(
                         if !st.buf.trim().is_empty() {
                             drain_rest(&mut st);
                         }
+                        // The socket closed and the provider never said the
+                        // reply was over. Read as finished, a half-written
+                        // tool call ran and half an answer stood as the answer.
+                        if !st.done && !st.finished {
+                            st.pending.push_back(Err(Error::Provider(
+                                "the provider's stream ended before its reply did. \
+                                 Try again, or another model."
+                                    .into(),
+                            )));
+                        }
                         st.done = true;
                         if let Some(d) = st.pending.pop_front() {
                             return Some((d, st));
@@ -438,6 +486,8 @@ struct StreamState<S> {
     buf: String,
     pending: VecDeque<Result<StreamDelta>>,
     done: bool,
+    /// The provider has said the reply is over, whatever else still comes.
+    finished: bool,
     /// Longest wait for a real delta.
     stall: Duration,
     /// When the last real delta arrived.
@@ -489,6 +539,7 @@ fn drain_rest<S>(st: &mut StreamState<S>) {
 }
 
 fn push_block<S>(st: &mut StreamState<S>, block: &str) {
+    st.finished |= super::parse::says_finished(st.backend, block);
     match super::parse::parse_blocks(st.backend, block) {
         Ok((ds, terminal)) => {
             if !ds.is_empty() {

@@ -49,6 +49,22 @@ pub fn parse_blocks(backend: Backend, body: &str) -> Result<(Vec<StreamDelta>, b
     Ok((out, false))
 }
 
+/// Whether `body` says the reply is finished, short of the closing event a
+/// stream may leave out: a chat `finish_reason` (some compatible servers close
+/// the socket with no `[DONE]`), a Messages `stop_reason`.
+pub fn says_finished(backend: Backend, body: &str) -> bool {
+    sse_blocks(body).iter().any(|(_, data)| {
+        let Ok(v) = serde_json::from_str::<Value>(data) else {
+            return false;
+        };
+        match backend {
+            Backend::ChatCompletions => v["choices"][0]["finish_reason"].is_string(),
+            Backend::Messages => v["delta"]["stop_reason"].is_string(),
+            Backend::Responses => false,
+        }
+    })
+}
+
 /// The provider's own words for an error object: `type: message`.
 fn error_text(e: &Value) -> String {
     let msg = e

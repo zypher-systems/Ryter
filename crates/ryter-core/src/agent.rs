@@ -4613,6 +4613,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     mod acceptance;
+    mod wire;
     use super::*;
     use crate::llm::{MessagesBlock, ReplayProvider};
     use crate::tools::ToolContext;

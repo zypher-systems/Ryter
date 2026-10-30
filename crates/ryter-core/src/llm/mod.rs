@@ -18,6 +18,10 @@ use crate::error::Result;
 use crate::spend::Usage;
 
 pub use http::HttpProvider;
+#[cfg(test)]
+pub(crate) use http::Tap;
+#[cfg(test)]
+pub(crate) use parse::parse_blocks;
 pub use parse::{Backend, parse_sse};
 
 /// A boxed stream of inference deltas.
