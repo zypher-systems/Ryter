@@ -16,9 +16,9 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-/// The connections with a recorded capture. Empty until a live run has kept
-/// one: nothing here is written by hand.
-const RECORDED: &[&str] = &[];
+/// The connections with a recorded capture, each kept by a live run: nothing
+/// here is written by hand.
+const RECORDED: &[&str] = &["anthropic"];
 /// A check's verdict: why it failed, in words a live run can print.
 type Proven<T = ()> = std::result::Result<T, String>;
 
@@ -27,10 +27,12 @@ const BUILT_IN: [&str; 4] = ["spacexsi", "openrouter", "anthropic", "openai"];
 const NOTES: &str = "The kettle number is 7431.\n";
 const FIRST: &str = "The first number is 2718.\n";
 const SECOND: &str = "The second number is 3141.\n";
-const ROUND_TRIP: &str = "Read notes.txt with read_file, then tell me the number in it. \
-     Do nothing else.";
+/// The sum is there to make the model think before it calls: a reply that
+/// thinks is the only one with a signature to give back.
+const ROUND_TRIP: &str = "Think it through first: is 391 prime? Then call read_file on notes.txt, \
+     and no other tool, and tell me the number in the file. Say nothing about 391.";
 const PARALLEL: &str = "Read a.txt and b.txt, with two read_file calls in the same reply, \
-     not one after the other. Then tell me both numbers. Do nothing else.";
+     not one after the other, and no other tool. Then tell me both numbers. Do nothing else.";
 const LONG: &str = "Count from 1 to 500, one number per line.";
 
 /// The replies a capture holds, in the order a recording makes them.
@@ -96,6 +98,10 @@ impl Capture {
 
 fn wire_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/wire")
+}
+
+fn target_wire() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wire")
 }
 
 // ---- the local end of the wire ----
@@ -723,6 +729,34 @@ fn scrub(raw: &[u8], workspace: &Path, key: &str) -> Proven<String> {
     }
 }
 
+/// Each round of a turn in a line: its calls, or what it said.
+fn what_it_did(agent: &Agent) -> String {
+    let rounds: Vec<String> = agent
+        .session
+        .transcript
+        .iter()
+        .filter(|m| m.role == "assistant")
+        .map(|m| match &m.tool_calls {
+            Some(calls) => calls
+                .iter()
+                .map(|c| format!("{}({})", c.name, c.arguments))
+                .collect::<Vec<_>>()
+                .join(" + "),
+            None => format!("said {:?}", m.content),
+        })
+        .collect();
+    rounds.join(" -> ")
+}
+
+/// Under `target/`: scrubbed, and not evidence of anything but this try.
+fn keep_failed(connection: &str, name: &str, attempt: u32, replies: &[String]) {
+    let dir = target_wire().join(connection).join("failed");
+    let _ = std::fs::create_dir_all(&dir);
+    for (i, sse) in replies.iter().enumerate() {
+        let _ = std::fs::write(dir.join(format!("{name}-{attempt}-{}.sse", i + 1)), sse);
+    }
+}
+
 /// One tool round trip, one parallel round and one truncation on the real
 /// agent and client, kept as a capture. Stops short of a reply that would
 /// start past `budget` dollars.
@@ -751,26 +785,44 @@ async fn record(
             vec!["2718", "3141"],
         ),
     ] {
-        let tap = Tap::default();
-        let (_home, cwd, mut agent) = agent_on(connection, model, base, key.into(), tap.clone());
-        agent.budget_usd = (budget - proof.usd).max(0.0);
-        let done = agent.turn(prompt).await.map_err(|e| e.to_string())?;
-        proof.count(&agent)?;
-        let raw = tap.lock().unwrap();
-        let [first, second] = raw.as_slice() else {
-            return Err(format!(
-                "{}: {} replies, wanted a call and an answer: {:?}",
-                names[0],
-                raw.len(),
-                done.text
-            ));
+        let mut attempt = 0;
+        let (first, second) = loop {
+            attempt += 1;
+            let tap = Tap::default();
+            let (_home, cwd, mut agent) =
+                agent_on(connection, model, base, key.into(), tap.clone());
+            agent.budget_usd = (budget - proof.usd).max(0.0);
+            let done = agent.turn(prompt).await.map_err(|e| e.to_string())?;
+            proof.count(&agent)?;
+            let kept = tap
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|raw| scrub(raw, cwd.path(), key))
+                .collect::<Proven<Vec<_>>>()?;
+            let verdict = match kept.as_slice() {
+                [first, second] => prove_calls(&agent, &done.text, &paths, &numbers)
+                    .map(|()| (first.clone(), second.clone())),
+                other => Err(format!(
+                    "{} replies, wanted a call and an answer",
+                    other.len()
+                )),
+            };
+            match verdict {
+                Ok(pair) => break pair,
+                // A model may look around first. That is the model's right
+                // and no fault of the wire, so it gets one more try, and what
+                // it did stays where it can be read without paying again.
+                Err(why) => {
+                    let why = format!("{}: {why}. It did: {}", names[0], what_it_did(&agent));
+                    println!("{connection}: {why}");
+                    keep_failed(connection, names[0], attempt, &kept);
+                    if attempt == 2 || proof.usd >= budget {
+                        return Err(why);
+                    }
+                }
+            }
         };
-        let (first, second) = (
-            scrub(first, cwd.path(), key)?,
-            scrub(second, cwd.path(), key)?,
-        );
-        prove_calls(&agent, &done.text, &paths, &numbers)
-            .map_err(|e| format!("{}: {e}", names[0]))?;
         replies.insert(names[0].to_string(), first);
         replies.insert(names[1].to_string(), second);
     }
@@ -889,9 +941,7 @@ async fn live_tool_round_trip() {
         println!("{name}: {model}, up to ${budget:.2}");
         match record(name, &model, None, &key, budget).await {
             Ok((capture, proof)) => {
-                let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../target/wire")
-                    .join(name);
+                let dir = target_wire().join(name);
                 capture.save(&dir).unwrap();
                 replay(&Capture::load(&dir)).await;
                 capture.save(&wire_dir().join(name)).unwrap();
@@ -902,6 +952,14 @@ async fn live_tool_round_trip() {
                     .unwrap();
                 file.write_all(row.as_bytes()).unwrap();
                 println!("{name}: held, ${:.4}", proof.usd);
+                if capture.backend() == Backend::Messages {
+                    let sse = capture.reply("tool_call");
+                    let thought = parse_sse(Backend::Messages, sse)
+                        .unwrap()
+                        .iter()
+                        .any(|d| matches!(d, StreamDelta::ThinkingSignature { .. }));
+                    println!("{name}: a thinking signature to echo: {thought}");
+                }
             }
             Err(e) => {
                 println!("{name}: FAILED: {e}");
@@ -1130,6 +1188,38 @@ async fn recorded_from_a_stand_in(connection: &str, model: &str, key: &str) -> C
         .unwrap();
     assert!(proof.usd > 0.0, "{proof:?}");
     capture
+}
+
+/// A model that looks around first is not a broken wire: it is tried again,
+/// and the capture is the try that went as asked.
+#[tokio::test]
+async fn a_model_that_went_another_way_is_tried_once_more() {
+    let backend = backend_for(&crate::Config::default().connections["openrouter"]);
+    let [call, answer, parallel, after_parallel, truncated] = stand_in(backend);
+    let replies = [
+        parallel.clone(),
+        call.clone(),
+        answer.clone(),
+        call.clone(),
+        answer.clone(),
+        parallel.clone(),
+        after_parallel,
+        truncated,
+    ];
+    let up = serve(replies.into_iter().map(|sse| (sse, End::Whole)).collect());
+    let (capture, proof) = record(
+        "openrouter",
+        "anthropic/claude-sonnet-4.6",
+        Some(&up.base),
+        "not-a-real-key",
+        1.0,
+    )
+    .await
+    .unwrap();
+    assert_eq!(up.seen.lock().unwrap().len(), 8);
+    // What the failed try spent still counts against the budget.
+    assert!(proof.usd > 0.0072, "{proof:?}");
+    replay(&capture).await;
 }
 
 #[tokio::test]

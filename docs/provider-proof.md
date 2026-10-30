@@ -10,14 +10,14 @@ On each connection, in the build hat, with the real system prompt and the real t
 
 | Case | What is checked |
 |---|---|
-| Tool round trip | The model calls `read_file`, the call runs, the result goes back under its id (on Anthropic with the thinking signature unchanged), and the answer says what the file said |
+| Tool round trip | The model calls `read_file`, the call runs, the result goes back under its id, with any thinking signature unchanged on Anthropic, and the answer says what the file said |
 | Parallel calls | Two calls in one reply, each answered under its own id |
 | Truncation | A reply cut at the output limit says so and is not read as finished |
 | Cancellation | Esc mid-reply stops the turn; nothing half-made runs or reaches the conversation |
 | Accounting | Each spend row matches the bill as the wire states it, cached tokens included, and is priced from the provider's own figure or the price book |
 | Dropped stream | The same reply cut off, cleanly and abruptly: the turn fails and says so, and nothing half-made runs |
 
-The live run and the replay share one set of checks (`crates/ryter-core/src/agent/tests/wire.rs`), so a kept capture cannot drift from what was proven. Local models are not part of this; they are not built in.
+The live run and the replay share one set of checks (`crates/ryter-core/src/agent/tests/wire.rs`), so a kept capture cannot drift from what was proven. Whether Anthropic's model thought before calling is its own choice, so the run says whether this capture has a signature to echo. Local models are not part of this; they are not built in.
 
 ## Running it
 
@@ -35,7 +35,7 @@ RYTER_LIVE=1 cargo test -p ryter-core --lib live_tool_round_trip -- --ignored --
 
 The model must have a price, in the book or from the provider, or the budget cannot see it and the run stops.
 
-A run that holds writes `crates/ryter-core/fixtures/wire/<connection>/` and adds a row here. Add a newly recorded connection to `RECORDED` in `wire.rs`; a test fails until the list and the folder agree. A run that fails prints why and keeps nothing. What went through the recorder and failed its replay stays in `target/wire/<connection>/`.
+A run that holds writes `crates/ryter-core/fixtures/wire/<connection>/` and adds a row here. Add a newly recorded connection to `RECORDED` in `wire.rs`; a test fails until the list and the folder agree. A model that goes another way (a look around first, one call where two were asked) gets one more try; it prints what the model did, and that try's replies stay in `target/wire/<connection>/failed/`, so the cause can be read without paying again. A run that fails keeps nothing in `fixtures/`. What went through the recorder and failed its replay stays in `target/wire/<connection>/`.
 
 A capture is kept only once it is clean: ids and signatures are renamed in order of appearance, the copy of the prompt a Responses server sends back is dropped, and the recorder refuses a capture holding the key, a home or temp path, or anything shaped like a key. The tap that records is compiled into test builds only, so no release can write a reply to disk.
 
@@ -47,3 +47,4 @@ Newest last. Tokens are the run's whole: prompt, the part of it read from cache,
 
 | Date | Ryter | Commit | Connection | Model | Served by | Replies | Prompt | Cached | Output | Cost |
 |---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-30 | 0.42.0 | 78677c0 | anthropic | claude-opus-5-5 | - | 5 | 43623 | 27778 | 201 | $0.0888 |
