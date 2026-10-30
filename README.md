@@ -6,7 +6,7 @@ One model works in your project, with you, and `Tab` switches between its two wo
 
 ![Ryter in the build hat: the conversation holds the request, the diff of app/server.js and the new test file, and the reply with its cost; the rail at the right has the four hats with their models and spend, the plan on record, the context ring, the spend per hat and the two uncommitted files.](docs/screenshots/build.png)
 
-Linux first. The current release is 0.42.0. Apache-2.0.
+Linux first. The current release is 0.43.0. Apache-2.0.
 
 ## Install
 
@@ -14,7 +14,7 @@ Linux first. The current release is 0.42.0. Apache-2.0.
 curl -fsSL https://raw.githubusercontent.com/zypher-systems/ryter/main/install.sh | sh
 ```
 
-This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.42.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox and the bench, which are Linux-only. On Windows, run Ryter under WSL2: the installer sees Linux there and installs the Linux binary. There is no native Windows build; the command gate reads POSIX shell commands and paths, and a port is not planned before 1.0.
+This installs a prebuilt binary to `~/.local/bin` for Linux (x86_64 and arm64, static, any distro) or macOS (Apple Silicon and Intel). The download is checked against the release's `SHA256SUMS` first. `RYTER_VERSION=v0.43.0` pins the current release and `RYTER_INSTALL_DIR` picks the folder. Linux gets the full feature set; on macOS everything works except the Landlock sandbox and the bench, which are Linux-only. On Windows, run Ryter under WSL2: the installer sees Linux there and installs the Linux binary. There is no native Windows build; the command gate reads POSIX shell commands and paths, and a port is not planned before 1.0.
 
 The installer verifies signed checksums against the same pinned release key as the updater. It requires OpenSSL 3+ with Ed25519 support; set `RYTER_INSTALL_OPENSSL` to its executable if it is not the default `openssl`. Unsigned older releases and invalid signatures are refused before extraction.
 
