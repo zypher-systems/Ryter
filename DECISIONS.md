@@ -16,7 +16,7 @@ The OpenRouter capture showed `reasoning_details` on every reasoning chunk, sign
 
 **Not after a cut-off.** A reply stopped at the output limit can end with a detail that has no signature yet, and one sent back unsigned is what a provider refuses.
 
-**The replay proves what is sent, and only a live run proves it is taken.** A refusal here would fail every tool round on OpenRouter that works today, so the patch waits on a live run on Claude and on a model that is not.
+**The replay proves what is sent, and only a live run proves it is taken.** A refusal here would fail every tool round on OpenRouter that works today, so the patch waited on a live run on Claude and on a model that is not. Both held: `deepseek/deepseek-v4.1-flash` through Together with an unsigned detail ($0.0044), and `anthropic/claude-sonnet-4.6` with a signed one ($0.0776). The Claude run repeats the first capture but for the echo, the first reply matching it to the token: the answer that had worked the sum out again in 54 tokens is now 13, as the direct connection's was. It is one prompt, the model did not think on that round in either capture, and what it shows is that it remembers, not that it thinks more. A real task is still owed.
 
 ### 2026-10-30 — What 1.0 writes, 1.x reads: a mark, a refusal, and a release's own files kept in the tests
 

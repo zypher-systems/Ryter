@@ -50,3 +50,5 @@ Newest last. Tokens are the run's whole: prompt, the part of it read from cache,
 | 2026-10-30 | 0.42.0 | 78677c0 | anthropic | claude-opus-5-5 | - | 5 | 43623 | 27778 | 201 | $0.0888 |
 | 2026-10-30 | 0.42.0 | 17d66c6 | anthropic | claude-opus-5-5 | - | 5 | 43713 | 27807 | 233 | $0.0897 |
 | 2026-10-30 | 0.42.0 | 51090eb | openrouter | anthropic/claude-sonnet-4.6 | Claude Platform on AWS | 5 | 35459 | 17202 | 320 | $0.0779 |
+| 2026-10-30 | 0.42.0 | 7650e47 | openrouter | deepseek/deepseek-v4.1-flash | Together | 5 | 32943 | 19840 | 260 | $0.0044 |
+| 2026-10-30 | 0.42.0 | 7650e47 | openrouter | anthropic/claude-sonnet-4.6 | Claude Platform on AWS | 5 | 35527 | 17202 | 284 | $0.0776 |
