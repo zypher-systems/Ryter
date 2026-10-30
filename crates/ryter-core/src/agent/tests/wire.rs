@@ -748,10 +748,9 @@ fn what_it_did(agent: &Agent) -> String {
     rounds.join(" -> ")
 }
 
-/// Under `target/`: scrubbed, and not evidence of anything but this try.
-fn keep_failed(connection: &str, name: &str, attempt: u32, replies: &[String]) {
-    let dir = target_wire().join(connection).join("failed");
-    let _ = std::fs::create_dir_all(&dir);
+/// A failed try's replies, scrubbed, and evidence of nothing but that try.
+fn keep_failed(dir: &Path, name: &str, attempt: u32, replies: &[String]) {
+    let _ = std::fs::create_dir_all(dir);
     for (i, sse) in replies.iter().enumerate() {
         let _ = std::fs::write(dir.join(format!("{name}-{attempt}-{}.sse", i + 1)), sse);
     }
@@ -766,6 +765,7 @@ async fn record(
     base: Option<&str>,
     key: &str,
     budget: f64,
+    failed: &Path,
 ) -> Proven<(Capture, Proof)> {
     let mut proof = Proof::default();
     let mut replies = HashMap::new();
@@ -816,7 +816,7 @@ async fn record(
                 Err(why) => {
                     let why = format!("{}: {why}. It did: {}", names[0], what_it_did(&agent));
                     println!("{connection}: {why}");
-                    keep_failed(connection, names[0], attempt, &kept);
+                    keep_failed(failed, names[0], attempt, &kept);
                     if attempt == 2 || proof.usd >= budget {
                         return Err(why);
                     }
@@ -923,7 +923,7 @@ async fn live_tool_round_trip() {
         .unwrap_or(0.50);
     let only = std::env::var("RYTER_LIVE_ONLY").unwrap_or_default();
     let trail = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/provider-proof.md");
-    let mut failed = Vec::new();
+    let mut failures = Vec::new();
     for name in BUILT_IN {
         if !only.is_empty() && !only.split(',').any(|o| o.trim() == name) {
             continue;
@@ -939,7 +939,9 @@ async fn live_tool_round_trip() {
             continue;
         };
         println!("{name}: {model}, up to ${budget:.2}");
-        match record(name, &model, None, &key, budget).await {
+        let failed = target_wire().join(name).join("failed");
+        let _ = std::fs::remove_dir_all(&failed);
+        match record(name, &model, None, &key, budget, &failed).await {
             Ok((capture, proof)) => {
                 let dir = target_wire().join(name);
                 capture.save(&dir).unwrap();
@@ -963,11 +965,11 @@ async fn live_tool_round_trip() {
             }
             Err(e) => {
                 println!("{name}: FAILED: {e}");
-                failed.push(format!("{name}: {e}"));
+                failures.push(format!("{name}: {e}"));
             }
         }
     }
-    assert!(failed.is_empty(), "{failed:#?}");
+    assert!(failures.is_empty(), "{failures:#?}");
 }
 
 // ---- what is kept ----
@@ -1000,6 +1002,15 @@ fn every_kept_capture_is_on_the_list_and_holds_nothing_private() {
         assert!(BUILT_IN.contains(&capture.meta.connection.as_str()));
         for (reply, sse) in &capture.replies {
             assert_eq!(leak(sse, ""), None, "{name}/{reply}");
+        }
+        // Handing a signature back is what a Messages round trip is there to
+        // prove; a capture where the model did not think proves nothing of it.
+        if capture.backend() == Backend::Messages {
+            let thought = parse_sse(Backend::Messages, capture.reply("tool_call"))
+                .unwrap()
+                .iter()
+                .any(|d| matches!(d, StreamDelta::ThinkingSignature { .. }));
+            assert!(thought, "{name}: no signature to echo; record it again");
         }
     }
 }
@@ -1183,7 +1194,8 @@ async fn recorded_from_a_stand_in(connection: &str, model: &str, key: &str) -> C
         .map(|sse| (sse, End::Whole))
         .collect();
     let up = serve(replies);
-    let (capture, proof) = record(connection, model, Some(&up.base), key, 1.0)
+    let failed = TempDir::new().unwrap();
+    let (capture, proof) = record(connection, model, Some(&up.base), key, 1.0, failed.path())
         .await
         .unwrap();
     assert!(proof.usd > 0.0, "{proof:?}");
@@ -1207,15 +1219,18 @@ async fn a_model_that_went_another_way_is_tried_once_more() {
         truncated,
     ];
     let up = serve(replies.into_iter().map(|sse| (sse, End::Whole)).collect());
+    let failed = TempDir::new().unwrap();
     let (capture, proof) = record(
         "openrouter",
         "anthropic/claude-sonnet-4.6",
         Some(&up.base),
         "not-a-real-key",
         1.0,
+        &failed.path().join("failed"),
     )
     .await
     .unwrap();
+    assert!(failed.path().join("failed/tool_call-1-3.sse").exists());
     assert_eq!(up.seen.lock().unwrap().len(), 8);
     // What the failed try spent still counts against the budget.
     assert!(proof.usd > 0.0072, "{proof:?}");

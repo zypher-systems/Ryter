@@ -17,7 +17,7 @@ On each connection, in the build hat, with the real system prompt and the real t
 | Accounting | Each spend row matches the bill as the wire states it, cached tokens included, and is priced from the provider's own figure or the price book |
 | Dropped stream | The same reply cut off, cleanly and abruptly: the turn fails and says so, and nothing half-made runs |
 
-The live run and the replay share one set of checks (`crates/ryter-core/src/agent/tests/wire.rs`), so a kept capture cannot drift from what was proven. Whether Anthropic's model thought before calling is its own choice, so the run says whether this capture has a signature to echo. Local models are not part of this; they are not built in.
+The live run and the replay share one set of checks (`crates/ryter-core/src/agent/tests/wire.rs`), so a kept capture cannot drift from what was proven. Whether Anthropic's model thinks before it calls is its own choice, so the run says whether the capture has a signature to echo, and a kept test fails on a Messages capture without one. Local models are not part of this; they are not built in.
 
 ## Running it
 
@@ -48,3 +48,4 @@ Newest last. Tokens are the run's whole: prompt, the part of it read from cache,
 | Date | Ryter | Commit | Connection | Model | Served by | Replies | Prompt | Cached | Output | Cost |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 2026-10-30 | 0.42.0 | 78677c0 | anthropic | claude-opus-5-5 | - | 5 | 43623 | 27778 | 201 | $0.0888 |
+| 2026-10-30 | 0.42.0 | 17d66c6 | anthropic | claude-opus-5-5 | - | 5 | 43713 | 27807 | 233 | $0.0897 |
