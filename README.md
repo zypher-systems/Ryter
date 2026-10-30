@@ -46,7 +46,7 @@ One model works in your files. `Tab` cycles its hat, and the message box shows t
 | --- | --- |
 | **plan** | reads and proposes; shows you a plan to approve, adjust or reject; changes nothing |
 | **build** | changes your files; your toolchains and the project's containers run, and edits, deletions and publishing ask first |
-| **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back anything it changed |
+| **audit** | runs everything the project has against the plan you approved, the product included, and files its findings on a card you can hand to the builder; a checkpoint puts back what it changed, and what you edited meanwhile is kept |
 | **scribe** | writes the documentation and nothing else: `.md`, `.txt` and their kind; give it a cheap model |
 
 ![Ryter in the plan hat. Plan is the filled chip on the prompt and the marked hat on the rail, read only on its own model; the conversation still holds the diff from the build.](docs/screenshots/plan.png)

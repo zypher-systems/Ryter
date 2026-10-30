@@ -60,6 +60,55 @@ pub struct AuditLive {
     /// The turn started the product, ran its tests, or aimed a command at
     /// its address: its own data (files git ignores) is not restored.
     pub used_product: bool,
+    /// The tree after the audit's last tool call that could change it
+    /// (the checkpoint's, at the start): what the next look compares
+    /// against. `None` without a checkpoint.
+    pub watched: Option<String>,
+    /// A call that could change the tree is running: a change found now
+    /// is the audit's, not the user's.
+    pub in_call: bool,
+    /// Paths that changed while no such call was running: the user's, in
+    /// an editor, to be left alone when the tree is put back.
+    pub yours: std::collections::BTreeSet<String>,
+}
+
+/// What an audit's rollback did: the paths put back, the paths found to
+/// be the user's and left, and the checkpoint of the tree as the audit
+/// left it, which `/redo` restores from.
+#[derive(Debug, Default)]
+struct AuditRollback {
+    put_back: Vec<String>,
+    kept: Vec<String>,
+    after: Option<String>,
+}
+
+/// What an audit's rollback did, for the chat: what was put back and how
+/// to bring it back, and what was the user's and left.
+fn audit_tree_notice(restored: &[String], kept: &[String], before: &str) -> String {
+    let mut s = String::new();
+    if !restored.is_empty() {
+        let them = if restored.len() == 1 { "it" } else { "them" };
+        s.push_str(&format!(
+            "the audit hat changed {} file{}; put back from the checkpoint: {}. `/redo` brings \
+             {them} back as the audit left {them}, until the next build turn.",
+            restored.len(),
+            if restored.len() == 1 { "" } else { "s" },
+            restored.join(", ")
+        ));
+    }
+    if !kept.is_empty() {
+        if !s.is_empty() {
+            s.push(' ');
+        }
+        s.push_str(&format!(
+            "Kept as you left {}, changed while no command of the audit's was running: {}. The \
+             version before the audit: `git restore --source {} -- <path>`.",
+            if kept.len() == 1 { "it" } else { "them" },
+            kept.join(", "),
+            &before[..before.len().min(12)]
+        ));
+    }
+    s
 }
 
 pub struct Agent {
@@ -487,14 +536,8 @@ impl Agent {
                 // put back after. Without a repository there is no
                 // checkpoint, and the hat is held to looking for the turn.
                 if self.role == Role::Audit {
-                    self.audit_live = Some(AuditLive {
-                        checkpoint: self.audit_checkpoint(),
-                        from: self.session.transcript.len(),
-                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
-                        asked: requested || user.starts_with("[Ryter] Audit"),
-                        started,
-                        used_product: false,
-                    });
+                    let asked = requested || user.starts_with("[Ryter] Audit");
+                    self.audit_live = Some(self.audit_begin(asked, started));
                 }
                 self.turn_inner(user, &mut tools).await
             }
@@ -1004,6 +1047,9 @@ impl Agent {
                     self.save_ignored(&call.name, &args)?;
                 }
                 self.note_product_use(&call.name, &args);
+                if parsed.is_ok() {
+                    self.audit_watch(&call.name, false)?;
+                }
                 // Read before the command runs: what is not there yet is
                 // what it makes. A `write` of a new file also credits the
                 // folders `create_dir_all` will make, so `rm -rf` of that
@@ -1087,6 +1133,9 @@ impl Agent {
                         return Err(e);
                     }
                 };
+                if parsed.is_ok() {
+                    self.audit_watch(&call.name, true)?;
+                }
                 // What the formatter changed is this round's edit too,
                 // whether or not it then failed: the check runs after it,
                 // and the session notes it.
@@ -1492,14 +1541,7 @@ impl Agent {
                 // its own, with its checkpoint, closed at the turn's end or
                 // at the next switch out.
                 if to == Role::Audit && self.audit_live.is_none() {
-                    self.audit_live = Some(AuditLive {
-                        checkpoint: self.audit_checkpoint(),
-                        from: self.session.transcript.len(),
-                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
-                        asked: false,
-                        started: std::time::Instant::now(),
-                        used_product: false,
-                    });
+                    self.audit_live = Some(self.audit_begin(false, std::time::Instant::now()));
                 }
                 let now = match to {
                     Role::Build => "you may now change files and run commands",
@@ -2411,27 +2453,97 @@ impl Agent {
         }
     }
 
+    /// An audit turn begins: its checkpoint, and the watch on the tree
+    /// that tells the user's edits during the turn from the audit's.
+    fn audit_begin(&mut self, asked: bool, started: std::time::Instant) -> AuditLive {
+        let checkpoint = self.audit_checkpoint();
+        let dir = self.ctx.workspace.clone();
+        let watched = checkpoint.as_ref().and_then(|sha| {
+            self.ctx
+                .sandboxed(|| crate::git::checkpoint_tree(&dir, sha))
+                .ok()
+        });
+        AuditLive {
+            checkpoint,
+            from: self.session.transcript.len(),
+            spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+            asked,
+            started,
+            used_product: false,
+            watched,
+            in_call: false,
+            yours: std::collections::BTreeSet::new(),
+        }
+    }
+
+    /// The audit's tree, looked at before and after each of its calls that
+    /// could change it (an edit, a command the gate does not pass as
+    /// read-only, one of the project's verbs). A change found before a
+    /// call was made while nothing of the audit's ran: the user's, in an
+    /// editor, to be left alone when the tree is put back.
+    fn audit_watch(&mut self, name: &str, after: bool) -> Result<()> {
+        let Some(last) = self.audit_live.as_ref().and_then(|l| l.watched.clone()) else {
+            return Ok(());
+        };
+        // By the tool's name, not the gate's decision: a command the gate
+        // passes without asking (`printf > file` inside the project) still
+        // changes the tree.
+        if !(matches!(name, "bash" | "write" | "search_replace" | "format")
+            || crate::tools::is_project_verb(name))
+        {
+            return Ok(());
+        }
+        let dir = self.ctx.workspace.clone();
+        let Some(now) = self.ctx.sandboxed(|| crate::git::tree_now(&dir))? else {
+            return Ok(());
+        };
+        let moved = if !after && now != last {
+            self.ctx
+                .sandboxed(|| crate::git::paths_between(&dir, &last, &now))?
+        } else {
+            Vec::new()
+        };
+        if let Some(live) = self.audit_live.as_mut() {
+            live.yours.extend(moved);
+            live.watched = Some(now);
+            live.in_call = !after;
+        }
+        Ok(())
+    }
+
     /// Put back what an audit turn changed outside Ryter's own folder:
     /// the paths that differ between the checkpoint and the tree now,
     /// mapped from the repository's top to this session's folder, less
     /// everything under `.ryter/` (the audit's own files, and what the
-    /// user approved during the turn: a run file, a plan). Returns the
-    /// paths put back, as git names them.
-    fn audit_restore(&self, dir: &std::path::Path, before: &str) -> Result<Vec<String>> {
-        let Some(after) = self
-            .ctx
-            .sandboxed(|| crate::git::checkpoint(dir, "audit-after"))?
-        else {
+    /// user approved during the turn: a run file, a plan), and less what
+    /// the user changed meanwhile: `yours` from the watch, plus whatever
+    /// moved after the audit's last call ended (`watched`, when that call
+    /// came back). A path both the audit and the user changed is the
+    /// user's: it stays as they left it, and the chat names the
+    /// checkpoint that holds the version before the audit.
+    fn audit_restore(
+        &self,
+        dir: &std::path::Path,
+        before: &str,
+        yours: &std::collections::BTreeSet<String>,
+        watched: Option<&str>,
+    ) -> Result<AuditRollback> {
+        let name = format!("audit-after-{}", &before[..before.len().min(12)]);
+        let Some(after) = self.ctx.sandboxed(|| crate::git::checkpoint(dir, &name))? else {
             return Err(Error::Config("no checkpoint after the audit".into()));
         };
+        let after_tree = self
+            .ctx
+            .sandboxed(|| crate::git::checkpoint_tree(dir, &after))?;
         let moved = self
             .ctx
             .sandboxed(|| crate::git::checkpoint_tree(dir, before))?
-            != self
-                .ctx
-                .sandboxed(|| crate::git::checkpoint_tree(dir, &after))?;
+            != after_tree;
         if !moved {
-            return Ok(Vec::new());
+            return Ok(AuditRollback {
+                after: Some(after),
+                ..AuditRollback::default()
+            });
         }
         let top = self.ctx.sandboxed(|| crate::git::toplevel(dir))?;
         let here = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
@@ -2445,11 +2557,26 @@ impl Agent {
             .into_iter()
             .filter(|p| !crate::audit::kept_from_restore(&prefix, std::path::Path::new(p)))
             .collect();
-        if !paths.is_empty() {
-            self.ctx
-                .sandboxed(|| crate::git::restore_paths(dir, before, &paths))?;
+        let mut yours = yours.clone();
+        if let Some(watched) = watched {
+            if watched != after_tree {
+                yours.extend(
+                    self.ctx
+                        .sandboxed(|| crate::git::paths_between(dir, watched, &after_tree))?,
+                );
+            }
         }
-        Ok(paths)
+        let (kept, put_back): (Vec<String>, Vec<String>) =
+            paths.into_iter().partition(|p| yours.contains(p));
+        if !put_back.is_empty() {
+            self.ctx
+                .sandboxed(|| crate::git::restore_paths(dir, before, &put_back))?;
+        }
+        Ok(AuditRollback {
+            put_back,
+            kept,
+            after: Some(after),
+        })
     }
 
     /// An audit turn ended: put back whatever it changed, write the audit
@@ -2464,13 +2591,26 @@ impl Agent {
             asked,
             started,
             used_product,
+            watched,
+            in_call,
+            yours,
         } = live;
         let started = &started;
         let dir = self.ctx.workspace.clone();
         let mut restored: Vec<String> = Vec::new();
+        let mut kept: Vec<String> = Vec::new();
+        let mut after: Option<String> = None;
         if let Some(before) = &checkpoint {
-            match self.audit_restore(&dir, before) {
-                Ok(paths) => restored = paths,
+            // A call that could change the tree never came back (the turn
+            // ended under it): what moved since the watch last looked is
+            // taken for the audit's, as everything was before the watch.
+            let watched = if in_call { None } else { watched.as_deref() };
+            match self.audit_restore(&dir, before, &yours, watched) {
+                Ok(done) => {
+                    restored = done.put_back;
+                    kept = done.kept;
+                    after = done.after;
+                }
                 // The tree can't be compared: put it back whole, and say
                 // so, rather than leave the audit's changes in place.
                 Err(e) => {
@@ -2492,6 +2632,35 @@ impl Agent {
                 }
             }
         }
+        // What was put back can be brought back: `/redo` restores the
+        // paths from the tree as the audit left it, until a build turn
+        // moves the files on and clears what `/redo` could do.
+        if let (Some(before), Some(after), false) = (&checkpoint, &after, restored.is_empty()) {
+            let undone_name = format!("audit-undone-{}", &after[..after.len().min(12)]);
+            let undone = self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?
+                .unwrap_or_default();
+            self.session.push_redo(crate::session::Redo {
+                checkpoint: before.clone(),
+                record: crate::session::TurnRecord {
+                    after: Some(after.clone()),
+                    ignored: Vec::new(),
+                },
+                files: after.clone(),
+                undone,
+                paths: restored.clone(),
+                ignored: Vec::new(),
+                audit: true,
+            })?;
+        }
+        if let Some(before) = &checkpoint {
+            if !restored.is_empty() || !kept.is_empty() {
+                self.emit(AgentEvent::Notice {
+                    message: audit_tree_notice(&restored, &kept, before),
+                })?;
+            }
+        }
         let root = self.root();
         let filed = self.audit_pending.take();
         // What the audit's last words said, where it filed nothing.
@@ -2505,16 +2674,6 @@ impl Agent {
             .next_back();
         if filed.is_none() && !asked && said.is_none() {
             self.last_audit_verdict = None;
-            if !restored.is_empty() {
-                self.emit(AgentEvent::Notice {
-                    message: format!(
-                        "the audit hat changed {} file{}; put back from the checkpoint: {}",
-                        restored.len(),
-                        if restored.len() == 1 { "" } else { "s" },
-                        restored.join(", ")
-                    ),
-                })?;
-            }
             return Ok(());
         }
         let (_, model, _) = self.hat_stack();
@@ -2547,6 +2706,7 @@ impl Agent {
                     &model,
                     &stamp,
                     &restored,
+                    &kept,
                     checkpoint.is_some(),
                     used_product,
                 );
@@ -2579,6 +2739,7 @@ impl Agent {
                     ran: audit.ran.clone(),
                     file: (!file.is_empty()).then_some(file),
                     restored,
+                    kept,
                     product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: true,
@@ -2604,6 +2765,7 @@ impl Agent {
                     ran: Vec::new(),
                     file: None,
                     restored,
+                    kept,
                     product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: false,
@@ -3346,6 +3508,7 @@ impl Agent {
                 undone,
                 paths: paths.clone(),
                 ignored: saved.clone(),
+                audit: false,
             })?;
             let prev = self.session.meta.checkpoints.last().cloned();
             self.session.set_turn_checkpoint(prev)?;
@@ -3427,10 +3590,11 @@ impl Agent {
             .set_turn_record(&r.checkpoint, r.record.clone())?;
         self.session.set_turn_checkpoint(Some(r.checkpoint))?;
         self.emit(self.checkpoint_event())?;
+        let who = if r.audit { "audit" } else { "build turn" };
         let mut put = r.paths;
         put.extend(r.ignored.into_iter().map(|f| f.path));
         Ok(format!(
-            "redone: {} as the build turn left {}.",
+            "redone: {} as the {who} left {}.",
             list(&put),
             if put.len() == 1 { "it" } else { "them" }
         ))
@@ -8736,7 +8900,10 @@ mod tests {
         };
         assert!(card.starts_with("audit: "), "{card}");
         assert!(
-            card.contains("\naudits 1 file, +1 −1, read-only\nabout $"),
+            card.contains(
+                "\naudits 1 file, +1 −1, read-only\nputs back what it changes; your own edits \
+                 meanwhile are kept\nabout $"
+            ),
             "{card}"
         );
         let evs: Vec<AgentEvent> = events.try_iter().collect();
@@ -9013,6 +9180,161 @@ mod tests {
             text.contains("left 2 files changed") && text.contains("- `probe.txt`"),
             "{text}"
         );
+        // What was put back is not lost: `/redo` brings it back as the
+        // audit left it, and `/undo` puts it back again.
+        assert!(
+            noticed(&evs, "`/redo` brings them back as the audit left them"),
+            "{evs:?}"
+        );
+        let msg = agent.redo().unwrap();
+        assert!(
+            msg.starts_with("redone: ") && msg.ends_with(" as the audit left them."),
+            "{msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("probe.txt")).unwrap(),
+            "x"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi\ny"
+        );
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone: put back 2 files"), "{msg}");
+        assert!(!cwd.path().join("probe.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi\n"
+        );
+    }
+
+    /// A file changed in an editor while the audit runs, while none of
+    /// its commands is running, is the user's: the rollback leaves it as
+    /// they left it and says so, and only the audit's own change is put
+    /// back. The rollback used to put back every path that differed from
+    /// the checkpoint and report the user's edit as the audit's.
+    #[tokio::test]
+    async fn an_edit_made_while_the_audit_ran_is_kept() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.provider = Arc::new(
+            ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "printf y >> hello.txt"}),
+                ),
+                file_audit_call("fail"),
+                say("filed"),
+            ])
+            .between({
+                let d = d.clone();
+                move |i| {
+                    // The second request: the command is over and the
+                    // model is thinking. The user edits a file and adds one.
+                    if i == 1 {
+                        std::fs::write(d.join("other.txt"), "edited by me\n").unwrap();
+                        std::fs::write(d.join("notes.txt"), "mine\n").unwrap();
+                    }
+                }
+            }),
+        );
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        std::fs::write(d.join("other.txt"), "theirs\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into(), "other.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "hi\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("other.txt")).unwrap(),
+            "edited by me\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("notes.txt")).unwrap(),
+            "mine\n"
+        );
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let [ev] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        let AgentEvent::Audited { restored, kept, .. } = ev else {
+            unreachable!()
+        };
+        assert_eq!(restored, &["hello.txt"]);
+        assert_eq!(kept, &["notes.txt", "other.txt"]);
+        assert!(
+            noticed(
+                &evs,
+                "Kept as you left them, changed while no command of the audit's was running: notes.txt, other.txt."
+            ),
+            "{evs:?}"
+        );
+        let text = std::fs::read_to_string(d.join(".ryter/audit.md")).unwrap();
+        assert!(
+            text.contains("left 1 file changed")
+                && text.contains("2 files changed while no command of the audit's was running")
+                && text.contains("- `notes.txt`"),
+            "{text}"
+        );
+    }
+
+    /// A file the audit changed and the user then changed too, while no
+    /// command ran, stays as the user left it: a conflict is not settled
+    /// by replacing their version. The chat names the checkpoint that
+    /// holds the version before the audit.
+    #[tokio::test]
+    async fn a_file_changed_by_the_audit_and_then_by_you_stays_yours() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.provider = Arc::new(
+            ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "printf y >> hello.txt"}),
+                ),
+                file_audit_call("pass"),
+                say("filed"),
+            ])
+            .between({
+                let d = d.clone();
+                move |i| {
+                    if i == 1 {
+                        std::fs::write(d.join("hello.txt"), "yours\n").unwrap();
+                    }
+                }
+            }),
+        );
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "yours\n"
+        );
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let [ev] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        let AgentEvent::Audited { restored, kept, .. } = ev else {
+            unreachable!()
+        };
+        assert!(restored.is_empty(), "{restored:?}");
+        assert_eq!(kept, &["hello.txt"]);
+        assert!(
+            noticed(&evs, "The version before the audit: `git restore --source "),
+            "{evs:?}"
+        );
+        // Nothing was put back, so there is nothing for `/redo` to bring.
+        assert_eq!(agent.redo().unwrap(), "nothing to redo");
     }
 
     /// With no repository there is no checkpoint: the audit is told, held

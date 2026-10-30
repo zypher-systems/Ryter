@@ -218,6 +218,7 @@ impl Audit {
         model: &str,
         stamp: &str,
         restored: &[String],
+        kept: &[String],
         checkpointed: bool,
         product_used: bool,
     ) -> String {
@@ -267,6 +268,21 @@ impl Audit {
                 if restored.len() == 1 { "" } else { "s" }
             ));
             for p in restored {
+                s.push_str(&format!("- `{p}`\n"));
+            }
+        }
+        // A file that changed while no command of the audit's was running
+        // was changed by the user, and stays as they left it.
+        if !kept.is_empty() {
+            s.push_str(&format!(
+                "{} file{} changed while no command of the audit's was running, so {} yours \
+                 and {} kept as left:\n",
+                kept.len(),
+                if kept.len() == 1 { "" } else { "s" },
+                if kept.len() == 1 { "it is" } else { "they are" },
+                if kept.len() == 1 { "was" } else { "were" }
+            ));
+            for p in kept {
                 s.push_str(&format!("- `{p}`\n"));
             }
         }
@@ -464,18 +480,38 @@ mod tests {
     #[test]
     fn the_document_and_the_files() {
         let a = filed();
-        let text = a.document("kimi-k3", "2026-10-03 19:48", &[], true, false);
+        let text = a.document("kimi-k3", "2026-10-03 19:48", &[], &[], true, false);
         assert!(text.starts_with("# Audit · 2026-10-03 · FAIL\n"));
         assert!(text.contains("1. ✗ **Size limit checked after the write** — `app/images.py:41`"));
         assert!(text.contains("   - saw: curl -F picture=@big.png → 200"));
         assert!(text.contains("- `run_project test`"));
         assert!(text.contains("Changed nothing; the checkpoint was kept."));
-        let restored = a.document("m", "2026-10-03 19:48", &["app/x.py".into()], true, false);
+        let restored = a.document(
+            "m",
+            "2026-10-03 19:48",
+            &["app/x.py".into()],
+            &[],
+            true,
+            false,
+        );
         assert!(restored.contains("left 1 file changed") && restored.contains("- `app/x.py`"));
-        let bare = a.document("m", "2026-10-03 19:48", &[], false, false);
+        // A file the user changed meanwhile: named as theirs, and kept.
+        let kept = a.document(
+            "m",
+            "2026-10-03 19:48",
+            &[],
+            &["notes.txt".into()],
+            true,
+            false,
+        );
+        assert!(
+            kept.contains("1 file changed while no command of the audit's was running, so it is yours and was kept as left:\n- `notes.txt`"),
+            "{kept}"
+        );
+        let bare = a.document("m", "2026-10-03 19:48", &[], &[], false, false);
         assert!(bare.contains("No checkpoint"));
         // The product used: the tree section says its own data stayed.
-        let used = a.document("m", "2026-10-03 19:48", &[], true, true);
+        let used = a.document("m", "2026-10-03 19:48", &[], &[], true, true);
         assert!(
             used.contains(
                 "Changed nothing; the checkpoint was kept.\nThe product was started and used; \

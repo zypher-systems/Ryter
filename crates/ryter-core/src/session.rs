@@ -51,6 +51,10 @@ pub struct Redo {
     pub paths: Vec<String>,
     /// Ignored files the undo put back: `before` is what the undo replaced.
     pub ignored: Vec<SavedFile>,
+    /// The undo was an audit's rollback, not a build turn undone: `/redo`
+    /// brings the files back as the audit left them.
+    #[serde(default)]
+    pub audit: bool,
 }
 
 /// Session index row.

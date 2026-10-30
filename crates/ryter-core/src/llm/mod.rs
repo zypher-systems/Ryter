@@ -520,6 +520,11 @@ pub struct ReplayProvider {
     stream_err: Option<String>,
     /// When true, the last remaining turn is cloned instead of consumed.
     pub(crate) repeat_last: bool,
+    /// Run with the index of each turn as it is served: what a test does
+    /// while the model is "thinking", between two tool calls.
+    between: Option<Box<dyn Fn(usize) + Send + Sync>>,
+    /// Turns served so far.
+    served: std::sync::atomic::AtomicUsize,
 }
 
 impl ReplayProvider {
@@ -531,6 +536,8 @@ impl ReplayProvider {
             refused: Vec::new(),
             stream_err: None,
             repeat_last: true,
+            between: None,
+            served: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -547,7 +554,17 @@ impl ReplayProvider {
             refused: Vec::new(),
             stream_err: None,
             repeat_last: false,
+            between: None,
+            served: std::sync::atomic::AtomicUsize::new(0),
         }
+    }
+
+    /// Run `f` with each turn's index as it is served, before its deltas:
+    /// the moment the model is thinking and no tool is running, when a
+    /// test stands in for the user editing a file.
+    pub fn between(mut self, f: impl Fn(usize) + Send + Sync + 'static) -> Self {
+        self.between = Some(Box::new(f));
+        self
     }
 
     /// Answer [`Provider::refused`] as an account that cannot use `models`.
@@ -568,6 +585,12 @@ impl Provider for ReplayProvider {
     async fn stream(&self, _req: CompletionRequest) -> Result<DeltaStream> {
         if let Some(err) = &self.stream_err {
             return Err(crate::Error::Provider(err.clone()));
+        }
+        let i = self
+            .served
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some(f) = &self.between {
+            f(i);
         }
         let mut q = self.turns.lock().expect("replay mutex");
         let deltas = if self.repeat_last && q.len() == 1 {

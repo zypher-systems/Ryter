@@ -229,6 +229,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             verdict,
             headline,
             restored,
+            kept,
             filed,
             total_usd,
             ..
@@ -237,7 +238,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             let cost = total_usd.map_or_else(String::new, |usd| {
                 format!(" · {}", crate::chat::turn_usd(usd))
             });
-            let tree = if restored.is_empty() {
+            let mut tree = if restored.is_empty() {
                 String::new()
             } else {
                 format!(
@@ -246,6 +247,10 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                     if restored.len() == 1 { "" } else { "s" }
                 )
             };
+            // The user's own edits during the audit, left as they were.
+            if !kept.is_empty() {
+                tree.push_str(&format!(" · kept {} of yours", kept.len()));
+            }
             view.system(format!(
                 "audit · {} · {headline}{cost}{tree}",
                 crate::chat::short_model(model)

@@ -88,6 +88,26 @@ pub fn checkpoint_tree(dir: &Path, sha: &str) -> Result<String> {
         .to_string())
 }
 
+/// The tree of the working files now (tracked and untracked, not
+/// ignored): what a checkpoint would record, without the commit object.
+/// Only a private index is written. `None` outside a repository.
+pub fn tree_now(dir: &Path) -> Result<Option<String>> {
+    if !is_repo(dir) {
+        return Ok(None);
+    }
+    let scratch = Scratch::new(dir)?;
+    let index = scratch.path().join("index");
+    if head(dir).is_ok() {
+        git_with_index(dir, &index, &["read-tree", "HEAD"])?;
+    }
+    git_with_index(dir, &index, &["add", "-A"])?;
+    Ok(Some(
+        git_with_index(dir, &index, &["write-tree"])?
+            .trim()
+            .to_string(),
+    ))
+}
+
 /// Put the working files back as `sha` recorded them: restore what changed or
 /// was deleted, and remove files created since. Ignored files, the index,
 /// and the branch are left alone.

@@ -398,8 +398,12 @@ impl Agent {
             // Nothing uncommitted, or no repository to say what changed.
             None => "audits the project as it stands, read-only".to_string(),
         };
+        // What the rollback covers: the files git tracks and what the audit
+        // made, not the product's own data; an edit the user makes while
+        // it runs is told from the audit's and left alone.
+        let tree = "puts back what it changes; your own edits meanwhile are kept";
         let summary = format!(
-            "{}{who}\n{reads}\n{cost}",
+            "{}{who}\n{reads}\n{tree}\n{cost}",
             if offered {
                 "Audit this work before you commit?\n"
             } else {

@@ -200,6 +200,10 @@ pub enum AgentEvent {
         /// Files the audit changed that were put back from the checkpoint.
         #[serde(default)]
         restored: Vec<String>,
+        /// Files that changed while no command of the audit's was running:
+        /// the user's, left as they were.
+        #[serde(default)]
+        kept: Vec<String>,
         /// Whether the audit started or used the running product: what the
         /// product wrote to its own data (files git ignores) is not restored.
         #[serde(default)]
