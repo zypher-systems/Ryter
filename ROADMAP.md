@@ -6,14 +6,17 @@ Living plan for Ryter.
 
 Agreed with the user on 2026-10-04. 1.0 is a gate, not a count: when every item holds, the user decides whether to release 1.0.0. Until then releases go 0.19, 0.20 and on. **No new specialist hat is added before 1.0.** The product as it stands, plan and build above the line and audit and scribe below, is what gets polished and proven. Ideas for more hats (a scout, the builder delegating to a specialist) wait on the other side of the gate.
 
+Revisited 2026-10-29 against the second gap analysis (`docs/gap/2026-10-29.md`): item 9 added, the plan to close the rest written under Now, and three rulings that bound the gate rather than widen it: the budget is a request-boundary stop and is said so, not made strict; root commands and the sandbox stay documented limits (refusal by name, off by default) rather than new contracts; run-until-done waits for 1.x. `DECISIONS.md` 2026-10-29.
+
 1. **The flow holds on a real project.** Plan, build, audit, repair and scribe, on a web service and on a terminal or desktop app, driven by the user with real models, without a workaround. The audit starts the product and uses it; the scribe writes the README and the guide on a cheap seat. **Closed 2026-10-14** on the user's call: fiscus (web, 0.20.0) and tunes (terminal, 0.24.1). Findings from those runs stay under other items (gate asks → 2, `tmux kill-server` → 4).
-2. **A normal build asks for nothing.** Only deleting, discarding work in git, publishing or leaving the machine, writing outside the project, scratch space and home, and the project's `.env` ask. The user's real sessions, replayed through the gate, say so, and a new real session finds no new spelling.
-3. **Setup works the first time** on Linux and macOS: install, add a key, make a change, with no step the guide does not cover. Only models the account can use are offered, and a hat's model is checked when it is chosen, not on its first message. **Linux half closed 2026-10-14.** Model check on choose shipped in 0.29.0. Still open: macOS hand pass (install, key, change, TUI).
-4. **Ryter touches only the project it was started in.** It never creates a repository in a folder that holds other projects, never commits on its own, and says what it set up.
-5. **Cost is predictable.** What a model switch or an audit will cost is said before it is spent; project cost counts only the project; a turn that stops for its round cap or its budget says so and how to go on.
-6. **The screen never lies.** A thinking model looks alive, a question is announced where the eye is and covers nothing, nothing in the conversation is hidden by a card, and the figures on the rack and the instruments match the session's records.
-7. **No known data-loss or wrong-number bug is open,** and the guide matches the release: every command, key and screen in `docs/guide.md` works as the release does, on Linux and on macOS by hand.
-8. **The week's decisions stay made:** two rows, Tab within and Shift+Tab between; the audit changes nothing by checkpoint and rollback; `.ryter/plan.md` and `.ryter/audit.md` known to every hat; plan approval the one automatic hat change; no delegation. These are lines not to cross before 1.0, not features to add.
+2. **A normal build asks for nothing.** Only deleting, discarding work in git, publishing or leaving the machine, writing outside the project, scratch space and home, and the project's `.env` ask. The user's real sessions, replayed through the gate, say so, and a new real session finds no new spelling. **Open 2026-10-29:** the user's five real sessions of 10-19 to 10-23 had two bash asks, both a shell variable in a `for` loop (`$f.html`, `localhost$p`); ruled: values the same command lists are expanded by the gate and judged one by one. The kept replay test (`replay_live_session_asks_through_the_gate`) has no fixture yet (Now, step 4).
+3. **Setup works the first time** on Linux and macOS: install, add a key, make a change, with no step the guide does not cover. Only models the account can use are offered, and a hat's model is checked when it is chosen, not on its first message. **Linux half closed 2026-10-14.** Model check on choose shipped in 0.29.0. Still open: macOS hand pass (install, key, change, TUI), by a person with a Mac (Now, step 9).
+4. **Ryter touches only the project it was started in.** It never creates a repository in a folder that holds other projects, never commits on its own, and says what it set up. **Open 2026-10-29:** "never commits on its own" is the prompt's rule with no count behind it (`git commit` passes the gate in the build hat); the replay fixture counts unasked commits (Now, step 4).
+5. **Cost is predictable.** What a model switch or an audit will cost is said before it is spent; project cost counts only the project; a turn that stops for its round cap or its budget says so and how to go on. **Ruled 2026-10-29:** the budget stops the next call and the last call can pass it by its own cost; `/budget` and the guide say so (Now, step 6); no strict mode.
+6. **The screen never lies.** A thinking model looks alive, a question is announced where the eye is and covers nothing, nothing in the conversation is hidden by a card, and the figures on the rack and the instruments match the session's records. **Open 2026-10-29:** a routing save whose key cannot be resolved leaves the old rules live under a screen that shows the new (Now, step 2); `/sessions` prints `$0.00` for an unpriced session where the rail says `$?.??` (step 6).
+7. **No known data-loss or wrong-number bug is open,** and the guide matches the release: every command, key and screen in `docs/guide.md` works as the release does, on Linux and on macOS by hand. **Open 2026-10-29:** the audit's rollback puts back a file you edited in your editor while the audit ran, and reports it as the audit's change (Now, step 1, in work); no recorded wire fixture or live tool round trip per built-in provider (step 5).
+8. **The week's decisions stay made:** two rows, Tab within and Shift+Tab between; the audit changes nothing by checkpoint and rollback; `.ryter/plan.md` and `.ryter/audit.md` known to every hat; plan approval the one automatic hat change; no delegation. These are lines not to cross before 1.0, not features to add. Run-until-done for an approved plan was ruled after 1.0 on 2026-10-29 under this item.
+9. **What 1.0 writes, 1.x reads.** Added 2026-10-29. Sessions, `config.toml`, `routing.toml`, `settings.toml`, `.ryter/run.toml`, `.ryter/plan.md` and the spend records carry a schema number; a fixture written by the release is kept in the tests and every later version must load it; additions only, and a renamed field reads both names. The guide says what persists where: sessions and their recovery copies, project spend, checkpoints under `refs/ryter/undo/`. Pruning old checkpoints is after 1.0.
 
 Dropped from the earlier candidates: "the model has the tools the job needs" (open-ended; skills, pages and images exist) and everything that depended on a crew or the test hat.
 
@@ -21,42 +24,49 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.42.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
-- **Selecting with the mouse (from 0.24.0): untried by a person.** It shipped driven with scripted mouse reports and a stand-in clipboard tool only. One drag and paste in a real terminal with a real clipboard, on Linux and on a Mac, is still owed; what it shows goes into the next patch.
-- **A real `sudo` (from 0.23.0): done on Linux.** The user ran an approved root command with their own password on the published 0.23.0 on 2026-10-07 and the prompt worked as expected. A Mac is still untried.
-- **1.0 item 1 (flow on a real project): closed 2026-10-14** (recorded in 0.28.0). Further ask friction from fiscus/tunes stays under Next (item 2). G4 closed the nested-scratch and tmux-scope holes in 0.29.0.
-- **1.0 item 3 Linux setup: closed 2026-10-14** (recorded in 0.28.0). Model check on choose shipped in 0.29.0. Still owed under Next: macOS by hand.
-- **Windows under WSL2 (from 2026-10-28): untried by a person.** The guide and README say Windows means WSL2, where the installer sees Linux. Nobody has run Ryter there: whether WSL's kernel enforces Landlock is unknown (the sandbox fails closed and `ryter doctor` says), and Windows Terminal was never driven. One install, a key and a change under WSL2, when a Windows machine is at hand; what it shows goes into the next patch.
+**The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
+
+1. **The audit's rollback keeps your edits (G01, G08; item 7).** In work on `audit-rollback-patch`. The audit's tree is watched between its tool calls: a path that changed while no tool ran is yours and is left alone; what the audit changed is put back from a checkpoint named for the audit, and `/redo` brings it back until the next build turn. The notice, the card and `audit.md` say which is which, and the y/n card says the rollback covers the files git tracks. A test edits an unrelated file mid-audit and keeps it.
+2. **A routing save applies whole or not at all (G02; item 6).** The key is resolved first; on failure the old rules stay in every copy and the chat says so.
+3. **Project memory shared out (G03).** `ROADMAP.md`, `DECISIONS.md` and the notes each get a share of the 48,000 bytes, an unused share rolls over, Now and Next come before Done, and the prompt names what was cut. Today this repo's roadmap alone fills the cap and the decisions never reach the prompt.
+4. **Gate replay as a kept test (G15; items 2 and 4).** A fixture of commands and decisions from the user's real sessions (no file contents), the `#[ignore]` lifted, unwanted asks and unasked commits counted separately; the `for`-loop ruling applied.
+5. **Provider proof (G05; item 7).** Recorded wire captures per built-in connection replayed in tests (tool calls, parallel calls, truncation, cancellation, accounting); one budgeted `RYTER_LIVE=1` tool round trip per provider, by hand and dated, before each release. Listing models does not count.
+6. **Small truths (G07, G12, G04, G09, G10; items 5 and 6).** The budget's overshoot said on `/budget` and in the guide; an assumed context window shown as assumed in `/context`; byte ceilings and a connection cap on the MCP transports; `/sessions` says `$?.??` for an unpriced session; as root, listing programs refused a folder that holds one of root's own; `ryter doctor` says what the sandbox covers and does not.
+7. **Item 9: the schema mark and the kept fixture,** and the guide's paragraph on what persists where.
+8. **Docs reconciled (G20).** Three verified drifts fixed 2026-10-29 (the guide's dependency paragraph, the Opus bench page's task count, two stale Next items). The guide read against the release, screen by screen, comes with the hand passes.
+9. **Hand passes (G06, G18; items 3, 6, 7).** macOS by a person with a Mac, from a one-page script: install → key → change → audit → undo → resume at three widths, the sudo prompt, drag-and-paste, the light theme. WSL2 by the user in a Windows 11 VM on this machine (nested KVM), Windows Terminal, the sandbox's own diagnosis. Still untried by a person from earlier: mouse selection (0.24.0) on Linux too; `sudo` on a Mac (0.23.0); the light theme anywhere.
+10. **The last real run** by the user on the candidate, both OSes, every ask written down. Then 1.0 is the user's decision, never proposed.
+
+Closed before this list: item 1 (2026-10-14, fiscus and tunes); item 3's Linux half (2026-10-14); a real `sudo` on Linux (2026-10-07).
 
 ## Next
 
-Everything here serves an item of the 1.0 list; the number says which. The direction that put the hats where they are is in `DECISIONS.md` (2026-10-01 to 2026-10-04) and `docs/specialists-design.md`; this section no longer repeats it.
+What gates 1.0 is the numbered list under Now. This section holds what is open beside it: findings with no step of their own, and the work that waits. The direction that put the hats where they are is in `DECISIONS.md` (2026-10-01 to 2026-10-04) and `docs/specialists-design.md`; this section no longer repeats it. Reconciled 2026-10-29 (G20): the sandbox's session scoping and the `ryter-cli` tests asked for here exist; the replay test exists and wants its fixture (Now, step 4).
 
-**Item 3, setup and models**
-- macOS by hand: install, a key, a change, the TUI at three widths. The sandbox is Linux-only and is labelled so.
-- The bench on macOS. It refuses there since 0.39.0: the build hat runs under a Linux child subreaper so that every process the model started is ended before the hidden tests are written, and macOS has no equivalent (its kernel refuses `kqueue`'s `NOTE_TRACK`). What would do: a helper with the right entitlement, or a scoring that no survivor can reach. Nothing cheap.
+**Beside the steps, still gating by their item**
+- The bench on macOS (item 3, labelled, not blocking). It refuses there since 0.39.0: the build hat runs under a Linux child subreaper so that every process the model started is ended before the hidden tests are written, and macOS has no equivalent (its kernel refuses `kqueue`'s `NOTE_TRACK`). What would do: a helper with the right entitlement, or a scoring that no survivor can reach. Nothing cheap.
+- Selection, from the 0.24.0 reviews, to be looked at with the hand passes (step 9): a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.
 
-**Item 6, the screen**
-- The light theme on a real terminal, with the watermark, looked at by a person.
+**Documented limits, by the 2026-10-29 rulings (not to be built before 1.0)**
+- Sandbox profiles: under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions. The sandbox stays off by default and is labelled a Linux filesystem-only second layer; `ryter doctor` says what it covers (step 6). Default-on and the network wait for an answer to the home folder.
+- Root: programs that run a text of their own are refused by name (`runs_a_text`), and a name on no list gets through (`pythonw`, a database client's shell escape). The guide says so. No allowlist per distribution before 1.0: every root command is already behind a card and the user's password. The listing programs' ancestor hole is closed in step 6.
+- Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule.
+- The budget is a request-boundary stop: the last call can pass it by its own cost. Said on `/budget` and in the guide (step 6); no strict mode.
+- Compaction keeps the user's words and the assistant's notes verbatim, so a long prose-only session reaches a floor and is told to start a new session (G13). Documented, not changed: an invented summary could drop a constraint.
 
-**Item 7, correctness and the guide**
-- Recorded wire fixtures per provider (tool calls, parallel calls, truncation), replayed in tests, and one live round trip per built-in provider run by hand before a release. Tool calling was once broken on two backends while every test passed.
-- The guide read against the release, screen by screen, before 1.0.
-
-**Item 2 and item 8, the gate and the lines**
-- Decide with the user what a sandbox profile is for. Under `workspace` or `read-only` the home folder is shut at the system level, so `cargo install` or a tool writing `~/.config/<name>` on first run fails; Landlock cannot grant a folder with exceptions.
-- Narrow the sandbox's grant on Ryter's own folder to this project's sessions.
-- Recorded live sessions replayed through the gate after each change to it, as was done for 0.14.0 and the fiscus run. The replay is a throwaway test each time; a kept `#[ignore]` test over a recorded `events.jsonl` would make it one command.
-- Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule for now.
-- Selection, from the 0.24.0 reviews, non-blocking: a scrolled message box copies the `↑`/`↓` mark in its corner; where the "new rows" mark meets the palette a press uses the mark's rect; a pulled selection whose start has scrolled off the screen, dragged onto the pinned question, ends a row or two short; a click on a card can open its panel on top of a card that opened between press and release; prose that wrapped is copied with the screen's line breaks.
-- As root, the programs that only list (`ls`, `find`, `du`, `stat`) are not held to the folder rule, so `sudo find / -name x` or `sudo ls -R /` prints the names, not the contents, of what is in root's folders when an ancestor is named. From the 0.23.0 approving review, non-blocking: refuse them a folder that holds one of root's own folders, which `holds_something_closed` nearly computes already.
-- As root, programs that run a text of their own are refused by name (`runs_a_text`), and a name on no list gets through (`pythonw`, a database client's shell escape). The guide says so. Decide with the user whether root should instead be offered only to programs on a list (package managers, `make`, the project's own), which ends the chase at the cost of a list per distribution.
-
-**Also open, not gating 1.0**
+**Also open, not gating 1.0** (the report's P2s among them)
+- Mixed-language projects: a root `Cargo.toml` returns the Rust verbs before `package.json` is looked at, so a Rust backend with a frontend gets half its commands (G11, from the 0.41.0 notes). Discover every ecosystem and show the scope on the approval card.
+- Routing: `is_openrouter` matches any base URL containing `openrouter.ai`; the `/models` picker cannot choose a `:floor`/`:nitro` id; `ryter connections` does not show routing; empty percentile tables and the project override edge cases (G14, from the 0.42.0 notes).
+- Retention: checkpoints under `refs/ryter/undo/` are never pruned and session deletion leaves them; no size or age view and no cleanup preview (G17). Opt-in, after item 9's promise is written.
+- Release evidence: the Intel macOS cross-build is not smoke-tested in the release job; no written drill for a signing-key rotation or a failed update (G19).
+- Scale: no kept baseline for startup, map, checkpoint, resume and memory on a large tree or a long history (G21). Generated fixtures, local and opt-in.
+- The bench measures the build hat on small and hard tasks, not the whole flow (G16): audit misses, repair success and interventions on real-project cases, and per-task artifacts published, when a paid run is wanted.
+- `agent.rs`, `tools/policy.rs` and `config.rs` carry most of the safety and state code (G22): extract the state transitions (provider apply, hat change, admission, persistence) one at a time behind the existing tests, no rewrite while gate items are open.
 - More search providers behind `[search]`, if asked for: Brave Search (a key), or the model provider's own search (OpenRouter's plugin, Anthropic's and OpenAI's tools), which the gate cannot see and would need checking against zero data retention. Tavily and SearXNG are in.
 - A light-theme contrast pass; the kitty keyboard protocol for Shift+Enter where the terminal supports it; `/theme` previewing a custom theme's full syntax palette.
-- Landlock default-on once it is boring; ABI V4 for `AccessNet` (the sandbox is filesystem-only today).
+- Landlock ABI V4 for `AccessNet` (the sandbox is filesystem-only today).
 - Headless `ryter -p --pretty` reusing the TUI's Markdown renderer.
-- `ryter-cli` tests; confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
+- Confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
 
 ## Later
 
@@ -64,6 +74,10 @@ After 1.0, by the user's decision then:
 
 - More specialists, if a need shows, and whether the builder may hand a task to a specialist (delegation, which sank the crew and is a design of its own). The scout exists since 2026-10-22 as a tool the looking hats call, not a hat; a scout for the build hat, read-only helpers beside its edits, is the next step if one is wanted.
 - A native Windows build. Decided against before 1.0 on 2026-10-28 (DECISIONS): Windows means WSL2, where the Linux binary and the installer already apply. The gate reads POSIX shell words and paths, so a native port is a second security boundary, with Windows' own path spellings (drive letters, backslashes, case folding, Git Bash's `/c/Users`) to close, and no Windows machine in this work to verify it on each release. Git for Windows' bash was not the obstacle: Ryter needs git anyway, and on Windows git ships bash. macOS first-class is under Next, item 3.
+- Run-until-done for an approved plan: the build hat continuing through the plan's steps across turns, stopping on an ask, a failing check, the budget or the end. Ruled after 1.0 on 2026-10-29: a new operating mode that changes the stop and ask semantics item 8 protects, and the real sessions show the user present during builds.
+- Root commands offered only to programs on a list (package managers, `make`, the project's own), if refusal by name keeps letting something through that matters. Ruled a documented limit for 1.0 on 2026-10-29.
+- The sandbox on by default, with the network, once the home-folder problem has an answer.
+- A strict budget that reserves the next call's worst cost, if anyone asks for it; the request-boundary stop is the 1.0 contract.
 - SQLite FTS over notes when DECISIONS.md outgrows a prompt.
 - Session search across transcripts from `/sessions`.
 
