@@ -2,6 +2,22 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-30 — What the 0.43.0 reviews found: a value is read only where nothing else can have set the name, and the audit's undo and watch cover what its rollback claimed
+
+Two reviews of a5f030f rejected it on five defects, all in work new to the release. A loop's values outlived whatever changed the name (`printf -v f`, `read f`); a quoted value with a space went in as one word, where the shell splits an unquoted `$f`; a list past 64 combinations was dropped, so padding a list turned an ask into a run; `/undo` after an audit's `/redo` took back the whole tree, the files the rollback had kept included; and an audit's MCP call was outside the watch, so what it wrote was taken for the user's.
+
+The cause under the first three is that an unread bare `$f` passes the gate, so losing a value is a loosening, not a safe fallback. Each fix follows from that.
+
+- **A value is read only where its head is the one part that can set the name** (`can_set`). This is a scan of the whole line, not a walk in order: a `read f` further down an enclosing `while` runs before the use on the next pass, which dropping in sequence misses. Reading `$f` and giving an option do not count; any other mention does, and an over-read costs the ask that 0.42.0 asked anyway. A variable is held to the same rule by parts that aren't sure to run at the top of the command, and `for_sure` now tracks depth, since only the first part of a body was led by a keyword.
+- **Spaces are judged both ways in `read`**, where plain variables get the same fix. The lexed word no longer says whether `$f` was quoted.
+- **One list is walked whole.** Only several lists multiplied past 64 can't be, and those are judged value by value and ask. It is a new ask, named in the guide.
+- **`/redo` records the tree right after the rollback as the turn's start.** That tree differs from the audit's by exactly the restored paths, so no saved format changed and `fixtures/persisted/0.43.0` stands.
+- **The watch takes in `use_tool`, and every call when hooks are set**, a hook being a command of its own. `request_hat` stays out: it closes the audit from inside the call, and would leave it marked as still in the call.
+
+Not changed: the bare-`$f` rule itself. Asking on it would catch `for f in $(cat list); do sed -i … $f; done`, and would also ask on every `for f in *.md; do cat $f; done`, which the lenient gate exists to pass. That is the user's call and wants a replay of its own. Out of reach: a name computed at run time and assigned in arithmetic. A second loop over the same name on one line now asks as it did in 0.42.0, as telling it apart from re-entry would need a real parse of the nesting.
+
+Replayed over the 1,573 commands in the user's sessions, old gate against new: no verdict changed.
+
 ### 2026-10-30 — OpenRouter's reasoning goes back within its tool loop, to the model that wrote it
 
 The OpenRouter capture showed `reasoning_details` on every reasoning chunk, signature included, and `chat_body` dropping them. A Claude model through OpenRouter thought on its first round and not after a tool result, where the direct connection keeps its thinking: told to say nothing of a sum it had worked out, the direct reply did not, and the OpenRouter one worked it out again in its answer. That is one comparison. OpenRouter's docs recommend the echo for tool calling and do not call it required, and the request was accepted without it.

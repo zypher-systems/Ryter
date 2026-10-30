@@ -2492,9 +2492,10 @@ impl Agent {
 
     /// The audit's tree, looked at before and after each of its calls that
     /// could change it (an edit, a command the gate does not pass as
-    /// read-only, one of the project's verbs). A change found before a
-    /// call was made while nothing of the audit's ran: the user's, in an
-    /// editor, to be left alone when the tree is put back.
+    /// read-only, one of the project's verbs, an MCP tool, and with hooks
+    /// set any call, a hook being a command of its own). A change found
+    /// before a call was made while nothing of the audit's ran: the
+    /// user's, in an editor, to be left alone when the tree is put back.
     fn audit_watch(&mut self, name: &str, after: bool) -> Result<()> {
         let Some(last) = self.audit_live.as_ref().and_then(|l| l.watched.clone()) else {
             return Ok(());
@@ -2502,8 +2503,10 @@ impl Agent {
         // By the tool's name, not the gate's decision: a command the gate
         // passes without asking (`printf > file` inside the project) still
         // changes the tree.
-        if !(matches!(name, "bash" | "write" | "search_replace" | "format")
-            || crate::tools::is_project_verb(name))
+        let hooked = self.ctx.hooks.as_ref().is_some_and(|h| !h.hooks.is_empty());
+        if !(matches!(name, "bash" | "write" | "search_replace" | "use_tool")
+            || crate::tools::is_project_verb(name)
+            || (hooked && name != "request_hat"))
         {
             return Ok(());
         }
@@ -2648,25 +2651,29 @@ impl Agent {
         }
         // What was put back can be brought back: `/redo` restores the
         // paths from the tree as the audit left it, until a build turn
-        // moves the files on and clears what `/redo` could do.
-        if let (Some(before), Some(after), false) = (&checkpoint, &after, restored.is_empty()) {
+        // moves the files on and clears what `/redo` could do. The tree
+        // right after the rollback differs from that one by those paths
+        // alone, so `/undo` after a `/redo` takes back those and nothing
+        // the rollback kept.
+        if let (Some(after), false) = (&after, restored.is_empty()) {
             let undone_name = format!("audit-undone-{}", &after[..after.len().min(12)]);
             let undone = self
                 .ctx
-                .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?
-                .unwrap_or_default();
-            self.session.push_redo(crate::session::Redo {
-                checkpoint: before.clone(),
-                record: crate::session::TurnRecord {
-                    after: Some(after.clone()),
+                .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?;
+            if let Some(undone) = undone {
+                self.session.push_redo(crate::session::Redo {
+                    checkpoint: undone.clone(),
+                    record: crate::session::TurnRecord {
+                        after: Some(after.clone()),
+                        ignored: Vec::new(),
+                    },
+                    files: after.clone(),
+                    undone,
+                    paths: restored.clone(),
                     ignored: Vec::new(),
-                },
-                files: after.clone(),
-                undone,
-                paths: restored.clone(),
-                ignored: Vec::new(),
-                audit: true,
-            })?;
+                    audit: true,
+                })?;
+            }
         }
         if let Some(before) = &checkpoint {
             if !restored.is_empty() || !kept.is_empty() {
@@ -3604,11 +3611,13 @@ impl Agent {
             .set_turn_record(&r.checkpoint, r.record.clone())?;
         self.session.set_turn_checkpoint(Some(r.checkpoint))?;
         self.emit(self.checkpoint_event())?;
-        let who = if r.audit { "audit" } else { "build turn" };
+        // A `/redo` of an `/undo` of one of these knows only that it was
+        // a turn.
+        let who = if r.audit { "the audit" } else { "that turn" };
         let mut put = r.paths;
         put.extend(r.ignored.into_iter().map(|f| f.path));
         Ok(format!(
-            "redone: {} as the {who} left {}.",
+            "redone: {} as {who} left {}.",
             list(&put),
             if put.len() == 1 { "it" } else { "them" }
         ))
@@ -9381,6 +9390,154 @@ mod tests {
                 && text.contains("2 files changed while no command of the audit's was running")
                 && text.contains("- `notes.txt`"),
             "{text}"
+        );
+    }
+
+    /// `/undo` after an audit's `/redo` takes back what `/redo` brought and
+    /// nothing else. The record held the whole tree from before the audit
+    /// to after it, so `/undo` put a file the rollback had kept back to
+    /// its older contents and deleted one the user had made, with no
+    /// clash, as neither had changed since. 0.43.0's reviews.
+    #[tokio::test]
+    async fn undo_after_an_audit_redo_leaves_what_the_rollback_kept() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.provider = Arc::new(
+            ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "printf y >> hello.txt"}),
+                ),
+                file_audit_call("fail"),
+                say("filed"),
+            ])
+            .between({
+                let d = d.clone();
+                move |i| {
+                    if i == 1 {
+                        std::fs::write(d.join("other.txt"), "edited by me\n").unwrap();
+                        std::fs::write(d.join("notes.txt"), "mine\n").unwrap();
+                    }
+                }
+            }),
+        );
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        std::fs::write(d.join("other.txt"), "theirs\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into(), "other.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        agent.turn("audit it").await.unwrap();
+        let read = |name: &str| std::fs::read_to_string(d.join(name)).unwrap();
+        let kept = |read: &dyn Fn(&str) -> String| {
+            assert_eq!(read("other.txt"), "edited by me\n");
+            assert_eq!(read("notes.txt"), "mine\n");
+        };
+        assert_eq!(read("hello.txt"), "hi\n");
+        kept(&read);
+        for who in ["the audit", "that turn"] {
+            assert_eq!(
+                agent.redo().unwrap(),
+                format!("redone: hello.txt as {who} left it.")
+            );
+            assert_eq!(read("hello.txt"), "hi\ny");
+            kept(&read);
+            let undone = agent.undo().unwrap();
+            assert!(
+                undone.starts_with("undone: put back 1 file (hello.txt)"),
+                "{undone}"
+            );
+            assert_eq!(read("hello.txt"), "hi\n");
+            kept(&read);
+        }
+    }
+
+    /// An audit's MCP tool that writes to the project is the audit's
+    /// change: its call was not watched, so the file was taken for an
+    /// edit of the user's and stayed changed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_an_audits_mcp_tool_wrote_goes_back() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        let reply = |id: u32, result: &str| {
+            format!("printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{result}}}'\n")
+        };
+        let script = format!(
+            "read _\n{}read _\nread _\n{}read _\nprintf 'from MCP\\n' > '{}'\n{}sleep 30\n",
+            reply(1, r#"{"protocolVersion":"2024-11-05","capabilities":{}}"#),
+            reply(
+                2,
+                r#"{"tools":[{"name":"edit","description":"edits","inputSchema":{"type":"object","properties":{}}}]}"#
+            ),
+            d.join("hello.txt").display(),
+            reply(3, r#"{"content":[{"type":"text","text":"done"}]}"#),
+        );
+        let server: crate::config::McpServerConfig = serde_json::from_value(serde_json::json!({
+            "command": "sh",
+            "args": ["-c", script],
+        }))
+        .unwrap();
+        let hub = crate::mcp::McpHub::connect(&[("fake".to_string(), server)].into()).unwrap();
+        agent.ctx.mcp = Some(Arc::new(std::sync::Mutex::new(hub)));
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![
+            call(
+                "use_tool",
+                serde_json::json!({"name": "fake__edit", "arguments": {}}),
+            ),
+            file_audit_call("pass"),
+            say("filed"),
+        ]));
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "hi\n",
+            "{evs:?}"
+        );
+        let [AgentEvent::Audited { restored, kept, .. }] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        assert_eq!(restored, &["hello.txt"]);
+        assert!(kept.is_empty(), "{kept:?}");
+    }
+
+    /// A hook is a command of the audit's too, on any tool: what one wrote
+    /// around a `read_file` was taken for the user's.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_a_hook_wrote_during_an_audit_goes_back() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.ctx.hooks = Some(Arc::new(crate::hooks::HookSet::from_config(&[
+            crate::config::HookConfig {
+                event: "PostToolUse".into(),
+                matcher: Some("read_file".into()),
+                command: Some(format!(
+                    "printf hooked > '{}'",
+                    d.join("hello.txt").display()
+                )),
+                url: None,
+            },
+        ])));
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![
+            call("read_file", serde_json::json!({"path": "hello.txt"})),
+            file_audit_call("pass"),
+            say("filed"),
+        ]));
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        agent.turn("audit it").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "hi\n"
         );
     }
 

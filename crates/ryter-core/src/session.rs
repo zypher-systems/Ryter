@@ -39,7 +39,9 @@ pub struct SavedFile {
 /// An undo, kept so `/redo` can reverse it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Redo {
-    /// The checkpoint the undo popped, and its record.
+    /// The checkpoint the undo popped, and its record. For an audit's
+    /// rollback, the tree right after it, so that a later `/undo` takes
+    /// back what the rollback put back and nothing it kept.
     pub checkpoint: String,
     /// Its record.
     pub record: TurnRecord,
