@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 /// The connections with a recorded capture, each kept by a live run: nothing
 /// here is written by hand.
-const RECORDED: &[&str] = &["anthropic"];
+const RECORDED: &[&str] = &["anthropic", "openrouter"];
 /// A check's verdict: why it failed, in words a live run can print.
 type Proven<T = ()> = std::result::Result<T, String>;
 
