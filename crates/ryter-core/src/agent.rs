@@ -2477,6 +2477,9 @@ impl Agent {
                 .sandboxed(|| crate::git::checkpoint_tree(&dir, sha))
                 .ok()
         });
+        if let (Some(_), Some(hooks)) = (&watched, &self.ctx.hooks) {
+            hooks.writes.start();
+        }
         AuditLive {
             checkpoint,
             from: self.session.transcript.len(),
@@ -2492,10 +2495,10 @@ impl Agent {
 
     /// The audit's tree, looked at before and after each of its calls that
     /// could change it (an edit, a command the gate does not pass as
-    /// read-only, one of the project's verbs, an MCP tool, and with hooks
-    /// set any call, a hook being a command of its own). A change found
+    /// read-only, one of the project's verbs, an MCP tool). A change found
     /// before a call was made while nothing of the audit's ran: the
     /// user's, in an editor, to be left alone when the tree is put back.
+    /// Hooks are watched where they run ([`crate::hooks::HookWrites`]).
     fn audit_watch(&mut self, name: &str, after: bool) -> Result<()> {
         let Some(last) = self.audit_live.as_ref().and_then(|l| l.watched.clone()) else {
             return Ok(());
@@ -2503,10 +2506,8 @@ impl Agent {
         // By the tool's name, not the gate's decision: a command the gate
         // passes without asking (`printf > file` inside the project) still
         // changes the tree.
-        let hooked = self.ctx.hooks.as_ref().is_some_and(|h| !h.hooks.is_empty());
         if !(matches!(name, "bash" | "write" | "search_replace" | "use_tool")
-            || crate::tools::is_project_verb(name)
-            || (hooked && name != "request_hat"))
+            || crate::tools::is_project_verb(name))
         {
             return Ok(());
         }
@@ -2535,15 +2536,17 @@ impl Agent {
     /// user approved during the turn: a run file, a plan), and less what
     /// the user changed meanwhile: `yours` from the watch, plus whatever
     /// moved after the audit's last call ended (`watched`, when that call
-    /// came back). A path both the audit and the user changed is the
-    /// user's: it stays as they left it, and the chat names the
-    /// checkpoint that holds the version before the audit.
+    /// came back), less what its hooks changed (`hooked`). A path both the
+    /// audit and the user changed is the user's: it stays as they left it,
+    /// and the chat names the checkpoint that holds the version before the
+    /// audit.
     fn audit_restore(
         &self,
         dir: &std::path::Path,
         before: &str,
         yours: &std::collections::BTreeSet<String>,
         watched: Option<&str>,
+        hooked: &std::collections::BTreeSet<String>,
     ) -> Result<AuditRollback> {
         let name = format!("audit-after-{}", &before[..before.len().min(12)]);
         let Some(after) = self.ctx.sandboxed(|| crate::git::checkpoint(dir, &name))? else {
@@ -2583,6 +2586,7 @@ impl Agent {
                 );
             }
         }
+        yours.retain(|p| !hooked.contains(p));
         let (kept, put_back): (Vec<String>, Vec<String>) =
             paths.into_iter().partition(|p| yours.contains(p));
         if !put_back.is_empty() {
@@ -2614,6 +2618,12 @@ impl Agent {
         } = live;
         let started = &started;
         let dir = self.ctx.workspace.clone();
+        let hooked = self
+            .ctx
+            .hooks
+            .as_ref()
+            .map(|h| h.writes.stop())
+            .unwrap_or_default();
         let mut restored: Vec<String> = Vec::new();
         let mut kept: Vec<String> = Vec::new();
         let mut after: Option<String> = None;
@@ -2622,7 +2632,7 @@ impl Agent {
             // ended under it): what moved since the watch last looked is
             // taken for the audit's, as everything was before the watch.
             let watched = if in_call { None } else { watched.as_deref() };
-            match self.audit_restore(&dir, before, &yours, watched) {
+            match self.audit_restore(&dir, before, &yours, watched, &hooked) {
                 Ok(done) => {
                     restored = done.put_back;
                     kept = done.kept;
@@ -9507,38 +9517,139 @@ mod tests {
         assert!(kept.is_empty(), "{kept:?}");
     }
 
-    /// A hook is a command of the audit's too, on any tool: what one wrote
-    /// around a `read_file` was taken for the user's.
+    /// A hook is a command of the audit's too, on any tool, and it is
+    /// watched where it runs. Around a whole call the watch would take in
+    /// a question to the user, and `request_hat` may or may not end the
+    /// audit from inside its call, so what one wrote around `read_file` or
+    /// around a `request_hat` that changed nothing was taken for the user's.
     #[cfg(unix)]
     #[tokio::test]
     async fn what_a_hook_wrote_during_an_audit_goes_back() {
         let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
         let d = cwd.path().to_path_buf();
-        agent.ctx.hooks = Some(Arc::new(crate::hooks::HookSet::from_config(&[
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        for (event, tool, args) in [
+            (
+                "PostToolUse",
+                "read_file",
+                serde_json::json!({"path": "hello.txt"}),
+            ),
+            (
+                "PreToolUse",
+                "read_file",
+                serde_json::json!({"path": "hello.txt"}),
+            ),
+            (
+                "PostToolUse",
+                "request_hat",
+                serde_json::json!({"hat": "audit"}),
+            ),
+            (
+                "PreToolUse",
+                "request_hat",
+                serde_json::json!({"hat": "audit"}),
+            ),
+        ] {
+            agent.ctx.hooks = Some(hook_writing(event, tool, &d));
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![
+                call(tool, args),
+                file_audit_call("pass"),
+                say("filed"),
+            ]));
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            agent.turn("audit it").await.unwrap();
+            assert_eq!(
+                std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+                "hi\n",
+                "{event} {tool}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn hook_writing(
+        event: &str,
+        tool: &str,
+        project: &std::path::Path,
+    ) -> Arc<crate::hooks::HookSet> {
+        Arc::new(crate::hooks::HookSet::from_config(&[
             crate::config::HookConfig {
-                event: "PostToolUse".into(),
-                matcher: Some("read_file".into()),
+                event: event.into(),
+                matcher: Some(tool.into()),
                 command: Some(format!(
                     "printf hooked > '{}'",
-                    d.join("hello.txt").display()
+                    project.join("hello.txt").display()
                 )),
                 url: None,
             },
-        ])));
-        agent.provider = Arc::new(ReplayProvider::scripted(vec![
-            call("read_file", serde_json::json!({"path": "hello.txt"})),
-            file_audit_call("pass"),
-            say("filed"),
-        ]));
-        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
-        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
-        agent.put_on(Role::Audit).unwrap();
-        agent.ctx.always_approve = true;
-        agent.turn("audit it").await.unwrap();
-        assert_eq!(
-            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
-            "hi\n"
-        );
+        ]))
+    }
+
+    /// With hooks set, the watch used to take in every call, and a card
+    /// that waits on the user is a call: what they edited while it stood
+    /// was put back as the audit's. The plan panel closes the audit from
+    /// inside its call, and that was the sharpest case.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_edit_made_while_a_card_stood_is_kept_with_hooks_set() {
+        for (tool, args) in [
+            (
+                "present_plan",
+                serde_json::json!({"title": "Fix", "plan": "Fix the greeting."}),
+            ),
+            ("ask_user", serde_json::json!({"question": "which?"})),
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+            agent.ctx.hooks = Some(hook_writing("PostToolUse", "no_such_tool", &d));
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![
+                call(tool, args),
+                say("done"),
+                say("done"),
+            ]));
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            let (io, rx) = crate::user_io::UserIo::pair();
+            agent.ctx.user_io = Some(io);
+            let answering = std::thread::spawn({
+                let d = d.clone();
+                move || {
+                    let mine = || std::fs::write(d.join("notes.txt"), "mine\n").unwrap();
+                    let mut carded = 0;
+                    while let Ok(req) = rx.recv() {
+                        match req {
+                            crate::user_io::UserRequest::Plan { reply, .. } => {
+                                mine();
+                                carded += 1;
+                                let _ = reply.send(crate::user_io::PlanAnswer::Approve);
+                            }
+                            crate::user_io::UserRequest::Question { reply, .. } => {
+                                mine();
+                                carded += 1;
+                                let _ = reply.send("that one".into());
+                            }
+                            crate::user_io::UserRequest::Permission { reply, .. } => {
+                                let _ = reply.send(crate::user_io::Permission::Allow);
+                            }
+                            _ => {}
+                        }
+                    }
+                    carded
+                }
+            });
+            agent.turn("audit it").await.unwrap();
+            agent.ctx.user_io = None;
+            assert_eq!(answering.join().unwrap(), 1, "{tool}");
+            assert_eq!(
+                std::fs::read_to_string(d.join("notes.txt")).unwrap(),
+                "mine\n",
+                "{tool}"
+            );
+        }
     }
 
     /// A file the audit changed and the user then changed too, while no

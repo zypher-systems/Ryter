@@ -2,21 +2,27 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
-### 2026-10-30 — What the 0.43.0 reviews found: a value is read only where nothing else can have set the name, and the audit's undo and watch cover what its rollback claimed
+### 2026-10-30 — What the 0.43.0 reviews found: doubt about a name adds to what is judged, and hooks are watched where they run
 
-Two reviews of a5f030f rejected it on five defects, all in work new to the release. A loop's values outlived whatever changed the name (`printf -v f`, `read f`); a quoted value with a space went in as one word, where the shell splits an unquoted `$f`; a list past 64 combinations was dropped, so padding a list turned an ask into a run; `/undo` after an audit's `/redo` took back the whole tree, the files the rollback had kept included; and an audit's MCP call was outside the watch, so what it wrote was taken for the user's.
+Two rounds of review on PR #107, seven defects in all, every one in work new to the release, and one of them in my own first fix.
 
-The cause under the first three is that an unread bare `$f` passes the gate, so losing a value is a loosening, not a safe fallback. Each fix follows from that.
+Round one rejected a5f030f on five. A loop's values outlived whatever changed the name (`printf -v f`, `read f`); a quoted value with a space went in as one word, where the shell splits an unquoted `$f`; a list past 64 combinations was dropped, so padding a list turned an ask into a run; `/undo` after an audit's `/redo` took back the whole tree, the files the rollback had kept included; and an audit's MCP call was outside the watch, so what it wrote was taken for the user's.
 
-- **A value is read only where its head is the one part that can set the name** (`can_set`). This is a scan of the whole line, not a walk in order: a `read f` further down an enclosing `while` runs before the use on the next pass, which dropping in sequence misses. Reading `$f` and giving an option do not count; any other mention does, and an over-read costs the ask that 0.42.0 asked anyway. A variable is held to the same rule by parts that aren't sure to run at the top of the command, and `for_sure` now tracks depth, since only the first part of a body was led by a keyword.
+Round two rejected the fix, rightly. An unread bare `$f` passes the gate, so losing a value loosens the verdict. I wrote that down and still answered every doubt by dropping the value: `echo f` took `sed -i … /etc/passwd` from a question to a run, with the value in plain sight, and an assignment at the top of a line was lost to a branch that never ran. Its watch was also wrong in shape: a hook-watched call spans a card waiting on the user, so what they edited there was put back.
+
+- **A name is known by one value only where plain parts sure to run set it, in order** (`vars`, as ever). Anywhere else, the gate can't say which value the shell holds when: a body runs after what follows it on the next pass. So `Held` keeps every value the line gives the name, each is judged and the strictest holds, and where the name may also hold something unread (`read f`, a sourced file, `$(…)`, a name not yet set at that point) the unread verdict is added. **Doubt only adds to what is judged.** That closes the shape, not the instances: reading too much into a part now costs a question at most, never a value. It also gave back precision the first fix lost: `A=index; if x; then A=y; fi; cat $A/id` passes, both values being in the project, and two loops over one name are the values of both.
+- **`can_set` looks for what sets a name**, not for the name. An ordinary argument changes nothing, so `echo f` costs nothing either.
+- **`met` keeps a value set under a branch from standing after it**, or on the other branch: the name may be unset there.
+- **`for_sure` tracks depth**, since only the first part of a body was led by a keyword.
 - **Spaces are judged both ways in `read`**, where plain variables get the same fix. The lexed word no longer says whether `$f` was quoted.
 - **One list is walked whole.** Only several lists multiplied past 64 can't be, and those are judged value by value and ask. It is a new ask, named in the guide.
+- **A `for` head naming a variable that rewrites the command is refused**, as `IFS=:` is.
 - **`/redo` records the tree right after the rollback as the turn's start.** That tree differs from the audit's by exactly the restored paths, so no saved format changed and `fixtures/persisted/0.43.0` stands.
-- **The watch takes in `use_tool`, and every call when hooks are set**, a hook being a command of its own. `request_hat` stays out: it closes the audit from inside the call, and would leave it marked as still in the call.
+- **The watch takes in `use_tool`, and hooks are watched where they run** (`HookWrites`), around the hook and not the tool. A tool-shaped watch needed exceptions by name, and each exception was wrong: `request_hat` may or may not end the audit, `present_plan` can, and `ask_user` waits on the user. Around the hook itself, none of that arises.
 
-Not changed: the bare-`$f` rule itself. Asking on it would catch `for f in $(cat list); do sed -i … $f; done`, and would also ask on every `for f in *.md; do cat $f; done`, which the lenient gate exists to pass. That is the user's call and wants a replay of its own. Out of reach: a name computed at run time and assigned in arithmetic. A second loop over the same name on one line now asks as it did in 0.42.0, as telling it apart from re-entry would need a real parse of the nesting.
+Not changed: the bare-`$f` rule itself. Asking on it would catch `for f in $(cat list); do sed -i … $f; done` and `B=$A; cat $B`, and would also ask on every `for f in *.md; do cat $f; done`, which the lenient gate exists to pass. That is the user's call and wants a replay of its own. Known and left: what is edited while a card is up on an audit's own `bash` reads as the audit's, as that wait is inside the tool, and a background command writing after its call returned reads as the user's. A name computed at run time and assigned in arithmetic is out of reach.
 
-Replayed over the 1,573 commands in the user's sessions, old gate against new: no verdict changed.
+Replayed over the 1,573 commands in the user's sessions, old gate against new, after each round: no verdict changed.
 
 ### 2026-10-30 — OpenRouter's reasoning goes back within its tool loop, to the model that wrote it
 
