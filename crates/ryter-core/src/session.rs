@@ -60,6 +60,9 @@ pub struct Redo {
 /// Session index row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meta {
+    /// What this was written as: see [`crate::schema`].
+    #[serde(default = "crate::schema::unmarked")]
+    pub schema: u32,
     /// Session id.
     pub id: SessionId,
     /// Working directory.
@@ -149,6 +152,9 @@ impl Meta {
 /// One priced model call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendRecord {
+    /// What this was written as: see [`crate::schema`].
+    #[serde(default = "crate::schema::unmarked")]
+    pub schema: u32,
     /// Unix millis.
     pub ts: String,
     /// Connection name.
@@ -212,6 +218,7 @@ impl Session {
         fs::create_dir_all(dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
         let now = now_stamp();
         let meta = Meta {
+            schema: crate::schema::SCHEMA,
             id: id.clone(),
             cwd: cwd.to_path_buf(),
             created_at: now.clone(),
@@ -255,6 +262,9 @@ impl Session {
         let text =
             fs::read_to_string(dir.join("meta.json")).map_err(|e| Error::Io(e.to_string()))?;
         let meta: Meta = serde_json::from_str(&text).map_err(|e| Error::Io(e.to_string()))?;
+        // Before anything below can write: saving a newer session's meta
+        // would drop what this Ryter does not know.
+        crate::schema::refuse_newer(meta.schema, dir.join("meta.json").display())?;
         let old_meta = serde_json::to_vec(&meta).map_err(|e| Error::Io(e.to_string()))?;
         // Inspect every log before changing any of them. Only a final,
         // unterminated EOF record is eligible for automatic recovery.
@@ -724,6 +734,7 @@ pub fn spend_record(
     total_usd: Option<f64>,
 ) -> SpendRecord {
     SpendRecord {
+        schema: crate::schema::SCHEMA,
         ts: now_stamp(),
         connection,
         model,

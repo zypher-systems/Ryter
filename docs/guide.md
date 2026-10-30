@@ -817,6 +817,24 @@ A session saved in crew mode, before it was removed, still opens: its conversati
 
 No SQLite. `ryter spend` uses the latest session for this directory.
 
+### What persists where
+
+| What | Where | Note |
+|---|---|---|
+| A session | `~/.ryter/sessions/<cwd-slug>/<id>/` | Above. Deleting a session removes this folder |
+| Recovery copies | `<log>.jsonl.recovery-<id>.bak`, beside the log | The whole log as it was, kept when resume repairs a torn final record. Yours to delete |
+| Project spend | `~/.ryter/projects/<project>.json` | A running total of the sessions' `spend.jsonl`, which stay the truth: a missing or wrong total is rebuilt from them |
+| Checkpoints | `refs/ryter/undo/` in the project's own Git repository | What `/undo`, `/redo` and the audit's rollback restore from. They are never pruned, and deleting a session leaves them |
+| Your settings | `~/.ryter/config.toml`, `settings.toml`, `routing.toml` | `/settings` and `/provider` write the last two, and never `config.toml` |
+| Keys | `~/.ryter/keys/` | Mode 0600 |
+| Approvals | `~/.ryter/run-approved.toml`, `trusted.json` | What you approved, by project |
+| The project's own | `.ryter/run.toml`, `plan.md`, `plans/`, `decisions.md`, `audit.md` | In the project, yours to commit or ignore |
+| Caches | `~/.ryter/cache/`, `prices.json` | Fetched again when they are gone |
+
+**What 1.0 writes, 1.x reads.** Sessions, the spend records, `config.toml`, `settings.toml`, `routing.toml`, `.ryter/run.toml` and `.ryter/plan.md` carry a schema number: `schema = 1`, `"schema": 1`, or a comment on the plan's last line. A file with no number reads as schema 1, so what you have from before the number works as it did. Ryter never adds the number to a `run.toml` you have: your approval is of the file's exact text, so it would ask you again. From 1.0 a change to these is an addition, and a renamed field reads both names, so every 1.x release reads what an earlier one wrote. The other files in `~/.ryter` carry no number.
+
+A file with a higher number than this Ryter knows stops it, says so, and is left as it was: saving a newer file with an older Ryter would drop what it can't read. `ryter update` works whatever these files say.
+
 ## Exit codes
 
 | Code | Meaning |

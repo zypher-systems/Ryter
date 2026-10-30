@@ -7173,7 +7173,7 @@ mod tests {
         assert!(name.ends_with("-say-what-this-is.md"), "{name}");
         assert_eq!(
             std::fs::read_to_string(&files[0]).unwrap(),
-            format!("# Say what this is\n\n{A_PLAN}\n")
+            format!("# Say what this is\n\n{A_PLAN}\n\n<!-- ryter plan, schema 1 -->\n")
         );
         let saved = format!("{}/{name}", crate::plan::DIR);
         assert_eq!(

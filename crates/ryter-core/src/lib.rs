@@ -38,6 +38,7 @@ pub mod role;
 pub mod rules;
 pub mod run;
 pub mod sandbox;
+pub mod schema;
 pub mod session;
 pub mod skill;
 pub mod spend;

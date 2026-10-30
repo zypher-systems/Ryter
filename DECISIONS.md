@@ -2,6 +2,24 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-30 — What 1.0 writes, 1.x reads: a mark, a refusal, and a release's own files kept in the tests
+
+Item 9 of the gate. `src/schema.rs` is the rule; `tests/persisted.rs` is what holds it.
+
+**A mark is only worth something with a refusal.** A number nobody reads proves nothing. A file marked higher than this Ryter knows stops it before anything writes, because the danger is not misreading: every struct here tolerates unknown fields, so an older Ryter would open a newer session cheerfully, reconcile it, and save `meta.json` back without what it did not know. `Session::open` refuses before its first write, a torn log it would have repaired included. `load_at` refuses a newer `settings.toml` and `routing.toml` because both are read leniently: a failed parse used to mean defaults, and the next save replaced the file. `ryter update` never loads config, so a refusal can't lock anyone out of the cure.
+
+**No mark means schema 1, and that is the whole migration.** Nothing rewrites a file to add one: `config.toml` is the user's, and `run.toml` above all, since its approval is a digest of its exact text, so stamping it would ask the user to approve what they already had. A new file carries the mark. `RunFile` has no field for it: it is a line of the file's text, so `RunFile`'s equality and everything built on it stay as they were.
+
+**`routing.toml` could not simply gain a key.** Its top-level keys are connection names, so `schema = 1` fails to parse as rules, and both readers took that as no rules at all. There were two readers: the kept fixture is what found the second, `apply_routing_file`, after the first was fixed. One `parse_routing` now serves both. A table named `schema` is a connection called that, and keeps its rules.
+
+**The plan's mark is a comment on its last line.** Markdown has no place for one, the first line is the plan's title, and the hats read the file as the plan that was approved. Nothing reads a plan by its shape, so nothing refuses one by this number: it says what wrote it and no more.
+
+**The fixture is written by the release, not by hand.** `tests/write_fixture.rs` uses only the public API and compiles against a tag, so `fixtures/persisted/0.42.0` is what 0.42.0's own code wrote, from a worktree at `v0.42.0`, and not this code's idea of it. `schema-1` is the first marked. A folder is added at each release and never rewritten.
+
+**A kept test that cannot be satisfied by accident.** Loading proves little: a dropped field defaults and loads fine. So each kept file is loaded, saved again, and every leaf it held must still be there with its value. That is what "additions only" means in a test: dropping a field fails, and a rename fails until it reads both names and is entered in `RENAMED`.
+
+**The other files carry no number.** `hats.toml`, `permissions.toml`, `hooks.toml`, `mcp.toml`, `trusted.json`, `reasoning.toml`, `review.toml` and `last.toml` are outside the ruling of 2026-10-29, which named its list. The guide says so.
+
 ### 2026-10-30 — Small truths: what the screens claimed, and the MCP limits a session never had
 
 Step 6 of the path to 1.0, taking the rulings of 2026-10-29 as settled: wording for the budget, documented limits for root and the sandbox.
