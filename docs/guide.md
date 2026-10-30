@@ -788,7 +788,9 @@ A project can keep **why** on disk, not only in a conversation:
 | `DECISIONS.md` | Decision records (chosen vs rejected, why, where). |
 | `notes/*.md` | Notes kept beside them. |
 
-When these files exist, the model **reads** them on every turn (capped), and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan, build and scribe hats may write these files; the audit hat may not.
+When these files exist, the model **reads** them on every turn, and is told to update them as work changes and to add a short entry to `DECISIONS.md` when it makes a non-obvious decision. When you ask why something is a certain way, it should quote `DECISIONS.md` and open the files it names. Ryter doesn't create them: a project that has none gets none until you or the model writes one. The plan, build and scribe hats may write these files; the audit hat may not.
+
+The prompt carries at most 48,000 bytes of them, shared out: a third each for the roadmap, the decisions and the notes, a file that needs less leaving the rest to the others. A roadmap that does not fit gives up its `## Done` section first, so Now, Next, Later and Blocked arrive whole; a note that does not fit is left out whole. What was cut is named at the end of the memory, so the model knows to `read` the file for the rest.
 
 ## Sessions
 
