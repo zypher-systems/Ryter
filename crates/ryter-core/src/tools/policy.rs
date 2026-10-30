@@ -2649,6 +2649,44 @@ fn after_sudo(seg: &str) -> Option<&str> {
     (!program.is_empty() && !program.starts_with('-') && program.chars().all(plain)).then_some(rest)
 }
 
+/// The folders [`roots_own`] holds whole.
+const ROOTS_FOLDERS: &[&str] = &["/root", "/etc/sudoers.d", "/etc/ssh", "/var/root"];
+
+/// `path` as a Linux path: macOS keeps `/etc` and `/var` under `/private`.
+fn without_private(path: &Path) -> PathBuf {
+    let path = normalize(path);
+    path.strip_prefix("/private")
+        .map_or(path.clone(), |p| Path::new("/").join(p))
+}
+
+/// `path` is above one of root's own folders (`/`, `/etc`, `/var`): a
+/// listing that goes down from here walks into them.
+fn holds_roots_own(path: &Path) -> bool {
+    let path = without_private(path);
+    path == Path::new("/")
+        || ROOTS_FOLDERS
+            .iter()
+            .any(|f| Path::new(f).starts_with(&path))
+}
+
+/// A listing that goes down the tree. One level of a folder names what is in
+/// that folder and a total names nothing, so `ls -la /etc` and `du -sh /var`
+/// stay questions; a build asks them.
+fn lists_down_the_tree(prog: &str, words: &[String]) -> bool {
+    let flag = |short: char, long: &str| {
+        words
+            .iter()
+            .skip(1)
+            .any(|w| w == long || (w.starts_with('-') && !w.starts_with("--") && w.contains(short)))
+    };
+    match prog {
+        "find" => true,
+        "ls" => flag('R', "--recursive"),
+        "du" => !flag('s', "--summarize"),
+        _ => false,
+    }
+}
+
 /// What only root can read, and nothing should print: other accounts'
 /// password hashes, who may become root, this machine's own keys, root's
 /// own folder.
@@ -2662,18 +2700,14 @@ fn roots_own(path: &Path) -> bool {
         "/etc/master.passwd",
         "/etc/security/opasswd",
     ];
-    const FOLDERS: &[&str] = &["/root", "/etc/sudoers.d", "/etc/ssh", "/var/root"];
-    // macOS keeps `/etc` and `/var` under `/private`.
-    let path = normalize(path);
-    let path = path
-        .strip_prefix("/private")
-        .map_or(path.clone(), |p| Path::new("/").join(p));
+    let path = without_private(path);
     // The disk itself, and the kernel's view of every process.
     let raw = ["/dev", "/proc", "/sys"]
         .iter()
         .any(|f| path.starts_with(f))
         && path != Path::new("/dev/null");
-    raw || FILES.iter().any(|f| path == Path::new(f)) || FOLDERS.iter().any(|f| path.starts_with(f))
+    raw || FILES.iter().any(|f| path == Path::new(f))
+        || ROOTS_FOLDERS.iter().any(|f| path.starts_with(f))
 }
 
 /// `path` is there and this account may not read it: a file, a pipe, a
@@ -3000,6 +3034,7 @@ fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
     }
     let removes = matches!(prog, "rm" | "rmdir");
     let walks = !LISTS_OR_REMOVES.contains(&prog);
+    let deep = lists_down_the_tree(prog, &words);
     let unread = |w: &String| {
         w.contains(['$', '`'])
             || w.contains(SUBST)
@@ -3012,6 +3047,7 @@ fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
                 let led = where_it_leads(&p);
                 roots_own(&p)
                     || roots_own(&led)
+                    || (deep && (holds_roots_own(&p) || holds_roots_own(&led)))
                     || (!removes
                         && (closed_to_this_account(&p)
                             || closed_to_this_account(&led)
@@ -3023,14 +3059,16 @@ fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
     if seen.iter().any(|w| unread(w) || closed(w)) {
         return Decision::Deny;
     }
-    if READS_WHERE_IT_STANDS.contains(&prog) {
-        let stands = match &ctx.cwd {
-            Cwd::At(at) => where_it_leads(at),
-            _ => real_path(&ctx.workspace),
-        };
-        if holds_something_closed(&stands) {
-            return Decision::Deny;
-        }
+    let stands = match &ctx.cwd {
+        Cwd::At(at) => where_it_leads(at),
+        _ => real_path(&ctx.workspace),
+    };
+    // `cd /etc && sudo ls -R` names no folder.
+    if deep && holds_roots_own(&stands) {
+        return Decision::Deny;
+    }
+    if READS_WHERE_IT_STANDS.contains(&prog) && holds_something_closed(&stands) {
+        return Decision::Deny;
     }
     match ctx.permissions.for_command(seg) {
         Some(crate::permissions::Answer::Deny) => Decision::Deny,
@@ -10016,6 +10054,40 @@ mod tests {
             assert_eq!(bash(cmd, Role::Build, d), want, "{cmd}");
         }
         std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    /// `sudo ls -R /etc/ssh` was refused and `sudo ls -R /etc` was a
+    /// question: going down from above root's folders prints what is in them.
+    #[test]
+    fn a_listing_from_above_roots_folders_is_refused() {
+        let dir = TempDir::new().unwrap();
+        for (cmd, want) in [
+            ("sudo ls -R /etc", Decision::Deny),
+            ("sudo ls -laR /etc", Decision::Deny),
+            ("sudo ls --recursive /etc", Decision::Deny),
+            ("sudo ls -R /", Decision::Deny),
+            ("sudo find / -name id_rsa", Decision::Deny),
+            ("sudo find /etc -type f", Decision::Deny),
+            ("sudo find /var -name x", Decision::Deny),
+            ("sudo du -a /etc", Decision::Deny),
+            ("sudo du /", Decision::Deny),
+            ("cd /etc && sudo ls -R", Decision::Deny),
+            ("cd /etc && sudo find . -name x", Decision::Deny),
+            ("cd / && sudo du -a", Decision::Deny),
+            // One level of a folder, and a total, print nothing from inside
+            // root's folders, and a build asks them.
+            ("sudo ls -la /etc", Decision::AskRoot),
+            ("sudo ls /", Decision::AskRoot),
+            ("sudo du -sh /var", Decision::AskRoot),
+            ("sudo du -sh /", Decision::AskRoot),
+            ("sudo stat /etc", Decision::AskRoot),
+            // Going down where root keeps nothing.
+            ("sudo ls -R /usr/share/doc", Decision::AskRoot),
+            ("sudo find /opt -name x", Decision::AskRoot),
+            ("sudo du -a /usr/lib", Decision::AskRoot),
+        ] {
+            assert_eq!(bash(cmd, Role::Build, dir.path()), want, "{cmd}");
+        }
     }
 
     /// A folder too large to look through is one the gate can't vouch for.

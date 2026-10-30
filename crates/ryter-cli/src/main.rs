@@ -1430,7 +1430,7 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
         "session {}  model {}  total {}",
         session.meta.id,
         session.meta.model,
-        format_usd(session.meta.spend_usd_total)
+        session.meta.spend_label()
     );
     if session.meta.spend_unknown {
         println!("(some calls are unpriced or incomplete; the total is a lower bound)");
@@ -1469,7 +1469,7 @@ fn sessions_cmd() -> ryter_core::Result<()> {
             s.meta.id,
             s.meta.mode.map_or(Role::Build, Role::hat),
             s.meta.model,
-            format_usd(s.meta.spend_usd_total),
+            s.meta.spend_label(),
             s.preview
         );
     }

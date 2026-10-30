@@ -38,14 +38,23 @@ impl ContextReport {
 
 /// Context window of a model Ryter knows; unknown is 200k.
 pub fn window_for(model: &str) -> u64 {
-    match model {
+    known_window(model).unwrap_or(ASSUMED_WINDOW)
+}
+
+/// The window taken for a model nothing says anything about.
+pub const ASSUMED_WINDOW: u64 = 200_000;
+
+/// Ryter's own row for `model`; `None` for an id it does not know by name.
+pub fn known_window(model: &str) -> Option<u64> {
+    Some(match model {
         "grok-4.7" | "grok-4.6" | "grok-4.6-latest" | "grok-4.5" | "grok-4.5-latest" => 500_000,
         "grok-4.3" | "grok-4.3-latest" => 1_000_000,
         m if m.starts_with("gpt-6") || m.starts_with("gpt-5.6") => 1_050_000,
         // Claude 4.6 and later; Haiku 4.5 and older keep 200k.
         m if crate::llm::claude_version(m).is_some_and(|v| v >= (4, 6)) => 1_000_000,
-        _ => 200_000,
-    }
+        m if crate::llm::claude_version(m).is_some() => 200_000,
+        _ => return None,
+    })
 }
 
 /// Compact token count (`0`, `12k`, `500k`, `1.2M`).
@@ -366,7 +375,9 @@ mod tests {
         assert_eq!(window_for("claude-haiku-4-5"), 200_000);
         assert_eq!(window_for("gpt-6.1-sol"), 1_050_000);
         assert_eq!(window_for("gpt-5.6-luna"), 1_050_000);
-        assert_eq!(window_for("mystery"), 200_000);
+        assert_eq!(window_for("mystery"), ASSUMED_WINDOW);
+        assert_eq!(known_window("mystery"), None);
+        assert_eq!(known_window("claude-haiku-4-5"), Some(200_000));
         assert_eq!(format_tokens(0), "0");
         assert_eq!(format_tokens(500_000), "500k");
         assert_eq!(format_context_used(0, 500_000), "0/500k");

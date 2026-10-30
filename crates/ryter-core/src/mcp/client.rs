@@ -6,10 +6,10 @@
 //! that never answered, and a notification shifted every later result by one.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use crate::cancel::Cancel;
 use crate::config::McpServerConfig;
 use crate::error::{Error, Result};
-use crate::mcp::rpc::{RpcRequest, RpcResponse};
+use crate::mcp::rpc::{Frame, RpcRequest, RpcResponse, read_frame};
 
 /// How long a server has to start and list its tools. `npx` fetching a
 /// package on first run takes a while.
@@ -27,6 +27,16 @@ const START_TIMEOUT: Duration = Duration::from_secs(60);
 pub const CALL_TIMEOUT_SECS: u64 = 120;
 /// How much of a server's stderr is kept, for when it exits.
 const STDERR_TAIL: usize = 2_000;
+/// Longest line read from a server. A tool can answer with a screenshot in
+/// base64, so this is far above any sane message and below what hurts.
+const MAX_LINE: usize = if cfg!(test) {
+    1024 * 1024
+} else {
+    32 * 1024 * 1024
+};
+/// Lines read from a server and not yet looked at. A server that floods its
+/// stdout between calls waits on its pipe instead of filling memory.
+const QUEUED_LINES: usize = 64;
 
 /// A tool discovered on a connected server.
 #[derive(Debug, Clone)]
@@ -58,7 +68,7 @@ pub struct LiveServer {
     name: String,
     child: Child,
     stdin: ChildStdin,
-    lines: Receiver<String>,
+    lines: Receiver<Frame>,
     stderr: Arc<Mutex<VecDeque<u8>>>,
     /// The server's stderr reached its end: the tail is all it said.
     stderr_done: Arc<AtomicBool>,
@@ -139,11 +149,12 @@ impl McpHub {
             .stdout
             .take()
             .ok_or_else(|| Error::Io("mcp stdout".into()))?;
-        let (tx, lines) = channel();
+        let (tx, lines) = sync_channel(QUEUED_LINES);
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if tx.send(line).is_err() {
+            let mut stdout = BufReader::new(stdout);
+            while let Ok(Some(frame)) = read_frame(&mut stdout, MAX_LINE) {
+                let over = frame == Frame::TooLong;
+                if tx.send(frame).is_err() || over {
                     break;
                 }
             }
@@ -378,7 +389,18 @@ impl LiveServer {
                 .lines
                 .recv_timeout(left.min(Duration::from_millis(100)))
             {
-                Ok(l) => l,
+                Ok(Frame::Line(l)) => l,
+                // Nothing after it can be read as a message, and the server
+                // is left writing to a pipe nobody reads.
+                Ok(Frame::TooLong) => {
+                    let _ = self.child.kill();
+                    return Err(Error::Mcp(format!(
+                        "MCP server {} sent a line over {} MiB, so it was stopped. \
+                         `/mcp` reconnects it.",
+                        self.name,
+                        MAX_LINE / (1024 * 1024),
+                    )));
+                }
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => return Err(self.gone()),
             };
@@ -592,6 +614,37 @@ mod tests {
         let err = call_tool(&server, &tool, json!({}), Some(&cancel)).unwrap_err();
         assert!(matches!(err, Error::Cancelled), "{err}");
         assert!(t.elapsed() < Duration::from_secs(3));
+    }
+
+    /// A server scripted in `sh` that answers `initialize` and `tools/list`,
+    /// then runs `then`.
+    fn scripted(then: &str) -> McpServerConfig {
+        let answer = |line: &str| format!("printf '%s\\n' '{line}'\n");
+        let script = format!("{}{}{then}\nsleep 30\n", answer(INIT), answer(LIST));
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = server(dir.path(), &[], None);
+        cfg.args[1] = script;
+        cfg
+    }
+
+    #[test]
+    fn a_line_past_the_ceiling_stops_the_server_and_says_so() {
+        let cfg = scripted("head -c 2000000 /dev/zero | tr '\\0' x");
+        let hub = McpHub::connect(&[("fake".to_string(), cfg)].into()).unwrap();
+        let err = use_tool(&hub, "fake__echo", json!({})).unwrap_err();
+        assert!(err.to_string().contains("a line over 1 MiB"), "{err}");
+    }
+
+    /// More lines than the queue holds, then the reply: the wait drains them.
+    #[test]
+    fn a_reply_comes_through_a_flood_of_stdout() {
+        let reply =
+            r#"{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"hello"}]}}"#;
+        let cfg = scripted(&format!(
+            "i=0; while [ $i -lt 2000 ]; do echo noise; i=$((i+1)); done; printf '%s\\n' '{reply}'"
+        ));
+        let hub = McpHub::connect(&[("fake".to_string(), cfg)].into()).unwrap();
+        assert_eq!(use_tool(&hub, "fake__echo", json!({})).unwrap(), "hello");
     }
 
     #[test]

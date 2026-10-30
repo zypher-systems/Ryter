@@ -1,7 +1,7 @@
 //! `/budget` — spend limits: where spend stands, and the caps that stop it.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ryter_core::format_usd;
+use ryter_core::{format_usd, format_usd_fine};
 
 use super::widgets::{self, Field, Form, Kind};
 use super::{Body, Outcome, Panel};
@@ -10,8 +10,8 @@ use crate::chat::wrap;
 use crate::theme::Theme;
 use crate::view::View;
 
-const ON: &str = "the turn stops when session spend reaches the cap, and says so. raise the cap \
-                  and say continue.";
+const ON: &str = "the turn stops at the first call after spend reaches the cap, and says so: the \
+                  last call can pass it by its own cost. raise the cap and say continue.";
 const OFF: &str = "nothing stops on cost. the spend card keeps count; watch it yourself.";
 
 /// Budget form with a live status header.
@@ -116,7 +116,7 @@ impl Budget {
                         &format!(
                             "{}%  {} of {} · {} left",
                             (frac * 100.0).round().min(999.0) as u32,
-                            format_usd(Some(spent)),
+                            format_usd_fine(spent),
                             format_usd(Some(view.budget_usd)),
                             format_usd(Some(left))
                         ),
@@ -356,6 +356,20 @@ mod tests {
     }
 
     /// Off keeps the amount, so switching back on restores it.
+    #[test]
+    fn the_cap_says_it_stops_a_call_not_a_bill() {
+        let mut v = view();
+        v.budget_usd = 5.0;
+        let p = Budget::new(&v);
+        let body = p.render(&v, 72, 17, Theme::truecolor_dark());
+        let text: String = body
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect();
+        assert!(text.contains("the last call can pass"), "{text}");
+    }
+
     #[test]
     fn switching_off_and_on_keeps_the_amount() {
         let mut v = view();

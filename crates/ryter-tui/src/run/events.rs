@@ -375,6 +375,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Context {
             tokens,
             window,
+            window_assumed,
             pct,
             messages,
             breakdown,
@@ -383,6 +384,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             view.ctx_pct = Some(*pct);
             view.ctx_tokens = Some(*tokens);
             view.ctx_window = Some(*window);
+            view.ctx_window_assumed = *window_assumed;
             view.ctx_messages = Some(*messages);
             view.ctx_breakdown = breakdown.clone();
         }

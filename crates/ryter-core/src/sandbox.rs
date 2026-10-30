@@ -225,6 +225,43 @@ thread_local! {
     static ACTIVE: std::cell::Cell<SandboxProfile> = const { std::cell::Cell::new(SandboxProfile::Off) };
 }
 
+/// What `profile` does and does not stand in front of, for `ryter doctor`:
+/// a line of what it covers, and a line of what it leaves, `None` when it
+/// covers nothing. `enforced` is whether this machine can hold it to that,
+/// `signals` whether its kernel also scopes signals.
+pub fn coverage(
+    profile: SandboxProfile,
+    enforced: bool,
+    signals: bool,
+) -> (String, Option<String>) {
+    let files = match profile {
+        SandboxProfile::Off => {
+            return (
+                "nothing: only the gate stands between a command and your files \
+                 (a profile is a second layer, in /settings)"
+                    .into(),
+                None,
+            );
+        }
+        _ if !enforced => return ("nothing: this system can't enforce a profile".into(), None),
+        SandboxProfile::Workspace => "files: the project is writable",
+        SandboxProfile::ReadOnly => "files: the project is read-only",
+    };
+    let signals = if signals {
+        "signals: only what it started"
+    } else {
+        "signals: not on this kernel (Linux 6.12 and later)"
+    };
+    (
+        format!("{files}, the home folder and keys are shut; {signals}"),
+        Some(
+            "the network; Docker, whose socket reaches the whole machine; outbound MCP \
+             servers, which run with their own permissions; rootless Podman can't run under it"
+                .into(),
+        ),
+    )
+}
+
 /// The profile [`apply`] put on this thread, `Off` when none. Landlock binds
 /// the thread and everything it starts, so a browser opened from here would
 /// run inside the sandbox.
@@ -655,6 +692,32 @@ fn existing(paths: &[&str]) -> Vec<std::path::PathBuf> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn coverage_says_what_a_profile_leaves() {
+        let (covers, leaves) = coverage(SandboxProfile::Off, true, true);
+        assert!(covers.starts_with("nothing"), "{covers}");
+        assert_eq!(leaves, None);
+
+        let (covers, leaves) = coverage(SandboxProfile::Workspace, false, false);
+        assert!(covers.starts_with("nothing"), "{covers}");
+        assert_eq!(
+            leaves, None,
+            "a profile that can't hold leaves nothing to list"
+        );
+
+        let (covers, leaves) = coverage(SandboxProfile::Workspace, true, true);
+        assert!(covers.contains("project is writable"), "{covers}");
+        assert!(covers.contains("only what it started"), "{covers}");
+        let leaves = leaves.unwrap();
+        for gap in ["network", "Docker", "MCP", "Podman"] {
+            assert!(leaves.contains(gap), "{leaves}");
+        }
+
+        let (covers, _) = coverage(SandboxProfile::ReadOnly, true, false);
+        assert!(covers.contains("read-only"), "{covers}");
+        assert!(covers.contains("not on this kernel"), "{covers}");
+    }
 
     /// A folder for a test that puts a profile on a thread, outside
     /// scratch space: `/tmp` is open under every profile, so what a test

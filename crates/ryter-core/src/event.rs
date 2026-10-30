@@ -295,6 +295,10 @@ pub enum AgentEvent {
         tokens: u64,
         /// Window used for the percentage.
         window: u64,
+        /// Nothing says what this model's window is: `window` is Ryter's
+        /// guess, not a fact.
+        #[serde(default)]
+        window_assumed: bool,
         /// 0–100.
         pct: u8,
         /// Transcript length.

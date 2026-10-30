@@ -11,7 +11,7 @@ use crate::event::AgentEvent;
 use crate::ids::SessionId;
 use crate::llm::Message;
 use crate::role::Role;
-use crate::spend::Usage;
+use crate::spend::{Usage, format_usd_fine};
 
 /// What a build turn left, for an undo of only its files.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -117,6 +117,18 @@ pub struct Meta {
 impl Meta {
     /// Whether `model`'s last call had no price. The single field is what
     /// sessions saved before the set hold.
+    /// What this session has cost, in the words the rail uses: `$?.??` when
+    /// nothing was priced, `≥` before a total that leaves calls out, and never
+    /// `$0.00` for a session that cost something or `$?.??` for one that
+    /// made no call.
+    pub fn spend_label(&self) -> String {
+        match (self.spend_usd_total, self.spend_unknown) {
+            (Some(usd), true) if usd > 0.0 => format!("≥{}", format_usd_fine(usd)),
+            (_, true) => "$?.??".into(),
+            (usd, false) => format_usd_fine(usd.unwrap_or(0.0)),
+        }
+    }
+
     pub fn is_unpriced(&self, model: &str) -> bool {
         self.unpriced_models.contains(model) || self.unpriced_model.as_deref() == Some(model)
     }
@@ -964,6 +976,28 @@ pub fn cwd_slug(cwd: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `/sessions` and `ryter sessions` say what the rail says.
+    #[test]
+    fn a_sessions_cost_reads_as_the_rail_reads_it() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut session = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        assert_eq!(session.meta.spend_label(), "$0", "no call, nothing unknown");
+        let row = |model: &str, usd| {
+            spend_record("c".into(), model.into(), Role::Build, Usage::default(), usd)
+        };
+        session.record_spend(row("free", None)).unwrap();
+        assert_eq!(session.meta.spend_label(), "$?.??", "nothing priced");
+        session.record_spend(row("m", Some(0.004))).unwrap();
+        assert_eq!(session.meta.spend_label(), "≥$0.004", "a lower bound");
+
+        let mut session = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        session.record_spend(row("m", Some(0.004))).unwrap();
+        assert_eq!(session.meta.spend_label(), "$0.004", "not $0.00");
+        session.record_spend(row("m", Some(1.5))).unwrap();
+        assert_eq!(session.meta.spend_label(), "$1.50");
+    }
     use tempfile::TempDir;
 
     #[cfg(unix)]

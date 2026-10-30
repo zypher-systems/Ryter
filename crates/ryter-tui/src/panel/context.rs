@@ -34,7 +34,8 @@ impl Panel for Context {
     }
 
     fn size(&self, view: &View) -> (u16, u16) {
-        (64, (8 + view.ctx_breakdown.len()).min(24) as u16)
+        let assumed = usize::from(view.ctx_window_assumed);
+        (64, (8 + assumed + view.ctx_breakdown.len()).min(24) as u16)
     }
 
     fn render(&self, view: &View, width: u16, _height: u16, theme: Theme) -> Body {
@@ -57,6 +58,19 @@ impl Panel for Context {
             theme,
             widgets::gauge_color(frac, theme),
         ));
+        if view.ctx_window_assumed {
+            lines.push(widgets::colored(
+                &wrap::truncate(
+                    &format!(
+                        "{} is assumed · [context_windows] in config.toml sets it",
+                        format_tokens(window)
+                    ),
+                    w.saturating_sub(2),
+                ),
+                theme.warn,
+                theme,
+            ));
+        }
         match view.ctx_messages {
             Some(n) => lines.push(widgets::note(&format!("{n} transcript messages"), theme)),
             None if !self.requested => lines.push(widgets::note("asking the agent…", theme)),
@@ -145,5 +159,28 @@ impl Panel for Context {
 
     fn box_clone(&self) -> Box<dyn Panel> {
         Box::new(self.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rendered(view: &View) -> String {
+        let body = Context::default().render(view, 64, 12, Theme::truecolor_dark());
+        body.lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect()
+    }
+
+    /// A gauge against a guess reads as exact unless it says it is one.
+    #[test]
+    fn an_assumed_window_is_called_assumed() {
+        let mut v = View::new("c".into(), "m".into(), "/tmp".into());
+        v.ctx_window = Some(200_000);
+        assert!(!rendered(&v).contains("assumed"));
+        v.ctx_window_assumed = true;
+        assert!(rendered(&v).contains("200k is assumed"), "{}", rendered(&v));
     }
 }

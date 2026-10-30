@@ -2,6 +2,22 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-30 — Small truths: what the screens claimed, and the MCP limits a session never had
+
+Step 6 of the path to 1.0, taking the rulings of 2026-10-29 as settled: wording for the budget, documented limits for root and the sandbox.
+
+**`/sessions` was wrong, not the way the roadmap said.** The note said an unpriced session printed `$0.00`. It printed `$?.??`, correctly. What was wrong was around it: a session with no calls printed `$?.??` (nothing was unknown), a part-priced one printed a plain figure (it is a lower bound), and one that cost $0.004 printed `$0.00`. All of it was `format_usd` reading a total that cannot tell "nothing" from "unknown". `Meta::spend_label` reads `spend_unknown` as well, in the rail's words, and both lists use it.
+
+**An assumed window has to survive being saved.** Saying a window is assumed looked like one flag at the fallback, but the screen saves what it shows to `last.toml`, it shows the guess until a list says otherwise, and `model_window` trusts `last.toml`. So the guess came back as a fact on the next launch. A remembered window equal to the guess, for a model with no row of its own, still counts as assumed; a real list saying exactly 200k reads as assumed in that one case, and the number is the same.
+
+**MCP lines are bounded by reading them bounded.** `BufRead::lines` holds a line until its newline, and a peer need never send one, so `read_frame` stops at the ceiling with the bytes past it still in the peer's hands. Past the ceiling the connection ends: nothing after an unfinished line can be trusted to start a message. 4 MiB from a client, which is a very long prompt and the most an unauthenticated peer can make Ryter hold; 32 MiB from a server, because a tool can answer with a screenshot in base64. Rejected: skipping to the next newline and carrying on, which keeps reading for a peer already misbehaving. A server past its ceiling is stopped, since it is left writing to a pipe nobody reads.
+
+**A finished session never closed its socket.** Not in the report: the reader thread holds a clone of the stream, so when `serve_session` returned the socket stayed open, the peer was never told, and a thread stayed parked on it. A refused token got `unauthorized` and an open connection. It would have made the connection cap count the dead for ever. The listeners now shut the stream down.
+
+**The cap is 32, and the deadline is for those who owe a token.** A peer on TCP has ten seconds to authenticate. A Unix socket has no such deadline: nothing is owed on it, and the socket is the user's own. An idle local client holds a slot until it leaves. A write timeout of 30 seconds keeps a peer that stopped reading from holding one.
+
+**As root, a listing is judged by where it goes.** `sudo ls -R /etc/ssh` was refused and `sudo ls -R /etc` was a question, though it prints the same names. Refusing every listing above root's folders would refuse `sudo ls -la /etc` and `sudo du -sh /var`, which print nothing from inside them and which a build asks. So the rule is for a listing that goes down the tree: `find` always, `ls -R`, `du` without `-s`. `sudo find /etc -maxdepth 1` is refused with the rest: reading `find`'s options for a depth would be a parser for a small gain, and the model has `ls`. `rm` is not a listing and stays a question.
+
 ### 2026-10-30 — A provider's reply is over when the provider says so, and each connection is proven on its own bytes
 
 The second gap analysis (G05) asked for dated captures per built-in connection and a live tool round trip, because listing models proves a key and nothing else. Built on `provider-proof-patch`; `docs/provider-proof.md` is the page.

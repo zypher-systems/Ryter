@@ -1,11 +1,63 @@
 //! Unix-socket and TCP listeners for inbound MCP.
 
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::io::Write;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+
+use serde_json::Value;
 
 use crate::error::{Error, Result};
+use crate::mcp::rpc::RpcResponse;
 use crate::mcp::server::{InboundHost, serve_session};
+
+/// Connections a listener serves at once. Each holds threads and its queue.
+const MAX_CONNECTIONS: usize = 32;
+/// How long a reply may wait on a peer that has stopped reading.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A connection counted against a listener's cap until it ends.
+struct Slot(Arc<AtomicUsize>);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Serve each connection on a thread of its own, `most` at a time. One past
+/// that is told so and closed.
+fn accept<S>(
+    incoming: impl Iterator<Item = std::io::Result<S>>,
+    most: usize,
+    serve: impl Fn(S) + Send + Clone + 'static,
+) where
+    S: Write + Send + 'static,
+{
+    let open = Arc::new(AtomicUsize::new(0));
+    for stream in incoming {
+        let Ok(mut stream) = stream else {
+            continue;
+        };
+        let taken = open.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            (n < most).then_some(n + 1)
+        });
+        if taken.is_err() {
+            let why = format!("busy; {most} connections are open");
+            let line = RpcResponse::err(Value::Null, -32000, why).to_line();
+            let _ = stream.write_all(line.as_bytes());
+            continue;
+        }
+        let slot = Slot(open.clone());
+        let serve = serve.clone();
+        std::thread::spawn(move || {
+            let _slot = slot;
+            serve(stream);
+        });
+    }
+}
 
 /// Default attach socket (`~/.ryter/ryter.sock`).
 pub fn default_socket_path(home: &Path) -> PathBuf {
@@ -54,19 +106,21 @@ pub fn bind_unix(path: &Path) -> Result<std::os::unix::net::UnixListener> {
 pub fn serve_unix(path: &Path, host: Arc<dyn InboundHost>) -> Result<()> {
     let listener = bind_unix(path)?;
     eprintln!("ryter serve {}", path.display());
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else {
-            continue;
-        };
-        let host = host.clone();
-        std::thread::spawn(move || {
-            let Ok(clone) = stream.try_clone() else {
-                return;
-            };
-            let _ = serve_session(clone, stream, host.as_ref(), &[]);
-        });
-    }
+    accept(listener.incoming(), MAX_CONNECTIONS, move |stream| {
+        handle_unix(stream, &host);
+    });
     Ok(())
+}
+
+#[cfg(unix)]
+fn handle_unix(stream: std::os::unix::net::UnixStream, host: &Arc<dyn InboundHost>) {
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
+    let Ok(clone) = stream.try_clone() else {
+        return;
+    };
+    let _ = serve_session(clone, &stream, host.as_ref(), &[]);
+    // The reader holds its own handle; only this ends its read.
+    let _ = stream.shutdown(Shutdown::Both);
 }
 
 /// TCP bind checks: token required; unspecified address needs `i_mean_it`.
@@ -89,24 +143,21 @@ pub fn serve_tcp(addr: SocketAddr, host: Arc<dyn InboundHost>, tokens: Vec<Strin
     let listener = TcpListener::bind(addr).map_err(|e| Error::Io(e.to_string()))?;
     let bound = listener.local_addr().unwrap_or(addr);
     eprintln!("ryter serve {bound}");
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else {
-            continue;
-        };
-        let host = host.clone();
-        let tokens = tokens.clone();
-        std::thread::spawn(move || {
-            handle_tcp(stream, host, tokens);
-        });
-    }
+    accept(listener.incoming(), MAX_CONNECTIONS, move |stream| {
+        handle_tcp(stream, host.clone(), tokens.clone());
+    });
     Ok(())
 }
 
 fn handle_tcp(stream: TcpStream, host: Arc<dyn InboundHost>, tokens: Vec<String>) {
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let Ok(clone) = stream.try_clone() else {
         return;
     };
-    let _ = serve_session(clone, stream, host.as_ref(), &tokens);
+    let _ = serve_session(clone, &stream, host.as_ref(), &tokens);
+    // The reader holds its own handle: without this the peer is never told,
+    // and a refused connection stayed open with a thread parked on it.
+    let _ = stream.shutdown(Shutdown::Both);
 }
 
 #[cfg(test)]
@@ -242,5 +293,99 @@ mod tests {
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
         assert!(line.contains("unauthorized"), "{line}");
+    }
+
+    /// Read to the end of the stream: the error a session ended on, and
+    /// that it did end.
+    fn last_error(stream: &TcpStream) -> String {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut said = String::new();
+        BufReader::new(stream).read_line(&mut said).unwrap();
+        let mut rest = String::new();
+        assert_eq!(
+            BufReader::new(stream).read_line(&mut rest).unwrap(),
+            0,
+            "the connection stayed open"
+        );
+        let reply: RpcResponse = serde_json::from_str(&said).unwrap();
+        reply.error.unwrap().message
+    }
+
+    fn tcp_session(tokens: &[&str]) -> TcpStream {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let tokens: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+        std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                handle_tcp(stream, Arc::new(EchoHost::default()), tokens);
+            }
+        });
+        client
+    }
+
+    #[test]
+    fn a_line_past_the_ceiling_ends_the_session_before_authentication() {
+        let mut client = tcp_session(&["secret"]);
+        let line = vec![b'x'; crate::mcp::server::MAX_LINE + 1];
+        client.write_all(&line).unwrap();
+        assert_eq!(last_error(&client), "a line over 4 MiB");
+    }
+
+    #[test]
+    fn a_peer_that_never_proves_itself_is_closed() {
+        let client = tcp_session(&["secret"]);
+        assert_eq!(last_error(&client), "no valid initialize in time");
+    }
+
+    /// `unauthorized` was sent and the socket left open.
+    #[test]
+    fn a_refused_token_closes_the_connection() {
+        let mut client = tcp_session(&["secret"]);
+        client
+            .write_all(rpc_line("initialize", 1, json!({"token": "wrong"})).as_bytes())
+            .unwrap();
+        assert_eq!(last_error(&client), "unauthorized");
+    }
+
+    #[test]
+    fn a_listener_serves_its_cap_and_turns_away_the_next() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            accept(listener.incoming(), 2, |stream| {
+                handle_tcp(stream, Arc::new(EchoHost::default()), Vec::new());
+            });
+        });
+        let ping = |client: &mut TcpStream| {
+            client
+                .write_all(rpc_line("ping", 1, json!({})).as_bytes())
+                .unwrap();
+            let mut said = String::new();
+            BufReader::new(&*client).read_line(&mut said).unwrap();
+            assert!(said.contains("\"result\""), "{said}");
+        };
+        let mut first = TcpStream::connect(addr).unwrap();
+        ping(&mut first);
+        let mut second = TcpStream::connect(addr).unwrap();
+        ping(&mut second);
+        let turned_away = TcpStream::connect(addr).unwrap();
+        assert_eq!(last_error(&turned_away), "busy; 2 connections are open");
+        // One that leaves gives its place back.
+        drop(first);
+        let served = (0..100).any(|_| {
+            std::thread::sleep(Duration::from_millis(20));
+            let client = TcpStream::connect(addr).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_millis(200)))
+                .unwrap();
+            let mut client = client;
+            let _ = client.write_all(rpc_line("ping", 1, json!({})).as_bytes());
+            let mut said = String::new();
+            BufReader::new(&client).read_line(&mut said).is_ok() && said.contains("\"result\"")
+        });
+        assert!(served, "the slot was never given back");
+        drop(second);
     }
 }

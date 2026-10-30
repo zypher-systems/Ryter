@@ -1,12 +1,12 @@
 //! Inbound MCP server: Ryter as a tool other agents can call. Echo server for tests.
 
-use std::io::{BufRead, Write};
+use std::io::Write;
 
 use serde_json::{Value, json};
 
 use crate::VERSION;
 use crate::error::{Error, Result};
-use crate::mcp::rpc::{RpcRequest, RpcResponse};
+use crate::mcp::rpc::{Frame, RpcRequest, RpcResponse, read_frame};
 
 /// Snapshot for `ryter_status`.
 #[derive(Debug, Clone, Default)]
@@ -276,6 +276,20 @@ fn token_eq(a: &str, b: &str) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+/// Longest line a session reads from a client. Prompts are text; this is
+/// room for a very long one, and the limit on what an unauthenticated peer can
+/// make Ryter hold.
+pub const MAX_LINE: usize = 4 * 1024 * 1024;
+/// Lines read and not yet handled, so a session holds at most
+/// `QUEUED_LINES * MAX_LINE` bytes of them.
+const QUEUED_LINES: usize = 16;
+/// How long a connection that needs a token has to present one.
+const AUTH_DEADLINE: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_millis(250)
+} else {
+    std::time::Duration::from_secs(10)
+};
+
 /// One JSON-RPC line session. Blocking host requests run on bounded workers;
 /// cancellation and authentication stay on the connection thread. Hosts must
 /// cooperate with cancellation and reject overlapping turns across connections.
@@ -290,23 +304,20 @@ where
     W: Write,
 {
     use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     const MAX_PENDING: usize = 8;
-    let (line_tx, line_rx) = mpsc::sync_channel::<String>(64);
+    let (line_tx, line_rx) = mpsc::sync_channel::<Frame>(QUEUED_LINES);
     std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(reader);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    if line_tx.send(l).is_err() {
-                        break;
-                    }
-                }
-                Err(_) => break,
+        let mut reader = std::io::BufReader::new(reader);
+        while let Ok(Some(frame)) = read_frame(&mut reader, MAX_LINE) {
+            let over = frame == Frame::TooLong;
+            if line_tx.send(frame).is_err() || over {
+                break;
             }
         }
     });
+    let opened = Instant::now();
     let send = |writer: &mut W, resp: RpcResponse| -> Result<()> {
         writer
             .write_all(resp.to_line().as_bytes())
@@ -353,8 +364,22 @@ where
                     std::thread::sleep(Duration::from_millis(20));
                     continue;
                 }
+                // A peer that must prove itself has a moment to do it, not
+                // a slot for as long as it likes.
+                if !authed && opened.elapsed() >= AUTH_DEADLINE {
+                    send(
+                        &mut writer,
+                        RpcResponse::err(Value::Null, -32001, "no valid initialize in time"),
+                    )?;
+                    return Err(Error::Config("unauthorized".into()));
+                }
                 let line = match line_rx.recv_timeout(Duration::from_millis(20)) {
-                    Ok(line) => line,
+                    Ok(Frame::Line(line)) => line,
+                    Ok(Frame::TooLong) => {
+                        let why = format!("a line over {} MiB", MAX_LINE / (1024 * 1024));
+                        send(&mut writer, RpcResponse::err(Value::Null, -32600, &why))?;
+                        return Err(Error::Mcp(why));
+                    }
                     Err(RecvTimeoutError::Timeout) => continue,
                     Err(RecvTimeoutError::Disconnected) => {
                         closed = true;
@@ -483,6 +508,7 @@ pub fn serve_echo() -> Result<()> {
 mod tests {
     use super::*;
     use crate::mcp::rpc::RpcRequest;
+    use std::io::BufRead;
 
     #[test]
     fn transcript_resource_returns_conversation_content() {

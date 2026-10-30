@@ -3812,32 +3812,47 @@ impl Agent {
     /// Resolve limits for the same route used to send the request. A base
     /// route override must never leak onto another hat's smaller model.
     fn model_window(&self, model: &str, connection: &str) -> u64 {
+        self.stated_window(model, connection).0
+    }
+
+    /// [`Self::model_window`], and whether anything said so: `false` is the
+    /// guess for a model nothing knows.
+    fn stated_window(&self, model: &str, connection: &str) -> (u64, bool) {
         if let Some(window) = self
             .cfg
             .as_ref()
             .and_then(|c| c.context_windows.get(model))
             .filter(|v| **v > 0)
         {
-            return *window;
+            return (*window, true);
         }
         if model == self.model && connection == self.connection && self.context_window > 0 {
-            return self.context_window;
+            return (self.context_window, true);
         }
         if let Some(window) = crate::llm::model_cache::load(&self.home, connection)
             .and_then(|(models, _)| models.into_iter().find(|m| m.id == model))
             .and_then(|m| m.context_length)
             .filter(|v| *v > 0)
         {
-            return window;
+            return (window, true);
         }
+        let known = crate::compact::known_window(model);
         if let Some(window) = crate::config::load_last_route(&self.home)
             .filter(|r| r.model == model && r.connection == connection)
             .and_then(|r| r.context_length)
             .filter(|v| *v > 0)
         {
-            return window;
+            // The screen saves what it shows, and it shows the guess until a
+            // list says otherwise: a remembered 200k may be the guess again.
+            return (
+                window,
+                window != crate::compact::ASSUMED_WINDOW || known.is_some(),
+            );
         }
-        crate::compact::window_for(model)
+        match known {
+            Some(window) => (window, true),
+            None => (crate::compact::ASSUMED_WINDOW, false),
+        }
     }
 
     fn output_allowance(window: u64) -> u32 {
@@ -3891,9 +3906,12 @@ impl Agent {
         if r.from_provider {
             breakdown.insert(0, ("provider input".into(), r.tokens));
         }
+        let (_, model, connection) = self.hat_stack();
+        let (_, stated) = self.stated_window(&model, &connection);
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
+            window_assumed: !stated,
             pct: r.pct,
             messages: r.messages,
             breakdown,
@@ -4830,6 +4848,30 @@ mod tests {
             last_check: None,
             session_turns: 0,
         }
+    }
+
+    /// `/context` says when its window is a guess. A remembered route can
+    /// hold that same guess, saved by the screen that was showing it.
+    #[test]
+    fn a_window_nothing_states_is_said_to_be_assumed() {
+        let (home, _cwd, mut agent) = setup(ReplayProvider::new(vec![]));
+        let stated = |agent: &Agent, model: &str| agent.stated_window(model, "local");
+        assert_eq!(stated(&agent, "mystery"), (200_000, false));
+        assert_eq!(stated(&agent, "grok-4.6"), (500_000, true));
+
+        let route = |context_length| crate::config::LastRoute {
+            context_length,
+            ..crate::config::LastRoute::new("local", "mystery")
+        };
+        crate::config::save_last_route(home.path(), &route(Some(200_000))).unwrap();
+        assert_eq!(stated(&agent, "mystery"), (200_000, false));
+        crate::config::save_last_route(home.path(), &route(Some(8_192))).unwrap();
+        assert_eq!(stated(&agent, "mystery"), (8_192, true));
+
+        let mut cfg = crate::Config::default();
+        cfg.context_windows.insert("mystery".into(), 200_000);
+        agent.cfg = Some(cfg);
+        assert_eq!(stated(&agent, "mystery"), (200_000, true));
     }
 
     #[tokio::test]
