@@ -2215,6 +2215,12 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     // Variables set to a plain value by a part of the command that is sure
     // to have run: read where they are used later.
     let mut vars: Vec<(String, String)> = ctx.vars.clone();
+    // `for NAME in v1 v2 …`: the values the command itself lists. A part
+    // that names `$NAME` is judged once per value, as the shell will run
+    // it, and the strictest verdict holds. A value only the shell can
+    // read (a pattern, a variable, a substitution) leaves the name
+    // unknown, as `for f; do` (the arguments) does.
+    let mut loops: Vec<(String, Vec<String>)> = Vec::new();
     let mut doubt: Vec<Cwd> = Vec::new();
     // Where the last `cd` of this command left: `cd -` goes back there.
     let mut prev: Vec<Cwd> = Vec::new();
@@ -2247,6 +2253,38 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
         }
         let mut moved: Vec<Cwd> = Vec::new();
         let mut sure = true;
+        // The loop variables this part names, each bound to every value
+        // its loop listed: one judgement per combination, as the shell
+        // runs the part. Past 64 combinations the names stay unknown.
+        // The part is judged first with the names unread; a verdict of
+        // Allow then stands, since the gate found nothing to ask about
+        // whatever the names hold (`echo "$p"`). Otherwise the strictest
+        // verdict over the values holds (`sed -i … $f` with `f` in
+        // `index /etc/hosts`).
+        let mut bindings: Vec<Vec<(String, String)>> = Vec::new();
+        for (name, values) in loops.iter().filter(|(n, _)| names_var(&s.text, n)) {
+            let base: Vec<Vec<(String, String)>> = if bindings.is_empty() {
+                vec![Vec::new()]
+            } else {
+                bindings
+            };
+            bindings = base
+                .iter()
+                .flat_map(|b| {
+                    values.iter().map(move |v| {
+                        let mut b = b.clone();
+                        b.push((name.clone(), v.clone()));
+                        b
+                    })
+                })
+                .collect();
+            if bindings.len() > 64 {
+                bindings = Vec::new();
+                break;
+            }
+        }
+        let mut tries: Vec<Vec<(String, String)>> = vec![Vec::new()];
+        tries.extend(bindings);
         for at in &places {
             // `$PWD` is where the shell is, when the gate knows; `$HOME`
             // is the user's folder.
@@ -2262,66 +2300,85 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 Cwd::At(p) => here.push(("PWD".into(), p.to_string_lossy().into_owned())),
                 Cwd::Unknown => {}
             }
-            let cx = ToolContext {
-                live: None,
-                cwd: at.clone(),
-                vars: here,
-                created: [ctx.created.as_slice(), made.as_slice()].concat(),
-                kept: [ctx.kept.as_slice(), kept.as_slice()].concat(),
-                sessions: [ctx.sessions.as_slice(), sessions.as_slice()].concat(),
-                ..ctx.clone()
-            };
-            let judged = match after_sudo(&s.text) {
-                Some(rest) if !s.inside => decide_as_root(&s.text, rest, &cx),
-                _ => decide_segment(&s.text, &cx),
-            };
-            let runs = !s.inside
-                && !led_by_keyword(&s.text)
-                && match s.before {
-                    Sep::Then | Sep::Pipe | Sep::Background => true,
-                    Sep::And => !any_or,
-                    Sep::Or => false,
+            let mut unbound = Decision::Allow;
+            let mut over_values = Decision::Allow;
+            for (i, bound) in tries.iter().enumerate() {
+                let mut here = here.clone();
+                here.extend(bound.iter().cloned());
+                let cx = ToolContext {
+                    live: None,
+                    cwd: at.clone(),
+                    vars: here,
+                    created: [ctx.created.as_slice(), made.as_slice()].concat(),
+                    kept: [ctx.kept.as_slice(), kept.as_slice()].concat(),
+                    sessions: [ctx.sessions.as_slice(), sessions.as_slice()].concat(),
+                    ..ctx.clone()
                 };
-            let fx = segment_makes(&s.text, &cx);
-            if runs {
-                for p in fx.made {
-                    if !made.contains(&p) {
-                        made.push(p);
+                let judged = match after_sudo(&s.text) {
+                    Some(rest) if !s.inside => decide_as_root(&s.text, rest, &cx),
+                    _ => decide_segment(&s.text, &cx),
+                };
+                let runs = !s.inside
+                    && !led_by_keyword(&s.text)
+                    && match s.before {
+                        Sep::Then | Sep::Pipe | Sep::Background => true,
+                        Sep::And => !any_or,
+                        Sep::Or => false,
+                    };
+                let fx = segment_makes(&s.text, &cx);
+                if runs {
+                    for p in fx.made {
+                        if !made.contains(&p) {
+                            made.push(p);
+                        }
+                    }
+                    for name in fx.sessions {
+                        if !sessions.contains(&name) {
+                            sessions.push(name);
+                        }
                     }
                 }
-                for name in fx.sessions {
-                    if !sessions.contains(&name) {
-                        sessions.push(name);
+                for p in fx.kept {
+                    if !kept.contains(&p) {
+                        kept.push(p);
                     }
                 }
-            }
-            for p in fx.kept {
-                if !kept.contains(&p) {
-                    kept.push(p);
+                if i == 0 {
+                    unbound = judged;
+                } else {
+                    over_values = over_values.and(judged);
+                }
+                if goes_back(&s.text, &cx) {
+                    // Back to where the last `cd` of this command left.
+                    // With none, the shell has no old folder (Ryter
+                    // starts it without one) and stays put.
+                    if prev.is_empty() {
+                        add(&mut moved, &[at.clone()]);
+                    } else {
+                        add(&mut moved, &prev);
+                    }
+                } else if let Some((to, there)) = moves_to(&s.text, &cx) {
+                    sure &= there;
+                    add(&mut moved, &[to]);
                 }
             }
+            // With the values listed, the part judged with each is what
+            // the shell runs: the strictest of those verdicts holds, and
+            // the verdict with the name unread is kept for its effects.
+            let verdict = if tries.len() == 1 {
+                unbound
+            } else {
+                over_values
+            };
             if asks.is_none()
                 && matches!(
-                    judged,
+                    verdict,
                     Decision::Ask | Decision::AskSecret | Decision::AskOutside | Decision::AskRoot
                 )
             {
                 asks = Some(s.text.clone());
             }
-            decision = decision.and(judged);
-            if goes_back(&s.text, &cx) {
-                // Back to where the last `cd` of this command left. With
-                // none, the shell has no old folder (Ryter starts it
-                // without one) and stays put.
-                if prev.is_empty() {
-                    add(&mut moved, &[at.clone()]);
-                } else {
-                    add(&mut moved, &prev);
-                }
-            } else if let Some((to, there)) = moves_to(&s.text, &cx) {
-                sure &= there;
-                add(&mut moved, &[to]);
-            }
+            decision = decision.and(verdict);
         }
         if decision == Decision::Deny {
             return Judged::deny();
@@ -2409,6 +2466,16 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                         | "."
                 )
             ) {
+                // A loop head that lists its values binds the name to
+                // them for the parts that follow; one that does not
+                // leaves the name unknown, an earlier loop's values
+                // included.
+                if let Some((name, values)) = loop_head(&said) {
+                    loops.retain(|(n, _)| *n != name);
+                    if let Some(values) = values {
+                        loops.push((name, values));
+                    }
+                }
                 vars.retain(|(n, _)| {
                     !said.iter().any(|w| {
                         w.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
@@ -5643,6 +5710,49 @@ fn words(seg: &str) -> Vec<String> {
     lex(seg).iter().map(|w| expand::plain(w)).collect()
 }
 
+/// `for NAME in v1 v2 …` (or `select`): the name, and the values when
+/// every one is text the shell hands over as written. A value the shell
+/// reads itself (a variable, a substitution, a pattern, a brace list, a
+/// tilde), `for f; do` (the arguments) and `for ((…))` give no values.
+/// `None` for words that are not a loop head.
+fn loop_head(said: &[String]) -> Option<(String, Option<Vec<String>>)> {
+    if !matches!(said.first().map(String::as_str), Some("for" | "select")) {
+        return None;
+    }
+    let name = said.get(1)?;
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    if said.get(2).map(String::as_str) != Some("in") {
+        return Some((name.clone(), None));
+    }
+    let values: Vec<String> = said[3..]
+        .iter()
+        .filter(|w| !matches!(w.as_str(), "do" | ";"))
+        .cloned()
+        .collect();
+    let plain = !values.is_empty()
+        && values
+            .iter()
+            .all(|v| !v.contains(['$', '`', '*', '?', '[', '{', '~']));
+    Some((name.clone(), plain.then_some(values)))
+}
+
+/// Whether `text` names the variable `name`: `$name` not followed by more
+/// of a name, or `${name}`.
+fn names_var(text: &str, name: &str) -> bool {
+    if text.contains(&format!("${{{name}}}")) {
+        return true;
+    }
+    let plain = format!("${name}");
+    text.match_indices(&plain).any(|(at, _)| {
+        text[at + plain.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+    })
+}
+
 /// `word` with the variables an earlier part of the command set put in:
 /// `$B/health` after `B=http://localhost:8001`. One that wasn't set there
 /// stays as written, a word only the shell can read.
@@ -5948,8 +6058,11 @@ fn path_escapes(words: &[String], ctx: &ToolContext) -> bool {
             texts.swap_remove(k);
             continue;
         }
-        // `echo $f` prints a variable; it opens nothing.
-        if w.starts_with('-') || (prints && (w.contains(SUBST) || w.contains('$'))) {
+        // `echo $f` prints a variable, `echo /etc/hosts` prints a name:
+        // neither opens anything. `echo /` used to ask as a read outside
+        // the project, and so did a loop value of `/` once the gate read
+        // it, where the unread `$p` had passed.
+        if w.starts_with('-') || prints {
             continue;
         }
         // Asked of commands that only read.
@@ -7480,8 +7593,11 @@ fn outside_segment(
         }
         // A container command's words are its own to judge
         // ([`container_decision`]): `/app` in `docker run … ls /app` is a
-        // path in the container, not here.
-        if w.starts_with('-') || containers {
+        // path in the container, not here. `echo /etc/hosts` prints a
+        // name and opens nothing; its redirects were judged above, and a
+        // file its wrapper was given (`strace -o f echo`) is still the
+        // wrapper's to write.
+        if w.starts_with('-') || containers || (matches!(prog, "echo" | "printf") && i > program) {
             continue;
         }
         // An address handed to a program that fetches one is not a path.
@@ -13709,6 +13825,82 @@ mod tests {
             ],
         );
         assert_eq!(m.decide("eslint --fix .", Role::Audit), Decision::Deny);
+    }
+
+    /// A `for` loop's values listed in the same command are the shell's
+    /// to hand over as written: a part that names the loop variable is
+    /// judged once per value, so an edit of `$f.html` with `f` in `index
+    /// about` is an edit of index.html and about.html, and a request to
+    /// `localhost$p` with `p` in `/ /about.html` is one to this machine.
+    /// Two of the user's real sessions stopped on these (2026-10-19 to
+    /// 10-23), the only asks a normal build produced. One value out of
+    /// bounds makes the strictest verdict hold; a value only the shell can
+    /// read leaves the name unknown, and asks as before.
+    #[cfg(unix)]
+    #[test]
+    fn a_for_loops_listed_values_are_read_as_the_shell_will() {
+        let m = machine();
+        for cmd in [
+            "for f in index about products 404; do sed -i -e 's/a/b/' $f.html; done",
+            "for p in / /about.html /healthz /nope; do curl -s -o /dev/null -w \"$p %{http_code}\\n\" localhost$p; done",
+            "for p in / /x; do echo \"$p $(curl -s -o /dev/null -w '%{http_code}' localhost$p)\"; done",
+            "cat > /tmp/footer.txt <<'EOF'\n<footer>x</footer>\nEOF\nfor f in index about; do\n  sed -i -e '/^  <footer>/{r /tmp/footer.txt' -e 'd}' $f.html\ndone\nrm /tmp/footer.txt; grep -c x *.html",
+            "for e in sku name; do curl -s \"localhost:8001/items/new?error=$e\" | grep -A1 error; done",
+            // `echo` and `printf` print their words and open nothing: a
+            // value of `/` is text to them. `echo /` used to ask as a read
+            // outside the project, which the unread `$p` had hidden.
+            "for p in / /x; do echo \"$p\"; done",
+            "echo /etc/hosts; printf '%s\\n' /",
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), Decision::Allow, "{cmd}");
+        }
+        // One value outside the project: the strictest verdict holds, the
+        // one `sed -i -e 's/a/b/' /etc/hosts` gets on its own.
+        assert_eq!(
+            m.decide(
+                "for f in index.html /etc/hosts; do sed -i -e 's/a/b/' $f; done",
+                Role::Build
+            ),
+            Decision::Ask
+        );
+        assert_eq!(
+            m.decide("ls /; wc -l /etc/hosts", Role::Build),
+            Decision::Ask
+        );
+        // A value the shell reads itself, or no list at all, leaves the
+        // name unknown: the question it was. (A bare `$f` as `sed -i`'s
+        // file passes today, the gate not reading it as a path; `$f.html`
+        // is the shape the real session asked on.)
+        for cmd in [
+            "for f in *.html; do sed -i -e 's/a/b/' $f.html; done",
+            "for f in $(ls); do sed -i -e 's/a/b/' $f.html; done",
+            "for f in $LIST; do sed -i -e 's/a/b/' $f.html; done",
+            "for f; do sed -i -e 's/a/b/' $f.html; done",
+            "for f in index; do :; done; for f in $(ls); do sed -i -e 's/a/b/' $f.html; done",
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), Decision::Ask, "{cmd}");
+        }
+        assert_eq!(
+            loop_head(&[
+                "for".into(),
+                "f".into(),
+                "in".into(),
+                "a".into(),
+                "b".into()
+            ]),
+            Some(("f".into(), Some(vec!["a".into(), "b".into()])))
+        );
+        assert_eq!(
+            loop_head(&["for".into(), "f".into(), "in".into(), "*.md".into()]),
+            Some(("f".into(), None))
+        );
+        assert_eq!(
+            loop_head(&["for".into(), "f".into()]),
+            Some(("f".into(), None))
+        );
+        assert_eq!(loop_head(&["echo".into(), "for".into()]), None);
+        assert!(names_var("sed -i x $f.html", "f") && names_var("x${f}y", "f"));
+        assert!(!names_var("echo $file", "f") && !names_var("echo f", "f"));
     }
 
     /// What a hat does all day runs without a question. A real session
