@@ -82,6 +82,7 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 

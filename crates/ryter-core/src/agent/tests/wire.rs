@@ -386,6 +386,13 @@ fn prove_echo(backend: Backend, reply: &str, next_request: &str) -> Proven {
                     return Err(format!("signature {signature} was not echoed"));
                 }
             }
+            StreamDelta::ReasoningDetail(detail) => {
+                if let Some(signature) = detail["signature"].as_str() {
+                    if !next_request.contains(signature) {
+                        return Err(format!("signature {signature} was not echoed"));
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -954,14 +961,16 @@ async fn live_tool_round_trip() {
                     .unwrap();
                 file.write_all(row.as_bytes()).unwrap();
                 println!("{name}: held, ${:.4}", proof.usd);
-                if capture.backend() == Backend::Messages {
-                    let sse = capture.reply("tool_call");
-                    let thought = parse_sse(Backend::Messages, sse)
-                        .unwrap()
-                        .iter()
-                        .any(|d| matches!(d, StreamDelta::ThinkingSignature { .. }));
-                    println!("{name}: a thinking signature to echo: {thought}");
-                }
+                let reasoned = parse_sse(capture.backend(), capture.reply("tool_call"))
+                    .unwrap()
+                    .iter()
+                    .any(|d| {
+                        matches!(
+                            d,
+                            StreamDelta::ThinkingSignature { .. } | StreamDelta::ReasoningDetail(_)
+                        )
+                    });
+                println!("{name}: reasoning to echo: {reasoned}");
             }
             Err(e) => {
                 println!("{name}: FAILED: {e}");
@@ -1003,13 +1012,17 @@ fn every_kept_capture_is_on_the_list_and_holds_nothing_private() {
         for (reply, sse) in &capture.replies {
             assert_eq!(leak(sse, ""), None, "{name}/{reply}");
         }
-        // Handing a signature back is what a Messages round trip is there to
+        // Handing a signature back is what a Claude round trip is there to
         // prove; a capture where the model did not think proves nothing of it.
-        if capture.backend() == Backend::Messages {
-            let thought = parse_sse(Backend::Messages, capture.reply("tool_call"))
+        if capture.backend() == Backend::Messages || capture.meta.model.starts_with("anthropic/") {
+            let thought = parse_sse(capture.backend(), capture.reply("tool_call"))
                 .unwrap()
                 .iter()
-                .any(|d| matches!(d, StreamDelta::ThinkingSignature { .. }));
+                .any(|d| match d {
+                    StreamDelta::ThinkingSignature { .. } => true,
+                    StreamDelta::ReasoningDetail(detail) => detail["signature"].is_string(),
+                    _ => false,
+                });
             assert!(thought, "{name}: no signature to echo; record it again");
         }
     }
@@ -1051,6 +1064,18 @@ fn stand_in(backend: Backend) -> [String; 5] {
                 };
                 out += ": OPENROUTER PROCESSING\n\n";
                 out += &chunk(json!({"role": "assistant", "content": ""}), Value::Null);
+                if !calls.is_empty() {
+                    let detail = |fields: Value| {
+                        let mut detail = json!({"type": "reasoning.text", "index": 0});
+                        for (key, value) in fields.as_object().unwrap() {
+                            detail[key] = value.clone();
+                        }
+                        json!({ "reasoning_details": [detail] })
+                    };
+                    out += &chunk(detail(json!({"text": "Reading."})), Value::Null);
+                    let signature = format!("sig-{prompt}");
+                    out += &chunk(detail(json!({ "signature": signature })), Value::Null);
+                }
                 for t in [one, two].into_iter().filter(|t| !t.is_empty()) {
                     out += &chunk(json!({ "content": t }), Value::Null);
                 }

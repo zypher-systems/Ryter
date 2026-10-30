@@ -215,9 +215,13 @@ impl HttpProvider {
         }
     }
 
+    fn is_openrouter(&self) -> bool {
+        self.kind == "openrouter" || is_openrouter(&self.base_url)
+    }
+
     fn body(&self, req: &CompletionRequest) -> Value {
         let mut body = match self.backend {
-            Backend::ChatCompletions => chat_body(req),
+            Backend::ChatCompletions => chat_body(req, self.is_openrouter()),
             Backend::Responses => responses_body(req),
             Backend::Messages => messages_body(req),
         };
@@ -561,13 +565,27 @@ fn push_block<S>(st: &mut StreamState<S>, block: &str) {
     }
 }
 
-fn chat_body(req: &CompletionRequest) -> Value {
+/// `reasoning`: give each assistant turn of the running tool loop its
+/// `reasoning_details` back. OpenRouter's alone: another server may refuse a
+/// field it doesn't know. Only this tool loop, which is what they are for: a
+/// model can reason for tens of thousands of tokens, and every past turn's
+/// would go on every request. Only the model's own: the rest of the
+/// conversation may be another hat's.
+fn chat_body(req: &CompletionRequest, reasoning: bool) -> Value {
     let mut messages = Vec::new();
     if let Some(sys) = &req.system {
         messages.push(json!({"role": "system", "content": sys}));
     }
-    for m in &req.messages {
+    let asked = req.messages.iter().rposition(|m| m.role == "user");
+    for (i, m) in req.messages.iter().enumerate() {
         let mut obj = json!({"role": m.role, "content": m.content});
+        if let Some(echo) = m
+            .reasoning_details
+            .as_ref()
+            .filter(|e| reasoning && e.model == req.model && asked.is_none_or(|at| i > at))
+        {
+            obj["reasoning_details"] = json!(echo.details);
+        }
         if let Some(id) = &m.tool_call_id {
             obj["tool_call_id"] = json!(id);
         }
@@ -1345,6 +1363,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 
@@ -1389,7 +1408,7 @@ mod tests {
     fn every_backend_round_trips_a_tool_loop() {
         let req = tool_loop();
         for (label, body) in [
-            ("chat_completions", chat_body(&req)),
+            ("chat_completions", chat_body(&req, false)),
             ("responses", responses_body(&req)),
             ("messages", messages_body(&req)),
         ] {
@@ -1732,10 +1751,10 @@ mod tests {
     fn claude_over_openrouter_is_marked_and_others_are_not() {
         let mut req = tool_loop();
         req.model = "anthropic/claude-sonnet-4.6".into();
-        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        let wire = serde_json::to_string(&chat_body_plain(&req)).unwrap();
         assert!(wire.contains("cache_control"), "{wire}");
         req.model = "x-ai/grok-4.6".into();
-        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        let wire = serde_json::to_string(&chat_body_plain(&req)).unwrap();
         assert!(
             !wire.contains("cache_control"),
             "providers that cache automatically get plain content"
@@ -1780,6 +1799,47 @@ mod tests {
             req
         });
         (format!("http://{addr}/v1"), handle)
+    }
+
+    fn chat_body_plain(req: &CompletionRequest) -> Value {
+        chat_body(req, false)
+    }
+
+    fn reasoned_turn(model: &str) -> Message {
+        Message {
+            reasoning_details: Some(crate::llm::ReasoningEcho {
+                model: model.into(),
+                details: vec![json!({"type": "reasoning.text", "text": "t", "signature": "sig"})],
+            }),
+            ..Message::plain("assistant", "reply")
+        }
+    }
+
+    fn reasoned(messages: Vec<Message>, model: &str, reasoning: bool) -> String {
+        let req = CompletionRequest {
+            model: model.into(),
+            messages,
+            ..tool_loop()
+        };
+        serde_json::to_string(&chat_body(&req, reasoning)).unwrap()
+    }
+
+    /// Back within the tool loop, for the model that wrote it.
+    #[test]
+    fn reasoning_goes_back_to_the_model_that_wrote_it_within_its_loop() {
+        let asked = Message::plain("user", "q");
+        let result = Message::plain("tool", "out");
+        let turn = vec![asked.clone(), reasoned_turn("m"), result.clone()];
+        assert!(reasoned(turn.clone(), "m", true).contains(r#""signature":"sig""#));
+        // No user turn since: the loop is the whole conversation.
+        assert!(reasoned(vec![reasoned_turn("m")], "m", true).contains("sig"));
+        // A server that is not OpenRouter's is sent nothing it may refuse.
+        assert!(!reasoned(turn.clone(), "m", false).contains("reasoning_details"));
+        // Another hat's model has no use for it, and it would be refused.
+        assert!(!reasoned(turn, "other", true).contains("reasoning_details"));
+        // A finished turn's stays out: every past turn's on every request.
+        let later = vec![asked.clone(), reasoned_turn("m"), asked];
+        assert!(!reasoned(later, "m", true).contains("reasoning_details"));
     }
 
     /// The whole HTTP path — headers, body, SSE, tool-call reassembly — against

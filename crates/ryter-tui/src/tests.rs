@@ -1359,6 +1359,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
         s.push_message(ryter_core::Message {
@@ -1367,6 +1368,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
         let mut all = vec![AgentEvent::TurnStarted { turn, role, at: 0 }];
@@ -1484,6 +1486,7 @@ fn the_sessions_count_follows_new_and_delete() {
         tool_call_id: None,
         tool_calls: None,
         messages_blocks: None,
+        reasoning_details: None,
     })
     .unwrap();
     v.session_id = a.meta.id.to_string();
@@ -1571,6 +1574,7 @@ fn the_startup_reads_the_sessions_count_from_the_disk() {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
     drop(first);

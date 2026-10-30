@@ -89,7 +89,7 @@ pub const KEEP_USER_TURNS: usize = 4;
 
 /// Cheap token estimate: UTF-8 bytes / 4, matching common harness heuristics.
 pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
-    let mut n = system.len();
+    let mut n = system.len() + reasoning_bytes(messages);
     for m in messages {
         n += m.role.len();
         if let Some(id) = &m.tool_call_id {
@@ -122,6 +122,21 @@ pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
         }
     }
     u64::try_from(n).unwrap_or(u64::MAX).div_ceil(4)
+}
+
+/// The reasoning a request hands back: the running tool loop's, as
+/// `chat_body` sends it. Past turns' is in the transcript and not on the wire.
+fn reasoning_bytes(messages: &[Message]) -> usize {
+    let loop_starts = messages
+        .iter()
+        .rposition(|m| m.role == "user")
+        .map_or(0, |at| at + 1);
+    messages[loop_starts..]
+        .iter()
+        .filter_map(|m| m.reasoning_details.as_ref())
+        .flat_map(|echo| &echo.details)
+        .map(|detail| detail.to_string().len())
+        .sum()
 }
 
 /// Per-contributor token estimates for the `/context` inspector.
@@ -160,6 +175,7 @@ pub fn breakdown(system: &str, messages: &[Message]) -> Vec<(String, u64)> {
         ("assistant text", assistant),
         ("tool calls", calls),
         ("tool output", tool_out),
+        ("reasoning", reasoning_bytes(messages)),
     ]
     .into_iter()
     .filter(|(_, n)| *n > 0)
@@ -266,6 +282,7 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }];
         next.extend(messages[cut..].iter().cloned());
         next
@@ -362,6 +379,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 
@@ -418,6 +436,7 @@ mod tests {
                     arguments: format!(r#"{{"path":"src/f{i}.rs"}}"#),
                 }]),
                 messages_blocks: None,
+                reasoning_details: None,
             });
             messages.push(Message {
                 role: "tool".into(),
@@ -425,6 +444,7 @@ mod tests {
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             });
         }
         let out = compact(&messages, "ship the flag", 2);
@@ -456,6 +476,7 @@ mod tests {
                 tool_call_id: Some("c1".into()),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             },
         ];
         let rows = breakdown("sys", &messages);
@@ -494,6 +515,7 @@ mod tests {
                     arguments: "{}".into(),
                 }]),
                 messages_blocks: None,
+                reasoning_details: None,
             });
             messages.push(Message {
                 role: "tool".into(),
@@ -501,6 +523,7 @@ mod tests {
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             });
         }
         let next = compact(&messages, "", 4);

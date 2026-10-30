@@ -788,6 +788,7 @@ fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             });
             added += 1;
         }
@@ -1310,6 +1311,7 @@ mod tests {
             tool_call_id: id.map(str::to_string),
             tool_calls: calls,
             messages_blocks: None,
+            reasoning_details: None,
         };
         let t = vec![
             msg("user", "go", None, None),
@@ -1343,6 +1345,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 
@@ -1367,6 +1370,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
         s.record_spend(spend_record(

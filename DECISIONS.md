@@ -2,6 +2,22 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-30 — OpenRouter's reasoning goes back within its tool loop, to the model that wrote it
+
+The OpenRouter capture showed `reasoning_details` on every reasoning chunk, signature included, and `chat_body` dropping them. A Claude model through OpenRouter thought on its first round and not after a tool result, where the direct connection keeps its thinking: told to say nothing of a sum it had worked out, the direct reply did not, and the OpenRouter one worked it out again in its answer. That is one comparison. OpenRouter's docs recommend the echo for tool calling and do not call it required, and the request was accepted without it.
+
+**Rebuilt, not replayed.** A detail comes in pieces sharing a `type` and an `index`: text a few words at a time, then a chunk with only its signature. OpenRouter's docs say the sequence is built by concatenating them. Sent back as they came, a signature would sign nothing.
+
+**Only the model that wrote it.** Hats share a conversation and can each run another model, and OpenRouter says the sequence must match what the model produced. So a `ReasoningEcho` keeps its model's name and `chat_body` passes over another's. Rejected: clearing the details on a hat change, which would lose them for the hat coming back.
+
+**Only the running tool loop.** That is what the details are for, and the transcript keeps every turn's: replayed in full, a model that reasons for tens of thousands of tokens would have all of it on every request, and most models bill it as input. Everything after the last user message goes back; nothing before. `estimate_tokens` and `/context` count the same.
+
+**Only OpenRouter.** Another OpenAI-compatible server may refuse a field it doesn't know, the same reason `reasoning` itself is sent to OpenRouter and OpenAI alone.
+
+**Not after a cut-off.** A reply stopped at the output limit can end with a detail that has no signature yet, and one sent back unsigned is what a provider refuses.
+
+**The replay proves what is sent, and only a live run proves it is taken.** A refusal here would fail every tool round on OpenRouter that works today, so the patch waits on a live run on Claude and on a model that is not.
+
 ### 2026-10-30 — What 1.0 writes, 1.x reads: a mark, a refusal, and a release's own files kept in the tests
 
 Item 9 of the gate. `src/schema.rs` is the rule; `tests/persisted.rs` is what holds it.
@@ -49,8 +65,6 @@ The second gap analysis (G05) asked for dated captures per built-in connection a
 **The project map's root is `./ (name)`, not `name/`.** The second live run found it: `claude-sonnet-4.6` through OpenRouter read `.tmpRNY2ln/a.txt`, got "No such file or directory" twice, and told the user the project's files were missing. The map's first line was written exactly like the folders below it, relative paths all, so the project's own name read as one more folder. `claude-opus-5-5` was not misled, which is why it took a second model to show it, and on a real project it would have been a lost round or a false report. The name stays, because it says what the project is, and the section says `./` is no folder to add to a path. Rejected: dropping the name, which the first line is for.
 
 **A capture is judged on what it holds.** The first Anthropic capture passed with no thinking block in it: the model did not think on so easy a prompt, so the signature echo, the check most likely to fail a real session, had nothing to check. The prompt now asks for thought, and a kept test fails on a Messages capture with no signature. The live run also showed the model's own choices are not the wire's: a failed try is shown, kept under `target/wire` and tried once more, so a look around costs a retry and not a lost diagnosis.
-
-**OpenRouter's `reasoning_details` are left for their own patch.** The OpenRouter capture shows them on every reasoning chunk, signature included, and `chat_body` drops them, so thinking does not carry across a tool round there as it does on the direct connection. The API accepts the request either way and OpenRouter's docs recommend the echo without requiring it, so nothing here is broken by the proof's measure. It is logged under Next with its one comparison rather than fixed on the patch that found it: a change to what every OpenRouter request carries wants its own live run.
 
 **A stream the provider never finished is an error.** The first replay of a dropped stream showed `turn` treating any end of stream as the end of the reply: `saw_done` fed only the spend record, so half an answer stood as the answer and a half-written call ran with `{"path":"n`. The HTTP layer now fails a stream that closes without a closing event (`[DONE]`, `response.completed`, `message_stop`) or a stated finish (`finish_reason`, `stop_reason`), so the scout, the bench and every other caller have it too. The stated finish counts because some compatible servers close the socket without `[DONE]`; requiring the closing event would have failed finished replies from local servers. The partial text stays on the screen, the turn reads Failed with the reason, nothing reaches the transcript. Rejected: keeping the partial text in the transcript as a truncated reply, which would hand the model an ending it never wrote.
 

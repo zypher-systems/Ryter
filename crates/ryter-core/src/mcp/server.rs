@@ -114,6 +114,7 @@ impl InboundHost for EchoHost {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }])
     }
     fn cancel(&self) {}

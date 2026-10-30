@@ -173,6 +173,9 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<bool> {
             out.push(StreamDelta::Reasoning(s.to_string()));
         }
     }
+    if let Some(details) = delta.get("reasoning_details").and_then(Value::as_array) {
+        out.extend(details.iter().cloned().map(StreamDelta::ReasoningDetail));
+    }
     match choice.get("finish_reason").and_then(Value::as_str) {
         Some("length") => out.push(StreamDelta::Truncated),
         Some("error") => {
@@ -536,6 +539,28 @@ mod tests {
     /// A turn cut off at the output ceiling must be distinguishable from a
     /// finished one; otherwise the agent loop reports a partial answer as
     /// success.
+    #[test]
+    fn reasoning_details_are_read_off_the_chunks_as_they_come() {
+        let sse = concat!(
+            r#"data: {"choices":[{"delta":{"reasoning":"t","reasoning_details":[{"type":"reasoning.text","index":0,"text":"t"}]}}]}"#,
+            "\n\n",
+            r#"data: {"choices":[{"delta":{"reasoning":null,"reasoning_details":[{"type":"reasoning.text","index":0,"signature":"s"}]}}]}"#,
+            "\n\n",
+        );
+        let deltas = parse_sse(Backend::ChatCompletions, sse).unwrap();
+        let details: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| match d {
+                StreamDelta::ReasoningDetail(v) => Some(v),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(details.len(), 2);
+        assert_eq!(details[1]["signature"], "s");
+        // The text is still shown as it comes.
+        assert!(deltas.contains(&StreamDelta::Reasoning("t".into())));
+    }
+
     #[test]
     fn each_backend_reports_truncation() {
         let cases: &[(Backend, &str)] = &[

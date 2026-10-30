@@ -9,8 +9,8 @@ use std::sync::mpsc::Sender;
 use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::llm::{
-    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider, StreamDelta,
-    ToolCallAccumulator,
+    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider,
+    ReasoningDetailsAccumulator, StreamDelta, ToolCallAccumulator,
 };
 use crate::role::Role;
 use crate::session::{Session, spend_record};
@@ -671,6 +671,7 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })?;
         if self.session.meta.title.is_empty() {
             let t: String = user.chars().take(80).collect();
@@ -746,6 +747,7 @@ impl Agent {
                             tool_call_id: None,
                             tool_calls: None,
                             messages_blocks: None,
+                            reasoning_details: None,
                         })?;
                     }
                     crate::gate::Fit::No(why) => {
@@ -784,6 +786,7 @@ impl Agent {
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
             let mut echo = MessagesEchoAccumulator::default();
+            let mut reasoned = ReasoningDetailsAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut host: Option<String> = None;
@@ -811,6 +814,7 @@ impl Agent {
                     // Capture Anthropic thinking blocks (with signatures) so
                     // the next Messages request can echo them beside tool_use.
                     echo.push(&delta);
+                    reasoned.push(&delta);
                     match delta {
                         StreamDelta::Text(t) => {
                             text.push_str(&t);
@@ -821,7 +825,8 @@ impl Agent {
                         }
                         StreamDelta::ThinkingOpen { .. }
                         | StreamDelta::ThinkingSignature { .. }
-                        | StreamDelta::ThinkingClose { .. } => {}
+                        | StreamDelta::ThinkingClose { .. }
+                        | StreamDelta::ReasoningDetail(_) => {}
                         StreamDelta::ToolCall {
                             stream_key,
                             id,
@@ -936,6 +941,9 @@ impl Agent {
                     Some(call_list.clone())
                 },
                 messages_blocks: echo.finish(),
+                // Cut off at the limit, a detail may have no signature yet,
+                // and one sent back unsigned is refused.
+                reasoning_details: (!truncated).then(|| reasoned.finish(&model)).flatten(),
             })?;
 
             if call_list.is_empty() {
@@ -946,6 +954,7 @@ impl Agent {
                         tool_call_id: None,
                         tool_calls: None,
                         messages_blocks: None,
+                        reasoning_details: None,
                     })?;
                     continue;
                 }
@@ -987,6 +996,7 @@ impl Agent {
                                 tool_call_id: None,
                                 tool_calls: None,
                                 messages_blocks: None,
+                                reasoning_details: None,
                             })?;
                             continue;
                         } else if cap > 0 {
@@ -1201,6 +1211,7 @@ impl Agent {
                     tool_call_id: Some(call.id.clone()),
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })?;
                 if stuck {
                     self.answer_unrun(&call_list[i + 1..], "not run: the turn was stopped")?;
@@ -1224,6 +1235,7 @@ impl Agent {
                     tool_call_id: None,
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })?;
             }
             if self.role == Role::Build && !edited.is_empty() {
@@ -1268,6 +1280,7 @@ impl Agent {
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             })?;
         }
         Ok(())
@@ -2316,6 +2329,7 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })?;
         Ok(found.map(|(ok, _, could_run)| CheckOutcome {
             cmd,
@@ -3749,6 +3763,7 @@ impl Agent {
                 tool_call_id: None,
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             }],
             tools: Vec::new(),
             max_tokens: Some(max_tokens),
@@ -4223,6 +4238,7 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         });
         let failed = match self.scout_rounds(id, &call, &mut run).await {
             Ok(()) => None,
@@ -4312,6 +4328,7 @@ impl Agent {
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
             let mut echo = MessagesEchoAccumulator::default();
+            let mut reasoned = ReasoningDetailsAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut host: Option<String> = None;
@@ -4327,6 +4344,7 @@ impl Agent {
                     let Some(delta) = delta else { break };
                     let delta = delta?;
                     echo.push(&delta);
+                    reasoned.push(&delta);
                     match delta {
                         StreamDelta::Text(t) => text.push_str(&t),
                         StreamDelta::ToolCall {
@@ -4380,6 +4398,7 @@ impl Agent {
                     Some(call_list.clone())
                 },
                 messages_blocks: echo.finish(),
+                reasoning_details: reasoned.finish(&call.model),
             });
             run.answer = text;
             if call_list.is_empty() {
@@ -4426,6 +4445,7 @@ impl Agent {
                     tool_call_id: Some(tc.id.clone()),
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 });
             }
         }
@@ -4848,6 +4868,44 @@ mod tests {
             last_check: None,
             session_turns: 0,
         }
+    }
+
+    /// A reply cut off at the limit may hold a detail with no signature yet;
+    /// a whole one goes on the assistant's turn with its model's name.
+    #[tokio::test]
+    async fn only_a_finished_reply_keeps_its_reasoning_details() {
+        let detail = || {
+            StreamDelta::ReasoningDetail(serde_json::json!({
+                "type": "reasoning.text", "index": 0, "text": "t", "signature": "s"
+            }))
+        };
+        let whole = vec![
+            detail(),
+            StreamDelta::Text("done".into()),
+            StreamDelta::Done,
+        ];
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![whole]));
+        agent.turn("q").await.unwrap();
+        let kept = agent.session.transcript.last().unwrap();
+        let echo = kept.reasoning_details.as_ref().expect("kept");
+        assert_eq!(echo.model, "grok-4.6");
+        assert_eq!(echo.details[0]["signature"], "s");
+
+        let cut = vec![detail(), StreamDelta::Truncated, StreamDelta::Done];
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            cut,
+            vec![StreamDelta::Text("the rest".into()), StreamDelta::Done],
+        ]));
+        agent.turn("q").await.unwrap();
+        let assistant = |m: &&Message| m.role == "assistant";
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .filter(assistant)
+                .all(|m| m.reasoning_details.is_none())
+        );
     }
 
     /// `/context` says when its window is a guess. A remembered route can
@@ -10993,6 +11051,7 @@ mod tests {
                     tool_call_id: None,
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })
                 .unwrap();
             agent
@@ -11007,6 +11066,7 @@ mod tests {
                         arguments: r#"{"path":"hello.txt"}"#.into(),
                     }]),
                     messages_blocks: None,
+                    reasoning_details: None,
                 })
                 .unwrap();
             agent
@@ -11017,6 +11077,7 @@ mod tests {
                     tool_call_id: Some(format!("c{i}")),
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })
                 .unwrap();
         }

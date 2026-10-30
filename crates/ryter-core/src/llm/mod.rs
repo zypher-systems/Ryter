@@ -34,6 +34,9 @@ pub enum StreamDelta {
     Text(String),
     /// Reasoning / thinking text.
     Reasoning(String),
+    /// A piece of OpenRouter's `reasoning_details`: what must go back, where
+    /// `Reasoning` is only for the screen.
+    ReasoningDetail(serde_json::Value),
     /// Start of an Anthropic `thinking` or `redacted_thinking` content block.
     ///
     /// OpenRouter-style `Reasoning` deltas alone are display-only; this opens
@@ -119,6 +122,23 @@ pub struct Message {
     /// from `content` + `tool_calls`. Other backends ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messages_blocks: Option<Vec<MessagesBlock>>,
+    /// OpenRouter's account of how this turn was reasoned, handed back within
+    /// its tool loop. Other backends ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_details: Option<ReasoningEcho>,
+}
+
+/// What a model reasoned, as OpenRouter gave it.
+///
+/// Hats share a conversation and can each run another model, and a signature
+/// means nothing to any model but the one that wrote it, so the details are
+/// kept with its name. OpenRouter asks for them unchanged and in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReasoningEcho {
+    /// The model that reasoned.
+    pub model: String,
+    /// Whole details, in the order they came.
+    pub details: Vec<serde_json::Value>,
 }
 
 impl Message {
@@ -130,6 +150,7 @@ impl Message {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 }
@@ -494,6 +515,52 @@ impl MessagesEchoAccumulator {
     }
 }
 
+/// Rebuilds OpenRouter's `reasoning_details` from their chunks.
+///
+/// A detail arrives in pieces that share a `type` and an `index`: text a few
+/// words at a time, then a chunk with nothing but its signature. Sent back as
+/// they came, a signature would sign nothing.
+#[derive(Debug, Default)]
+pub struct ReasoningDetailsAccumulator {
+    details: Vec<serde_json::Value>,
+}
+
+impl ReasoningDetailsAccumulator {
+    /// Take in `delta`, if it is a piece of a detail.
+    pub fn push(&mut self, delta: &StreamDelta) {
+        let StreamDelta::ReasoningDetail(piece) = delta else {
+            return;
+        };
+        let same =
+            |d: &&mut serde_json::Value| d["type"] == piece["type"] && d["index"] == piece["index"];
+        let (Some(whole), Some(fields)) = (self.details.last_mut().filter(same), piece.as_object())
+        else {
+            self.details.push(piece.clone());
+            return;
+        };
+        for (key, value) in fields {
+            match (whole.get_mut(key), value.as_str()) {
+                // What a detail says comes in pieces; what it is does not.
+                (Some(serde_json::Value::String(so_far)), Some(more))
+                    if matches!(key.as_str(), "text" | "summary" | "data") =>
+                {
+                    so_far.push_str(more);
+                }
+                _ if !value.is_null() => whole[key] = value.clone(),
+                _ => {}
+            }
+        }
+    }
+
+    /// The details `model` gave, if it gave any.
+    pub fn finish(self, model: &str) -> Option<ReasoningEcho> {
+        (!self.details.is_empty()).then(|| ReasoningEcho {
+            model: model.to_string(),
+            details: self.details,
+        })
+    }
+}
+
 /// Streaming inference backend.
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -678,6 +745,7 @@ pub async fn probe_model(provider: &dyn Provider, model: &str) -> std::result::R
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }],
         tools: vec![ToolSpec {
             name: "noop".into(),
@@ -980,6 +1048,46 @@ mod tests {
         assert_eq!(calls[0].arguments, "{\"path\":\"a.txt\"}");
         assert_eq!(calls[1].id, "b");
         assert_eq!(calls[1].arguments, "{\"path\":\"b.txt\"}");
+    }
+
+    /// As OpenRouter sent them on a real run: text in pieces, then the
+    /// signature on a chunk of its own.
+    #[test]
+    fn reasoning_details_are_rebuilt_whole_and_in_order() {
+        let piece = |v: serde_json::Value| StreamDelta::ReasoningDetail(v);
+        let mut details = ReasoningDetailsAccumulator::default();
+        for delta in [
+            piece(serde_json::json!({"type":"reasoning.text","format":"f","index":0,"text":"39"})),
+            StreamDelta::Text("not reasoning".into()),
+            piece(
+                serde_json::json!({"type":"reasoning.text","format":"f","index":0,"text":"1 is"}),
+            ),
+            piece(
+                serde_json::json!({"type":"reasoning.text","format":"f","index":0,"signature":"sig"}),
+            ),
+            piece(
+                serde_json::json!({"type":"reasoning.encrypted","format":"f","index":1,"data":"ab"}),
+            ),
+            piece(
+                serde_json::json!({"type":"reasoning.encrypted","format":"f","index":1,"data":"cd"}),
+            ),
+            piece(
+                serde_json::json!({"type":"reasoning.summary","format":"f","index":2,"summary":"s","signature":null}),
+            ),
+        ] {
+            details.push(&delta);
+        }
+        let echo = details.finish("m").unwrap();
+        assert_eq!(echo.model, "m");
+        assert_eq!(
+            echo.details,
+            [
+                serde_json::json!({"type":"reasoning.text","format":"f","index":0,"text":"391 is","signature":"sig"}),
+                serde_json::json!({"type":"reasoning.encrypted","format":"f","index":1,"data":"abcd"}),
+                serde_json::json!({"type":"reasoning.summary","format":"f","index":2,"summary":"s","signature":null}),
+            ]
+        );
+        assert_eq!(ReasoningDetailsAccumulator::default().finish("m"), None);
     }
 
     /// Ollama's chat-completions stream sends every parallel call as
