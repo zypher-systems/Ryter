@@ -49,6 +49,22 @@ pub fn parse_blocks(backend: Backend, body: &str) -> Result<(Vec<StreamDelta>, b
     Ok((out, false))
 }
 
+/// Whether `body` says the reply is finished, short of the closing event a
+/// stream may leave out: a chat `finish_reason` (some compatible servers close
+/// the socket with no `[DONE]`), a Messages `stop_reason`.
+pub fn says_finished(backend: Backend, body: &str) -> bool {
+    sse_blocks(body).iter().any(|(_, data)| {
+        let Ok(v) = serde_json::from_str::<Value>(data) else {
+            return false;
+        };
+        match backend {
+            Backend::ChatCompletions => v["choices"][0]["finish_reason"].is_string(),
+            Backend::Messages => v["delta"]["stop_reason"].is_string(),
+            Backend::Responses => false,
+        }
+    })
+}
+
 /// The provider's own words for an error object: `type: message`.
 fn error_text(e: &Value) -> String {
     let msg = e
@@ -156,6 +172,9 @@ fn push_chat(out: &mut Vec<StreamDelta>, data: &str) -> Result<bool> {
         if !s.is_empty() {
             out.push(StreamDelta::Reasoning(s.to_string()));
         }
+    }
+    if let Some(details) = delta.get("reasoning_details").and_then(Value::as_array) {
+        out.extend(details.iter().cloned().map(StreamDelta::ReasoningDetail));
     }
     match choice.get("finish_reason").and_then(Value::as_str) {
         Some("length") => out.push(StreamDelta::Truncated),
@@ -520,6 +539,28 @@ mod tests {
     /// A turn cut off at the output ceiling must be distinguishable from a
     /// finished one; otherwise the agent loop reports a partial answer as
     /// success.
+    #[test]
+    fn reasoning_details_are_read_off_the_chunks_as_they_come() {
+        let sse = concat!(
+            r#"data: {"choices":[{"delta":{"reasoning":"t","reasoning_details":[{"type":"reasoning.text","index":0,"text":"t"}]}}]}"#,
+            "\n\n",
+            r#"data: {"choices":[{"delta":{"reasoning":null,"reasoning_details":[{"type":"reasoning.text","index":0,"signature":"s"}]}}]}"#,
+            "\n\n",
+        );
+        let deltas = parse_sse(Backend::ChatCompletions, sse).unwrap();
+        let details: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| match d {
+                StreamDelta::ReasoningDetail(v) => Some(v),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(details.len(), 2);
+        assert_eq!(details[1]["signature"], "s");
+        // The text is still shown as it comes.
+        assert!(deltas.contains(&StreamDelta::Reasoning("t".into())));
+    }
+
     #[test]
     fn each_backend_reports_truncation() {
         let cases: &[(Backend, &str)] = &[

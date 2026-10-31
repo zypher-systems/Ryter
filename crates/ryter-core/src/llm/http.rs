@@ -91,7 +91,15 @@ pub struct HttpProvider {
     x_title: Option<String>,
     /// OpenRouter's `provider` object, from the connection's `[routing]`.
     routing: Option<Value>,
+    #[cfg(test)]
+    tap: Option<Tap>,
 }
+
+/// The bytes of each streamed reply as the provider sent them, one entry per
+/// request: what a provider proof keeps. Test builds only, so no release can
+/// write a reply to disk.
+#[cfg(test)]
+pub(crate) type Tap = std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>;
 
 impl HttpProvider {
     /// New client. Does not touch the network until `stream` / `list_models`.
@@ -129,7 +137,37 @@ impl HttpProvider {
                 .as_ref()
                 .filter(|_| conn.is_openrouter())
                 .and_then(|r| r.provider_object()),
+            #[cfg(test)]
+            tap: None,
         }
+    }
+
+    /// Keep every streamed reply's bytes in `tap`.
+    #[cfg(test)]
+    pub(crate) fn tapped(mut self, tap: Tap) -> Self {
+        self.tap = Some(tap);
+        self
+    }
+
+    #[cfg(test)]
+    fn tapping<S>(
+        &self,
+        bytes: S,
+    ) -> impl Stream<Item = reqwest::Result<Bytes>> + Send + Unpin + use<S>
+    where
+        S: Stream<Item = reqwest::Result<Bytes>> + Send + Unpin,
+    {
+        let tap = self.tap.clone();
+        let reply = tap.as_ref().map(|t| {
+            let mut replies = t.lock().unwrap();
+            replies.push(Vec::new());
+            replies.len() - 1
+        });
+        bytes.inspect(move |chunk| {
+            if let (Some(tap), Some(reply), Ok(chunk)) = (&tap, reply, chunk) {
+                tap.lock().unwrap()[reply].extend_from_slice(chunk);
+            }
+        })
     }
 
     fn headers(&self) -> Result<HeaderMap> {
@@ -177,9 +215,13 @@ impl HttpProvider {
         }
     }
 
+    fn is_openrouter(&self) -> bool {
+        self.kind == "openrouter" || is_openrouter(&self.base_url)
+    }
+
     fn body(&self, req: &CompletionRequest) -> Value {
         let mut body = match self.backend {
-            Backend::ChatCompletions => chat_body(req),
+            Backend::ChatCompletions => chat_body(req, self.is_openrouter()),
             Backend::Responses => responses_body(req),
             Backend::Messages => messages_body(req),
         };
@@ -258,11 +300,10 @@ impl Provider for HttpProvider {
                 } else {
                     STALL_TIMEOUT
                 };
-                return Ok(Box::pin(sse_delta_stream(
-                    self.backend,
-                    resp.bytes_stream(),
-                    stall,
-                )));
+                let bytes = resp.bytes_stream();
+                #[cfg(test)]
+                let bytes = self.tapping(bytes);
+                return Ok(Box::pin(sse_delta_stream(self.backend, bytes, stall)));
             }
             let wait = retry_after(resp.headers());
             let text = resp.text().await.unwrap_or_default();
@@ -363,6 +404,7 @@ fn sse_delta_stream<E: std::fmt::Display>(
             buf: String::new(),
             pending: VecDeque::new(),
             done: false,
+            finished: false,
             stall,
             progress: tokio::time::Instant::now(),
         },
@@ -417,6 +459,16 @@ fn sse_delta_stream<E: std::fmt::Display>(
                         if !st.buf.trim().is_empty() {
                             drain_rest(&mut st);
                         }
+                        // The socket closed and the provider never said the
+                        // reply was over. Read as finished, a half-written
+                        // tool call ran and half an answer stood as the answer.
+                        if !st.done && !st.finished {
+                            st.pending.push_back(Err(Error::Provider(
+                                "the provider's stream ended before its reply did. \
+                                 Try again, or another model."
+                                    .into(),
+                            )));
+                        }
                         st.done = true;
                         if let Some(d) = st.pending.pop_front() {
                             return Some((d, st));
@@ -438,6 +490,8 @@ struct StreamState<S> {
     buf: String,
     pending: VecDeque<Result<StreamDelta>>,
     done: bool,
+    /// The provider has said the reply is over, whatever else still comes.
+    finished: bool,
     /// Longest wait for a real delta.
     stall: Duration,
     /// When the last real delta arrived.
@@ -489,6 +543,7 @@ fn drain_rest<S>(st: &mut StreamState<S>) {
 }
 
 fn push_block<S>(st: &mut StreamState<S>, block: &str) {
+    st.finished |= super::parse::says_finished(st.backend, block);
     match super::parse::parse_blocks(st.backend, block) {
         Ok((ds, terminal)) => {
             if !ds.is_empty() {
@@ -510,13 +565,27 @@ fn push_block<S>(st: &mut StreamState<S>, block: &str) {
     }
 }
 
-fn chat_body(req: &CompletionRequest) -> Value {
+/// `reasoning`: give each assistant turn of the running tool loop its
+/// `reasoning_details` back. OpenRouter's alone: another server may refuse a
+/// field it doesn't know. Only this tool loop, which is what they are for: a
+/// model can reason for tens of thousands of tokens, and every past turn's
+/// would go on every request. Only the model's own: the rest of the
+/// conversation may be another hat's.
+fn chat_body(req: &CompletionRequest, reasoning: bool) -> Value {
     let mut messages = Vec::new();
     if let Some(sys) = &req.system {
         messages.push(json!({"role": "system", "content": sys}));
     }
-    for m in &req.messages {
+    let asked = req.messages.iter().rposition(|m| m.role == "user");
+    for (i, m) in req.messages.iter().enumerate() {
         let mut obj = json!({"role": m.role, "content": m.content});
+        if let Some(echo) = m
+            .reasoning_details
+            .as_ref()
+            .filter(|e| reasoning && e.model == req.model && asked.is_none_or(|at| i > at))
+        {
+            obj["reasoning_details"] = json!(echo.details);
+        }
         if let Some(id) = &m.tool_call_id {
             obj["tool_call_id"] = json!(id);
         }
@@ -1294,6 +1363,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 
@@ -1338,7 +1408,7 @@ mod tests {
     fn every_backend_round_trips_a_tool_loop() {
         let req = tool_loop();
         for (label, body) in [
-            ("chat_completions", chat_body(&req)),
+            ("chat_completions", chat_body(&req, false)),
             ("responses", responses_body(&req)),
             ("messages", messages_body(&req)),
         ] {
@@ -1681,10 +1751,10 @@ mod tests {
     fn claude_over_openrouter_is_marked_and_others_are_not() {
         let mut req = tool_loop();
         req.model = "anthropic/claude-sonnet-4.6".into();
-        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        let wire = serde_json::to_string(&chat_body_plain(&req)).unwrap();
         assert!(wire.contains("cache_control"), "{wire}");
         req.model = "x-ai/grok-4.6".into();
-        let wire = serde_json::to_string(&chat_body(&req)).unwrap();
+        let wire = serde_json::to_string(&chat_body_plain(&req)).unwrap();
         assert!(
             !wire.contains("cache_control"),
             "providers that cache automatically get plain content"
@@ -1729,6 +1799,47 @@ mod tests {
             req
         });
         (format!("http://{addr}/v1"), handle)
+    }
+
+    fn chat_body_plain(req: &CompletionRequest) -> Value {
+        chat_body(req, false)
+    }
+
+    fn reasoned_turn(model: &str) -> Message {
+        Message {
+            reasoning_details: Some(crate::llm::ReasoningEcho {
+                model: model.into(),
+                details: vec![json!({"type": "reasoning.text", "text": "t", "signature": "sig"})],
+            }),
+            ..Message::plain("assistant", "reply")
+        }
+    }
+
+    fn reasoned(messages: Vec<Message>, model: &str, reasoning: bool) -> String {
+        let req = CompletionRequest {
+            model: model.into(),
+            messages,
+            ..tool_loop()
+        };
+        serde_json::to_string(&chat_body(&req, reasoning)).unwrap()
+    }
+
+    /// Back within the tool loop, for the model that wrote it.
+    #[test]
+    fn reasoning_goes_back_to_the_model_that_wrote_it_within_its_loop() {
+        let asked = Message::plain("user", "q");
+        let result = Message::plain("tool", "out");
+        let turn = vec![asked.clone(), reasoned_turn("m"), result.clone()];
+        assert!(reasoned(turn.clone(), "m", true).contains(r#""signature":"sig""#));
+        // No user turn since: the loop is the whole conversation.
+        assert!(reasoned(vec![reasoned_turn("m")], "m", true).contains("sig"));
+        // A server that is not OpenRouter's is sent nothing it may refuse.
+        assert!(!reasoned(turn.clone(), "m", false).contains("reasoning_details"));
+        // Another hat's model has no use for it, and it would be refused.
+        assert!(!reasoned(turn, "other", true).contains("reasoning_details"));
+        // A finished turn's stays out: every past turn's on every request.
+        let later = vec![asked.clone(), reasoned_turn("m"), asked];
+        assert!(!reasoned(later, "m", true).contains("reasoning_details"));
     }
 
     /// The whole HTTP path — headers, body, SSE, tool-call reassembly — against

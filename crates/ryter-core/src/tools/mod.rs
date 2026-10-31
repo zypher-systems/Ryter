@@ -1833,11 +1833,11 @@ mod tests {
         // An ordinary command is given none of it.
         let out = gated_execute(
             "bash",
-            &json!({ "command": "echo \"askpass: ${SUDO_ASKPASS:-none} $RYTER_ASKPASS_SOCK\"" }),
+            &json!({ "command": "echo \"askpass: [$SUDO_ASKPASS] [$RYTER_ASKPASS_SOCK]\"" }),
             &c,
         )
         .unwrap();
-        assert!(out.text.contains("askpass: none"), "{out:?}");
+        assert!(out.text.contains("askpass: [] []"), "{out:?}");
     }
 
     /// Inline code runs in the build hat. The review hat, refused it, is

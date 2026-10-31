@@ -38,11 +38,15 @@ fn slug(title: &str) -> String {
 /// The plan as the file holds it: under its title, ending in one newline.
 fn document(title: &str, plan: &str) -> String {
     let plan = plan.trim();
+    // Below the plan, as Markdown leaves no mark: a person and a hat read the
+    // plan as it was approved. Nothing reads a plan by its shape, so nothing
+    // refuses one by this number either.
+    let mark = format!("<!-- ryter plan, schema {} -->", crate::schema::SCHEMA);
     // A plan that brings its own title keeps it.
     if plan.starts_with("# ") {
-        format!("{plan}\n")
+        format!("{plan}\n\n{mark}\n")
     } else {
-        format!("# {}\n\n{plan}\n", title.trim())
+        format!("# {}\n\n{plan}\n\n{mark}\n", title.trim())
     }
 }
 
@@ -394,7 +398,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "# Add CSV export to reports!\n\n## Goal\nReports download as CSV.\n\n## Steps\n1. Add export_csv()\n"
+            "# Add CSV export to reports!\n\n## Goal\nReports download as CSV.\n\n## Steps\n1. Add export_csv()\n\n<!-- ryter plan, schema 1 -->\n"
         );
         // The same title again that day is kept beside it, not over it.
         let again = save_on(
@@ -413,7 +417,10 @@ mod tests {
         // A plan with its own title keeps it; a title of no letters still names a file.
         let own = save_on(root.path(), "2026-10-02", "???", "# Mine\n\nbody").unwrap();
         assert!(own.ends_with("2026-10-02-plan.md"));
-        assert_eq!(std::fs::read_to_string(&own).unwrap(), "# Mine\n\nbody\n");
+        assert_eq!(
+            std::fs::read_to_string(&own).unwrap(),
+            "# Mine\n\nbody\n\n<!-- ryter plan, schema 1 -->\n"
+        );
     }
 
     /// Ryter's own files are written in the project and nowhere else. A

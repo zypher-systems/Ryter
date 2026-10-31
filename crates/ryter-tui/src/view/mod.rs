@@ -245,6 +245,8 @@ pub struct View {
     pub ctx_tokens: Option<u64>,
     /// Window used for the context bar.
     pub ctx_window: Option<u64>,
+    /// Nothing states this model's window: `ctx_window` is a guess.
+    pub ctx_window_assumed: bool,
     /// Transcript message count from the last `Context` event.
     pub ctx_messages: Option<usize>,
     /// Per-contributor token estimates.
@@ -554,6 +556,7 @@ impl View {
             tool_calls: BTreeMap::new(),
             ctx_tokens: None,
             ctx_window: None,
+            ctx_window_assumed: false,
             ctx_messages: None,
             ctx_breakdown: Vec::new(),
             price_label: String::new(),

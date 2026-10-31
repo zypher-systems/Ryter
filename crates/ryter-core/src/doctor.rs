@@ -307,6 +307,19 @@ fn landlock_checks(checks: &mut Vec<Check>, profile: SandboxProfile) {
         },
         detail: profile.as_str().into(),
     });
+    let (covers, leaves) = sandbox::coverage(profile, available, sandbox::signal_scoping());
+    checks.push(Check {
+        name: "sandbox covers".into(),
+        status: CheckStatus::Ok,
+        detail: covers,
+    });
+    if let Some(leaves) = leaves {
+        checks.push(Check {
+            name: "sandbox leaves".into(),
+            status: CheckStatus::Ok,
+            detail: leaves,
+        });
+    }
 }
 
 #[cfg(test)]

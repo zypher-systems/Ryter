@@ -1,0 +1,3 @@
+[openrouter]
+order = ["baseten"]
+allow_fallbacks = false

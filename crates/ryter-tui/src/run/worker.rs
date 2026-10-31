@@ -349,7 +349,11 @@ pub fn run(init: WorkerInit) {
     };
     let mut session_hold = Some(session);
     let mut agent: Option<Agent> = None;
+    // The key the live provider was built with, kept so that a change of
+    // routing rules rebuilds it without resolving the key again.
+    let mut live_key = String::new();
     if let (Some(key), Some(s)) = (key, session_hold.take()) {
+        live_key = key.clone();
         let a = build_agent(BuildAgent {
             cfg: &cfg,
             profile,
@@ -786,31 +790,7 @@ pub fn run(init: WorkerInit) {
                 cfg.connections = connections;
             }
             Ok(Work::SetRouting { name, routing }) => {
-                let Some(c) = cfg.connections.get_mut(&name) else {
-                    continue;
-                };
-                c.routing = routing.clone();
-                if let Some(a) = &mut agent {
-                    // A hat or the scout on another connection builds its
-                    // provider from the agent's own copy of the config, so
-                    // that copy learns the rules too.
-                    if let Some(cfg) = &mut a.cfg {
-                        if let Some(c) = cfg.connections.get_mut(&name) {
-                            c.routing = routing;
-                        }
-                    }
-                    // The provider was built with the rules at connect:
-                    // rebuilt here, or the session's calls would keep the
-                    // old host.
-                    if a.connection == name {
-                        match resolve_secret(&cfg, &ConnectionId::new(&name)) {
-                            Ok(key) => {
-                                a.provider = Arc::new(http_provider(&cfg.connections[&name], key))
-                            }
-                            Err(e) => send_err(&ev_tx, e.to_string()),
-                        }
-                    }
-                }
+                apply_routing(&mut cfg, agent.as_mut(), &live_key, &name, routing);
             }
             Ok(Work::ReloadPrices) => {
                 if let Some(a) = &mut agent {
@@ -873,6 +853,7 @@ pub fn run(init: WorkerInit) {
                     send_err(&ev_tx, format!("unknown connection {name}"));
                     continue;
                 };
+                live_key = new_key.clone();
                 if let Some(a) = &mut agent {
                     a.provider = Arc::new(http_provider(&c, new_key));
                     // The session's turns are priced on the connection
@@ -1009,6 +990,40 @@ pub fn run(init: WorkerInit) {
 
 fn send_err(tx: &mpsc::Sender<AgentEvent>, message: String) {
     let _ = tx.send(AgentEvent::Error { message });
+}
+
+/// The routing rules on `name` changed in `/provider`: every copy of the
+/// config learns them (the worker's, and the agent's own, which a hat or
+/// the scout on another connection builds its provider from), and the
+/// live provider, when `name` is its connection, is rebuilt with the key
+/// it was connected with, so the next call carries the rules. The key is
+/// not resolved again: it used to be, and a key gone since connect left
+/// the old provider live under a screen that showed the new rules.
+/// Returns whether the live provider was rebuilt.
+fn apply_routing(
+    cfg: &mut Config,
+    agent: Option<&mut Agent>,
+    live_key: &str,
+    name: &str,
+    routing: Option<Box<ryter_core::RoutingConfig>>,
+) -> bool {
+    let Some(c) = cfg.connections.get_mut(name) else {
+        return false;
+    };
+    c.routing = routing.clone();
+    let Some(a) = agent else {
+        return false;
+    };
+    if let Some(own) = &mut a.cfg {
+        if let Some(c) = own.connections.get_mut(name) {
+            c.routing = routing;
+        }
+    }
+    if a.connection != name {
+        return false;
+    }
+    a.provider = Arc::new(http_provider(&cfg.connections[name], live_key.to_string()));
+    true
 }
 
 /// Git work with no agent to scope it: under the profile, when there is one.
@@ -1160,6 +1175,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         product: None,
         audit_pending: None,
         audit_live: None,
+        leaving_audit: None,
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,
@@ -1176,6 +1192,96 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A routing change reaches the live provider whole, without the key
+    /// being resolved again: with no key resolvable anywhere, the live
+    /// provider is still rebuilt with the rules and both copies of the
+    /// config carry them. A key gone since connect used to leave the old
+    /// provider live under a screen that showed the new rules. Another
+    /// connection's rules reach the copies and leave the live provider.
+    #[test]
+    fn routing_applies_whole_without_resolving_the_key() {
+        let home = tempfile::TempDir::new().unwrap();
+        let cwd = tempfile::TempDir::new().unwrap();
+        let mut cfg = Config::default();
+        // A connection whose key is nowhere: not in the environment, not
+        // in a file, so the test does not depend on the machine's keys.
+        let mut ghost = cfg.connections["openrouter"].clone();
+        ghost.env_key = Some("RYTER_TEST_KEY_THAT_IS_NOT_SET".into());
+        ghost.api_key = None;
+        cfg.connections.insert("ghost".into(), ghost.clone());
+        cfg.connections.insert("other".into(), ghost.clone());
+        assert!(
+            resolve_secret(&cfg, &ConnectionId::new("ghost")).is_err(),
+            "no key must be resolvable for the ghost connection"
+        );
+        let session = Session::create(home.path(), cwd.path(), "ghost".into(), "m".into()).unwrap();
+        let (ev_tx, _ev_rx) = mpsc::channel();
+        let (user_io, _asks) = UserIo::pair();
+        let mut a = build_agent(BuildAgent {
+            cfg: &cfg,
+            profile: SandboxProfile::Off,
+            conn: ghost,
+            key: "the-key-at-connect".into(),
+            session,
+            cwd: cwd.path(),
+            home: home.path(),
+            trusted: false,
+            conn_name: "ghost".into(),
+            model: "m".into(),
+            always_approve: false,
+            yolo: false,
+            ev_tx,
+            cancel: Cancel::new(),
+            user_io,
+        });
+        let rules = Box::new(ryter_core::RoutingConfig {
+            order: vec!["cerebras".into()],
+            ..ryter_core::RoutingConfig::default()
+        });
+        let before = a.provider.clone();
+        assert!(apply_routing(
+            &mut cfg,
+            Some(&mut a),
+            "the-key-at-connect",
+            "ghost",
+            Some(rules.clone())
+        ));
+        assert!(
+            !Arc::ptr_eq(&before, &a.provider),
+            "the live provider is rebuilt with the rules"
+        );
+        assert_eq!(cfg.connections["ghost"].routing, Some(rules.clone()));
+        assert_eq!(
+            a.cfg.as_ref().unwrap().connections["ghost"].routing,
+            Some(rules.clone())
+        );
+        // Another connection: the copies learn, the live provider stays.
+        let live = a.provider.clone();
+        assert!(!apply_routing(
+            &mut cfg,
+            Some(&mut a),
+            "the-key-at-connect",
+            "other",
+            Some(rules.clone())
+        ));
+        assert!(Arc::ptr_eq(&live, &a.provider));
+        assert_eq!(cfg.connections["other"].routing, Some(rules.clone()));
+        assert_eq!(
+            a.cfg.as_ref().unwrap().connections["other"].routing,
+            Some(rules)
+        );
+        // A clear is applied the same way.
+        assert!(apply_routing(
+            &mut cfg,
+            Some(&mut a),
+            "the-key-at-connect",
+            "ghost",
+            None
+        ));
+        assert_eq!(cfg.connections["ghost"].routing, None);
+        assert_eq!(a.cfg.as_ref().unwrap().connections["ghost"].routing, None);
+    }
 
     /// A note about a connection that didn't answer stands until that
     /// connection answers again: a batch that did not include it leaves it,

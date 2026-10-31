@@ -34,6 +34,8 @@ pub struct AuditModal {
     pub ran: Vec<String>,
     pub file: Option<String>,
     pub restored: Vec<String>,
+    /// Files the user changed while the audit ran, left as they were.
+    pub kept: Vec<String>,
     pub checkpointed: bool,
     /// The audit started or used the product: its own data stayed.
     pub product_used: bool,
@@ -65,6 +67,7 @@ impl AuditModal {
             ran,
             file,
             restored,
+            kept,
             checkpointed,
             product_used,
             total_usd,
@@ -83,6 +86,7 @@ impl AuditModal {
             ran: ran.clone(),
             file: file.clone(),
             restored: restored.clone(),
+            kept: kept.clone(),
             checkpointed: *checkpointed,
             product_used: *product_used,
             total_usd: *total_usd,
@@ -182,7 +186,7 @@ impl AuditModal {
                 ]));
             }
         }
-        let tree: Vec<(String, ratatui::style::Color)> = if !self.checkpointed {
+        let mut tree: Vec<(String, ratatui::style::Color)> = if !self.checkpointed {
             vec![(
                 "no checkpoint: not a git repository, so the audit ran read-only commands".into(),
                 theme.warn,
@@ -201,6 +205,19 @@ impl AuditModal {
             v.extend(self.restored.iter().map(|p| (format!("  {p}"), theme.warn)));
             v
         };
+        // What the user changed while it ran was told from the audit's
+        // changes and left alone.
+        if self.checkpointed && !self.kept.is_empty() {
+            tree.push((
+                format!(
+                    "kept {} file{} you changed while it ran:",
+                    self.kept.len(),
+                    if self.kept.len() == 1 { "" } else { "s" }
+                ),
+                theme.success,
+            ));
+            tree.extend(self.kept.iter().map(|p| (format!("  {p}"), theme.success)));
+        }
         for (i, (text, color)) in tree.into_iter().enumerate() {
             let label = if i == 0 { "tree" } else { "" };
             out.push(Line::from(vec![
@@ -376,6 +393,7 @@ mod tests {
             ],
             file: Some(".ryter/audit.md".into()),
             restored: vec![],
+            kept: vec![],
             checkpointed: true,
             product_used: false,
             filed: true,
@@ -391,6 +409,7 @@ mod tests {
                 file,
                 ran,
                 restored,
+                kept,
                 checkpointed,
                 product_used,
                 filed,
@@ -410,6 +429,7 @@ mod tests {
                 ran,
                 file,
                 restored,
+                kept,
                 checkpointed,
                 product_used,
                 filed,

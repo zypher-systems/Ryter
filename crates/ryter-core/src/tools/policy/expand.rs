@@ -13,13 +13,21 @@ use std::path::{Path, PathBuf};
 
 /// A glob character the shell would not act on, because it was quoted or
 /// escaped, is kept as a character from a private range, so `'*.rs'` and
-/// `*.rs` stay different words. [`plain`] puts the real ones back.
-const QUOTED: [(char, char); 4] = [
+/// `*.rs` stay different words, and a `$` or a backtick that reads nothing
+/// the same way, so `'$x'` is text. [`plain`] puts the real ones back.
+const QUOTED: [(char, char); 6] = [
     ('*', '\u{E000}'),
     ('?', '\u{E001}'),
     ('[', '\u{E002}'),
     ('{', '\u{E003}'),
+    ('$', '\u{E008}'),
+    ('`', '\u{E009}'),
 ];
+
+/// At the head of a value the shell expands when it hands it out: a pattern
+/// or a list in a `for` head. Such a value is read as written where it is
+/// used, from the folder the command is in, not as text.
+pub(super) const LIVE: char = '\u{E004}';
 
 /// Added to a word the gate could not expand: it holds a `$`, so every
 /// check reads it as a word only the shell can read.
@@ -30,7 +38,7 @@ pub(super) const UNREAD: &str = "$*";
 const MAX_MATCHES: usize = 2000;
 const MAX_LOOKED_AT: usize = 50_000;
 /// The most words a `{a,b}` list is expanded to.
-const MAX_LISTED: usize = 256;
+pub(super) const MAX_LISTED: usize = 256;
 
 /// `c` as it is kept when the shell would not act on it.
 pub(super) fn quoted(c: char) -> char {
@@ -55,7 +63,8 @@ pub(super) fn plain(word: &str) -> String {
 /// True when `text` holds one of the private characters already: a command
 /// written with them can't be told from one the gate marked.
 pub(super) fn has_private(text: &str) -> bool {
-    text.chars().any(|c| QUOTED.iter().any(|(_, k)| *k == c))
+    text.chars()
+        .any(|c| c == LIVE || QUOTED.iter().any(|(_, k)| *k == c))
 }
 
 /// Where a relative pattern starts, and where `~` is.
@@ -65,7 +74,7 @@ pub(super) struct Places<'a> {
     pub home: Option<&'a Path>,
 }
 
-fn has_glob(word: &str) -> bool {
+pub(super) fn has_glob(word: &str) -> bool {
     word.contains(['*', '?', '['])
 }
 
@@ -103,7 +112,7 @@ pub(super) fn expand(word: &str, at: &Places) -> Vec<String> {
 
 /// Expand the first `{a,b}` list in `word`, and the lists in what that
 /// leaves. `false` when there are too many to list.
-fn braces(word: &str, out: &mut Vec<String>) -> bool {
+pub(super) fn braces(word: &str, out: &mut Vec<String>) -> bool {
     let mut chars: Vec<char> = word.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -148,7 +157,7 @@ fn braces(word: &str, out: &mut Vec<String>) -> bool {
 
 /// The words a run stands for: `a..e`, `1..10`, `01..10..3`. `None` when
 /// it isn't one, and the shell leaves it as written.
-fn run_of(inner: &str) -> Option<Vec<String>> {
+pub(super) fn run_of(inner: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = inner.split("..").collect();
     let (from, to) = match parts.as_slice() {
         [from, to] | [from, to, _] => (*from, *to),
@@ -352,15 +361,41 @@ fn squeeze(part: &str) -> Vec<char> {
 /// character: which ones is not worked out, and matching too much only
 /// means more is judged.
 pub(super) fn matches(pattern: &[char], name: &[char]) -> bool {
-    match pattern.first() {
-        None => name.is_empty(),
-        Some('*') => (0..=name.len()).any(|k| matches(&pattern[1..], &name[k..])),
-        Some('?') => !name.is_empty() && matches(&pattern[1..], &name[1..]),
-        Some('[') => match set_end(pattern) {
-            Some(end) => !name.is_empty() && matches(&pattern[end + 1..], &name[1..]),
-            None => name.first() == Some(&'[') && matches(&pattern[1..], &name[1..]),
-        },
-        Some(&c) => name.first() == Some(&real(c)) && matches(&pattern[1..], &name[1..]),
+    let (mut p, mut n) = (0, 0);
+    // The last `*`, what follows it, and how much of the name it has taken:
+    // a miss goes back there and gives it one more, so a word with many
+    // stars costs no more than one.
+    let mut star: Option<(usize, usize)> = None;
+    loop {
+        // How far this step of the pattern goes, where it fits the name.
+        let step = match pattern.get(p) {
+            Some('*') => {
+                star = Some((p + 1, n));
+                p += 1;
+                continue;
+            }
+            None => None,
+            Some('?') => (n < name.len()).then_some(p + 1),
+            Some('[') => match set_end(&pattern[p..]) {
+                Some(end) => name.get(n).map(|_| p + end + 1),
+                None => (name.get(n) == Some(&'[')).then_some(p + 1),
+            },
+            Some(&c) => (name.get(n) == Some(&real(c))).then_some(p + 1),
+        };
+        match step {
+            Some(next) => {
+                p = next;
+                n += 1;
+            }
+            None if p == pattern.len() && n == name.len() => return true,
+            None => match star {
+                Some((after, taken)) if taken < name.len() => {
+                    star = Some((after, taken + 1));
+                    (p, n) = (after, taken + 1);
+                }
+                _ => return false,
+            },
+        }
     }
 }
 

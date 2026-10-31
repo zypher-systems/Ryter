@@ -149,9 +149,11 @@ pub fn section(map: &str) -> String {
     format!(
         "## Project map\nThe project's folders and the signatures of its source files, read \
          when this session's first turn began; what has been edited since is not in it \
-         until the conversation is compacted. Go to the file it names instead of searching \
-         for it. It has no line numbers and no bodies: read a file before you edit it. A \
-         large project is not shown whole; `glob` and `grep` find what is not here.\n\n\
+         until the conversation is compacted. Every path in it starts at the project root, \
+         where your tools start: `./` is that root, not a folder to add to a path. Go to the \
+         file it names instead of searching for it. It has no line numbers and no bodies: \
+         read a file before you edit it. A large project is not shown whole; `glob` and \
+         `grep` find what is not here.\n\n\
          {map}\n"
     )
 }
@@ -179,10 +181,13 @@ fn render(
     sampled: bool,
     chars: usize,
 ) -> String {
-    let name = root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| root.display().to_string());
+    // Written like a folder (`name/`), the project's own name read as one:
+    // on a live run a model asked for `name/a.txt`, found nothing, and told
+    // the user the project's files were missing.
+    let root_line = match root.file_name() {
+        Some(name) => format!("./ ({})", name.to_string_lossy()),
+        None => "./".to_string(),
+    };
     let mut counts: Vec<(&str, usize)> = langs.iter().map(|(l, n)| (*l, *n)).collect();
     counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     let counted: Vec<String> = counts
@@ -191,7 +196,7 @@ fn render(
         .map(|(l, n)| format!("{l} {n}"))
         .collect();
     let mut out = format!(
-        "{name}/ · {files} file{} · {}{}\n",
+        "{root_line} · {files} file{} · {}{}\n",
         if files == 1 { "" } else { "s" },
         counted.join(", "),
         if sampled {
@@ -661,9 +666,10 @@ mod tests {
         let name = d.path().file_name().unwrap().to_str().unwrap();
         let first = map.lines().next().unwrap();
         assert!(
-            first.starts_with(&format!("{name}/ · 10 files · ")),
+            first.starts_with(&format!("./ ({name}) · 10 files · ")),
             "{first}"
         );
+        assert!(!map.contains(&format!("{name}/")), "{map}");
         assert!(first.contains("Rust 3"), "{first}");
         assert_eq!(map.lines().nth(1).unwrap(), "Cargo.toml  README.md");
         assert_eq!(map.lines().nth(2).unwrap(), "  build.rs: fn main()");

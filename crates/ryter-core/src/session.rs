@@ -11,7 +11,7 @@ use crate::event::AgentEvent;
 use crate::ids::SessionId;
 use crate::llm::Message;
 use crate::role::Role;
-use crate::spend::Usage;
+use crate::spend::{Usage, format_usd_fine};
 
 /// What a build turn left, for an undo of only its files.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -39,7 +39,9 @@ pub struct SavedFile {
 /// An undo, kept so `/redo` can reverse it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Redo {
-    /// The checkpoint the undo popped, and its record.
+    /// The checkpoint the undo popped, and its record. For an audit's
+    /// rollback, the tree right after it, so that a later `/undo` takes
+    /// back what the rollback put back and nothing it kept.
     pub checkpoint: String,
     /// Its record.
     pub record: TurnRecord,
@@ -51,11 +53,18 @@ pub struct Redo {
     pub paths: Vec<String>,
     /// Ignored files the undo put back: `before` is what the undo replaced.
     pub ignored: Vec<SavedFile>,
+    /// The undo was an audit's rollback, not a build turn undone: `/redo`
+    /// brings the files back as the audit left them.
+    #[serde(default)]
+    pub audit: bool,
 }
 
 /// Session index row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Meta {
+    /// What this was written as: see [`crate::schema`].
+    #[serde(default = "crate::schema::unmarked")]
+    pub schema: u32,
     /// Session id.
     pub id: SessionId,
     /// Working directory.
@@ -113,6 +122,18 @@ pub struct Meta {
 impl Meta {
     /// Whether `model`'s last call had no price. The single field is what
     /// sessions saved before the set hold.
+    /// What this session has cost, in the words the rail uses: `$?.??` when
+    /// nothing was priced, `≥` before a total that leaves calls out, and never
+    /// `$0.00` for a session that cost something or `$?.??` for one that
+    /// made no call.
+    pub fn spend_label(&self) -> String {
+        match (self.spend_usd_total, self.spend_unknown) {
+            (Some(usd), true) if usd > 0.0 => format!("≥{}", format_usd_fine(usd)),
+            (_, true) => "$?.??".into(),
+            (usd, false) => format_usd_fine(usd.unwrap_or(0.0)),
+        }
+    }
+
     pub fn is_unpriced(&self, model: &str) -> bool {
         self.unpriced_models.contains(model) || self.unpriced_model.as_deref() == Some(model)
     }
@@ -133,6 +154,9 @@ impl Meta {
 /// One priced model call.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendRecord {
+    /// What this was written as: see [`crate::schema`].
+    #[serde(default = "crate::schema::unmarked")]
+    pub schema: u32,
     /// Unix millis.
     pub ts: String,
     /// Connection name.
@@ -196,6 +220,7 @@ impl Session {
         fs::create_dir_all(dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
         let now = now_stamp();
         let meta = Meta {
+            schema: crate::schema::SCHEMA,
             id: id.clone(),
             cwd: cwd.to_path_buf(),
             created_at: now.clone(),
@@ -239,6 +264,9 @@ impl Session {
         let text =
             fs::read_to_string(dir.join("meta.json")).map_err(|e| Error::Io(e.to_string()))?;
         let meta: Meta = serde_json::from_str(&text).map_err(|e| Error::Io(e.to_string()))?;
+        // Before anything below can write: saving a newer session's meta
+        // would drop what this Ryter does not know.
+        crate::schema::refuse_newer(meta.schema, dir.join("meta.json").display())?;
         let old_meta = serde_json::to_vec(&meta).map_err(|e| Error::Io(e.to_string()))?;
         // Inspect every log before changing any of them. Only a final,
         // unterminated EOF record is eligible for automatic recovery.
@@ -708,6 +736,7 @@ pub fn spend_record(
     total_usd: Option<f64>,
 ) -> SpendRecord {
     SpendRecord {
+        schema: crate::schema::SCHEMA,
         ts: now_stamp(),
         connection,
         model,
@@ -761,6 +790,7 @@ fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             });
             added += 1;
         }
@@ -960,6 +990,28 @@ pub fn cwd_slug(cwd: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `/sessions` and `ryter sessions` say what the rail says.
+    #[test]
+    fn a_sessions_cost_reads_as_the_rail_reads_it() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut session = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        assert_eq!(session.meta.spend_label(), "$0", "no call, nothing unknown");
+        let row = |model: &str, usd| {
+            spend_record("c".into(), model.into(), Role::Build, Usage::default(), usd)
+        };
+        session.record_spend(row("free", None)).unwrap();
+        assert_eq!(session.meta.spend_label(), "$?.??", "nothing priced");
+        session.record_spend(row("m", Some(0.004))).unwrap();
+        assert_eq!(session.meta.spend_label(), "≥$0.004", "a lower bound");
+
+        let mut session = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        session.record_spend(row("m", Some(0.004))).unwrap();
+        assert_eq!(session.meta.spend_label(), "$0.004", "not $0.00");
+        session.record_spend(row("m", Some(1.5))).unwrap();
+        assert_eq!(session.meta.spend_label(), "$1.50");
+    }
     use tempfile::TempDir;
 
     #[cfg(unix)]
@@ -1261,6 +1313,7 @@ mod tests {
             tool_call_id: id.map(str::to_string),
             tool_calls: calls,
             messages_blocks: None,
+            reasoning_details: None,
         };
         let t = vec![
             msg("user", "go", None, None),
@@ -1294,6 +1347,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 
@@ -1318,6 +1372,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
         s.record_spend(spend_record(

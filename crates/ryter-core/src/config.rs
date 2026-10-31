@@ -1068,6 +1068,12 @@ pub fn write_default_config(home: &Path) -> Result<()> {
 /// Like [`load`], but reads user config from `home` (tests, `RYTER_HOME`).
 pub fn load_at(home: &Path, project_root: Option<&Path>, trusted: bool) -> Result<Config> {
     let mut cfg = Config::default();
+    // Both are read leniently below, and a save would then replace them.
+    for path in [home.join("settings.toml"), routing_path(home)] {
+        if let Ok(text) = fs::read_to_string(&path) {
+            crate::schema::refuse_newer(crate::schema::of_toml(&text), path.display())?;
+        }
+    }
     let user_path = home.join("config.toml");
     if user_path.is_file() {
         merge_file(&mut cfg, &user_path)?;
@@ -1456,7 +1462,7 @@ fn apply_routing_file(cfg: &mut Config, path: &Path) {
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
-    let map = match toml::from_str::<BTreeMap<String, RoutingConfig>>(&text) {
+    let map = match parse_routing(&text) {
         Ok(map) => map,
         Err(e) => {
             cfg.warnings
@@ -1507,13 +1513,32 @@ pub fn load_routing(home: &Path) -> BTreeMap<String, RoutingConfig> {
     let Ok(text) = fs::read_to_string(routing_path(home)) else {
         return BTreeMap::new();
     };
-    toml::from_str(&text).unwrap_or_default()
+    parse_routing(&text).unwrap_or_default()
+}
+
+/// `routing.toml`'s rules. Every top-level key is a connection except the
+/// mark, and a number is no rules: left in, it fails the whole file and every
+/// rule reads as gone. A table is a connection named `schema`.
+fn parse_routing(
+    text: &str,
+) -> std::result::Result<BTreeMap<String, RoutingConfig>, toml::de::Error> {
+    let mut table: toml::Table = toml::from_str(text)?;
+    if table.get("schema").is_some_and(|v| !v.is_table()) {
+        table.remove("schema");
+    }
+    toml::Value::Table(table).try_into()
 }
 
 /// Save the rules set in `/provider`.
 pub fn save_routing(home: &Path, routing: &BTreeMap<String, RoutingConfig>) -> Result<()> {
     fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
-    let body = toml::to_string(routing).map_err(|e| Error::Config(e.to_string()))?;
+    let mut table = toml::Table::try_from(routing).map_err(|e| Error::Config(e.to_string()))?;
+    // A connection named `schema` keeps its table, and the file reads as the
+    // first schema, which it is.
+    table
+        .entry("schema")
+        .or_insert_with(|| toml::Value::Integer(i64::from(crate::schema::SCHEMA)));
+    let body = toml::to_string(&table).map_err(|e| Error::Config(e.to_string()))?;
     fs::write(routing_path(home), body).map_err(|e| Error::Config(e.to_string()))
 }
 
@@ -1523,6 +1548,8 @@ fn default_tools_mode() -> String {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct SettingsFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schema: Option<u32>,
     session_budget_usd: Option<f64>,
     /// `ask`, `always` or `yolo`: the tools mode a session starts in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1599,6 +1626,7 @@ fn apply_settings_file(cfg: &mut Config, path: &Path) {
 pub fn save_settings(home: &Path, cfg: &Config) -> Result<()> {
     fs::create_dir_all(home).map_err(|e| Error::Config(e.to_string()))?;
     let file = SettingsFile {
+        schema: Some(crate::schema::SCHEMA),
         session_budget_usd: Some(cfg.spend.session_budget_usd),
         warn_usd: Some(cfg.spend.warn_usd),
         audit_usd: Some(cfg.spend.audit_usd),
@@ -1652,6 +1680,7 @@ pub fn save_permissions(home: &Path, permissions: &crate::permissions::Permissio
 
 fn merge_file(cfg: &mut Config, path: &Path) -> Result<()> {
     let text = fs::read_to_string(path).map_err(|e| Error::Config(format!("{path:?}: {e}")))?;
+    crate::schema::refuse_newer(crate::schema::of_toml(&text), path.display())?;
     let overlay: ConfigFile =
         toml::from_str(&text).map_err(|e| Error::Config(format!("{path:?}: {e}")))?;
     for k in unknown_ui_keys(&text) {

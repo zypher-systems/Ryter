@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -71,11 +71,74 @@ pub struct Hook {
     pub matcher: Option<String>,
 }
 
+/// The tree before and after a firing of the hooks that changed it.
+pub type Firing = (String, String);
+
+/// When the hooks changed the project while an audit ran, oldest first: the
+/// tree before and after each firing that changed it. The audit's rollback
+/// wants what they wrote, and needs the order: what moved between two
+/// firings is the user's, on the same file or not. A hook is a command of
+/// the audit's whichever tool it fires on, and a watch on the whole tool
+/// would take in a question waiting on the user too, so the tree is looked
+/// at around the hooks.
+#[derive(Debug, Clone, Default)]
+pub struct HookWrites(Arc<Mutex<Option<Vec<Firing>>>>);
+
+impl HookWrites {
+    /// Start noting what hooks change.
+    pub fn start(&self) {
+        if let Ok(mut on) = self.0.lock() {
+            *on = Some(Vec::new());
+        }
+    }
+
+    /// Hand over what is noted so far, and carry on.
+    pub fn take(&self) -> Vec<Firing> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|mut on| on.as_mut().map(std::mem::take))
+            .unwrap_or_default()
+    }
+
+    /// Stop, and hand over what is noted.
+    pub fn stop(&self) -> Vec<Firing> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|mut on| on.take())
+            .unwrap_or_default()
+    }
+
+    fn on(&self) -> bool {
+        self.0.lock().is_ok_and(|on| on.is_some())
+    }
+
+    fn add(&self, before: String, after: String) {
+        if let Ok(mut on) = self.0.lock() {
+            if let Some(noted) = on.as_mut() {
+                noted.push((before, after));
+            }
+        }
+    }
+}
+
+// What is being noted says nothing of which hooks are loaded.
+impl PartialEq for HookWrites {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for HookWrites {}
+
 /// Loaded hooks.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HookSet {
     /// In config order.
     pub hooks: Vec<Hook>,
+    /// When they changed the project, while that is being noted.
+    pub writes: HookWrites,
 }
 
 impl HookSet {
@@ -96,7 +159,10 @@ impl HookSet {
                 })
             })
             .collect();
-        Self { hooks }
+        Self {
+            hooks,
+            writes: HookWrites::default(),
+        }
     }
 
     /// One-line listing for `/hooks`.
@@ -182,19 +248,28 @@ impl HookSet {
         cwd: &Path,
         can_deny: bool,
     ) -> HookDecision {
-        for h in &self.hooks {
-            if h.event != event {
-                continue;
-            }
-            if !matcher_ok(h.matcher.as_deref(), tool) {
-                continue;
-            }
-            match fire(h, &payload, cwd, can_deny) {
-                HookDecision::Deny(m) => return HookDecision::Deny(m),
-                HookDecision::Allow => {}
+        let matching: Vec<&Hook> = self
+            .hooks
+            .iter()
+            .filter(|h| h.event == event && matcher_ok(h.matcher.as_deref(), tool))
+            .collect();
+        let tree = || crate::git::tree_now(cwd).ok().flatten();
+        let before = (!matching.is_empty() && self.writes.on())
+            .then(tree)
+            .flatten();
+        let mut decision = HookDecision::Allow;
+        for h in matching {
+            decision = fire(h, &payload, cwd, can_deny);
+            if matches!(decision, HookDecision::Deny(_)) {
+                break;
             }
         }
-        HookDecision::Allow
+        if let Some(before) = before {
+            if let Some(after) = tree().filter(|after| *after != before) {
+                self.writes.add(before, after);
+            }
+        }
+        decision
     }
 
     fn run_event(

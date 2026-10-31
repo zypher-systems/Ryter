@@ -176,6 +176,7 @@ impl RunFile {
              # model's verbs for those. Change it here or ask the build hat to propose\n\
              # a new one; Ryter asks you to approve it again.\n",
         );
+        s.push_str(&format!("schema = {}\n", crate::schema::SCHEMA));
         if let Some(v) = &self.start {
             s.push_str(&format!("start = {}\n", quoted(v)));
         }
@@ -274,6 +275,9 @@ pub fn find(root: &Path, home: &Path) -> Found {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Found::None,
         Err(e) => return Found::Broken(e.to_string()),
     };
+    if let Err(e) = crate::schema::refuse_newer(crate::schema::of_toml(&text), FILE) {
+        return Found::Broken(e.to_string());
+    }
     let run: RunFile = match toml::from_str(&text) {
         Ok(r) => r,
         Err(e) => return Found::Broken(e.message().to_string()),

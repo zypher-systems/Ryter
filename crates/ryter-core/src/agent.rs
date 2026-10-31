@@ -9,8 +9,8 @@ use std::sync::mpsc::Sender;
 use crate::error::{Error, Result};
 use crate::event::AgentEvent;
 use crate::llm::{
-    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider, StreamDelta,
-    ToolCallAccumulator,
+    AssistantToolCall, CompletionRequest, Message, MessagesEchoAccumulator, Provider,
+    ReasoningDetailsAccumulator, StreamDelta, ToolCallAccumulator,
 };
 use crate::role::Role;
 use crate::session::{Session, spend_record};
@@ -60,6 +60,56 @@ pub struct AuditLive {
     /// The turn started the product, ran its tests, or aimed a command at
     /// its address: its own data (files git ignores) is not restored.
     pub used_product: bool,
+    /// The tree after the audit's last tool call that could change it
+    /// (the checkpoint's, at the start): what the next look compares
+    /// against. `None` without a checkpoint.
+    pub watched: Option<String>,
+    /// A call that could change the tree is running: a change found now
+    /// is the audit's, not the user's.
+    pub in_call: bool,
+    /// Paths that changed while no such call or hook was running: the
+    /// user's, in an editor, each with the tree that holds it as they left
+    /// it, which is what it goes back to when the tree is put back.
+    pub yours: std::collections::BTreeMap<String, String>,
+}
+
+/// What an audit's rollback did: the paths put back, the paths found to
+/// be the user's and left, and the checkpoint of the tree as the audit
+/// left it, which `/redo` restores from.
+#[derive(Debug, Default)]
+struct AuditRollback {
+    put_back: Vec<String>,
+    kept: Vec<String>,
+    after: Option<String>,
+}
+
+/// What an audit's rollback did, for the chat: what was put back and how
+/// to bring it back, and what was the user's and left.
+fn audit_tree_notice(restored: &[String], kept: &[String], before: &str) -> String {
+    let mut s = String::new();
+    if !restored.is_empty() {
+        let them = if restored.len() == 1 { "it" } else { "them" };
+        s.push_str(&format!(
+            "the audit hat changed {} file{}; put back from the checkpoint: {}. `/redo` brings \
+             {them} back as the audit left {them}, until the next build turn.",
+            restored.len(),
+            if restored.len() == 1 { "" } else { "s" },
+            restored.join(", ")
+        ));
+    }
+    if !kept.is_empty() {
+        if !s.is_empty() {
+            s.push(' ');
+        }
+        s.push_str(&format!(
+            "Kept as you left {}, changed while no command of the audit's was running: {}. The \
+             version before the audit: `git restore --source {} -- <path>`.",
+            if kept.len() == 1 { "it" } else { "them" },
+            kept.join(", "),
+            &before[..before.len().min(12)]
+        ));
+    }
+    s
 }
 
 pub struct Agent {
@@ -108,6 +158,9 @@ pub struct Agent {
     /// another hat on in the same turn, so the hat that follows is not
     /// undone by the audit's rollback.
     pub audit_live: Option<AuditLive>,
+    /// The hat the user's yes moves an audit to, put on when the call that
+    /// asked is over.
+    pub leaving_audit: Option<Role>,
     /// The verdict of the last audit turn that ended: filed, or read from
     /// its last words. What `/audit` reports.
     pub last_audit_verdict: Option<bool>,
@@ -487,14 +540,8 @@ impl Agent {
                 // put back after. Without a repository there is no
                 // checkpoint, and the hat is held to looking for the turn.
                 if self.role == Role::Audit {
-                    self.audit_live = Some(AuditLive {
-                        checkpoint: self.audit_checkpoint(),
-                        from: self.session.transcript.len(),
-                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
-                        asked: requested || user.starts_with("[Ryter] Audit"),
-                        started,
-                        used_product: false,
-                    });
+                    let asked = requested || user.starts_with("[Ryter] Audit");
+                    self.audit_live = Some(self.audit_begin(asked, started));
                 }
                 self.turn_inner(user, &mut tools).await
             }
@@ -628,6 +675,7 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })?;
         if self.session.meta.title.is_empty() {
             let t: String = user.chars().take(80).collect();
@@ -703,6 +751,7 @@ impl Agent {
                             tool_call_id: None,
                             tool_calls: None,
                             messages_blocks: None,
+                            reasoning_details: None,
                         })?;
                     }
                     crate::gate::Fit::No(why) => {
@@ -741,6 +790,7 @@ impl Agent {
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
             let mut echo = MessagesEchoAccumulator::default();
+            let mut reasoned = ReasoningDetailsAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut host: Option<String> = None;
@@ -768,6 +818,7 @@ impl Agent {
                     // Capture Anthropic thinking blocks (with signatures) so
                     // the next Messages request can echo them beside tool_use.
                     echo.push(&delta);
+                    reasoned.push(&delta);
                     match delta {
                         StreamDelta::Text(t) => {
                             text.push_str(&t);
@@ -778,7 +829,8 @@ impl Agent {
                         }
                         StreamDelta::ThinkingOpen { .. }
                         | StreamDelta::ThinkingSignature { .. }
-                        | StreamDelta::ThinkingClose { .. } => {}
+                        | StreamDelta::ThinkingClose { .. }
+                        | StreamDelta::ReasoningDetail(_) => {}
                         StreamDelta::ToolCall {
                             stream_key,
                             id,
@@ -893,6 +945,9 @@ impl Agent {
                     Some(call_list.clone())
                 },
                 messages_blocks: echo.finish(),
+                // Cut off at the limit, a detail may have no signature yet,
+                // and one sent back unsigned is refused.
+                reasoning_details: (!truncated).then(|| reasoned.finish(&model)).flatten(),
             })?;
 
             if call_list.is_empty() {
@@ -903,6 +958,7 @@ impl Agent {
                         tool_call_id: None,
                         tool_calls: None,
                         messages_blocks: None,
+                        reasoning_details: None,
                     })?;
                     continue;
                 }
@@ -944,6 +1000,7 @@ impl Agent {
                                 tool_call_id: None,
                                 tool_calls: None,
                                 messages_blocks: None,
+                                reasoning_details: None,
                             })?;
                             continue;
                         } else if cap > 0 {
@@ -1004,6 +1061,9 @@ impl Agent {
                     self.save_ignored(&call.name, &args)?;
                 }
                 self.note_product_use(&call.name, &args);
+                if parsed.is_ok() {
+                    self.audit_watch(&call.name, false)?;
+                }
                 // Read before the command runs: what is not there yet is
                 // what it makes. A `write` of a new file also credits the
                 // folders `create_dir_all` will make, so `rm -rf` of that
@@ -1071,6 +1131,13 @@ impl Agent {
                     Ok(_) => gated_execute(&call.name, &args, &self.ctx),
                 };
                 self.ctx.live = None;
+                let out = match (out, self.leave_audit()) {
+                    (Ok(_), Err(e)) => Ok(crate::tools::ToolOutput::err(format!(
+                        "{} failed: {e}",
+                        call.name
+                    ))),
+                    (out, _) => out,
+                };
                 // Whatever the call came to, the cards it put up are logged
                 // under it, a cancelled one included.
                 self.emit_asked(Some(&call.id))?;
@@ -1087,6 +1154,9 @@ impl Agent {
                         return Err(e);
                     }
                 };
+                if parsed.is_ok() {
+                    self.audit_watch(&call.name, true)?;
+                }
                 // What the formatter changed is this round's edit too,
                 // whether or not it then failed: the check runs after it,
                 // and the session notes it.
@@ -1152,6 +1222,7 @@ impl Agent {
                     tool_call_id: Some(call.id.clone()),
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })?;
                 if stuck {
                     self.answer_unrun(&call_list[i + 1..], "not run: the turn was stopped")?;
@@ -1175,6 +1246,7 @@ impl Agent {
                     tool_call_id: None,
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })?;
             }
             if self.role == Role::Build && !edited.is_empty() {
@@ -1219,6 +1291,7 @@ impl Agent {
                 tool_call_id: Some(c.id.clone()),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             })?;
         }
         Ok(())
@@ -1480,26 +1553,17 @@ impl Agent {
         match answer {
             crate::user_io::Permission::Allow | crate::user_io::Permission::Always => {
                 let from = self.role;
-                // Out of the audit hat by the user's yes: the audit closes
-                // here, tree put back and findings filed, so what the next
-                // hat does in this turn is not undone at its end.
                 if from == Role::Audit {
-                    self.close_audit();
+                    self.leaving_audit = Some(to);
+                } else {
+                    self.put_on(to)?;
+                    self.emit(AgentEvent::ModeChanged { role: to })?;
                 }
-                self.put_on(to)?;
-                self.emit(AgentEvent::ModeChanged { role: to })?;
                 // Into the audit hat by the user's yes: an audit phase of
                 // its own, with its checkpoint, closed at the turn's end or
                 // at the next switch out.
                 if to == Role::Audit && self.audit_live.is_none() {
-                    self.audit_live = Some(AuditLive {
-                        checkpoint: self.audit_checkpoint(),
-                        from: self.session.transcript.len(),
-                        spent_from: self.session.spend_log().map_or(0, |l| l.len()),
-                        asked: false,
-                        started: std::time::Instant::now(),
-                        used_product: false,
-                    });
+                    self.audit_live = Some(self.audit_begin(false, std::time::Instant::now()));
                 }
                 let now = match to {
                     Role::Build => "you may now change files and run commands",
@@ -1613,13 +1677,9 @@ impl Agent {
                     ),
                 })?;
                 let from = self.role;
-                if from != Role::Build {
-                    // Out of the audit hat by the user's yes to a plan: the
-                    // audit closes here, as it does for `request_hat`, so
-                    // the build that follows in this turn is not undone.
-                    if from == Role::Audit {
-                        self.close_audit();
-                    }
+                if from == Role::Audit {
+                    self.leaving_audit = Some(Role::Build);
+                } else if from != Role::Build {
                     self.put_on(Role::Build)?;
                     self.emit(AgentEvent::ModeChanged { role: Role::Build })?;
                 }
@@ -2274,6 +2334,7 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })?;
         Ok(found.map(|(ok, _, could_run)| CheckOutcome {
             cmd,
@@ -2411,45 +2472,188 @@ impl Agent {
         }
     }
 
+    /// Out of the audit hat by the user's yes: the audit closes here, tree
+    /// put back and findings filed, so what the next hat does in this turn
+    /// is not undone at its end. Not before the call that said yes is over:
+    /// its `PostToolUse` hook is the audit's too, and what that wrote would
+    /// stay.
+    fn leave_audit(&mut self) -> Result<()> {
+        let Some(to) = self.leaving_audit.take() else {
+            return Ok(());
+        };
+        self.close_audit();
+        self.put_on(to)?;
+        self.emit(AgentEvent::ModeChanged { role: to })
+    }
+
+    /// An audit turn begins: its checkpoint, and the watch on the tree
+    /// that tells the user's edits during the turn from the audit's.
+    fn audit_begin(&mut self, asked: bool, started: std::time::Instant) -> AuditLive {
+        let checkpoint = self.audit_checkpoint();
+        let dir = self.ctx.workspace.clone();
+        let watched = checkpoint.as_ref().and_then(|sha| {
+            self.ctx
+                .sandboxed(|| crate::git::checkpoint_tree(&dir, sha))
+                .ok()
+        });
+        if let (Some(_), Some(hooks)) = (&watched, &self.ctx.hooks) {
+            hooks.writes.start();
+        }
+        AuditLive {
+            checkpoint,
+            from: self.session.transcript.len(),
+            spent_from: self.session.spend_log().map_or(0, |l| l.len()),
+            asked,
+            started,
+            used_product: false,
+            watched,
+            in_call: false,
+            yours: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// The audit's tree, looked at before and after each of its calls that
+    /// could change it (an edit, a command the gate does not pass as
+    /// read-only, one of the project's verbs, an MCP tool). A change found
+    /// before a call was made while nothing of the audit's ran: the
+    /// user's, in an editor, to be left alone when the tree is put back.
+    /// Hooks are watched where they run ([`crate::hooks::HookWrites`]):
+    /// what they noted since the last look says which moves were theirs.
+    fn audit_watch(&mut self, name: &str, after: bool) -> Result<()> {
+        let Some(last) = self.audit_live.as_ref().and_then(|l| l.watched.clone()) else {
+            return Ok(());
+        };
+        // By the tool's name, not the gate's decision: a command the gate
+        // passes without asking (`printf > file` inside the project) still
+        // changes the tree.
+        if !(matches!(name, "bash" | "write" | "search_replace" | "use_tool")
+            || crate::tools::is_project_verb(name))
+        {
+            return Ok(());
+        }
+        let dir = self.ctx.workspace.clone();
+        let Some(now) = self.ctx.sandboxed(|| crate::git::tree_now(&dir))? else {
+            return Ok(());
+        };
+        let fired = self
+            .ctx
+            .hooks
+            .as_ref()
+            .map(|h| h.writes.take())
+            .unwrap_or_default();
+        let mut moved = std::collections::BTreeMap::new();
+        if !after {
+            self.yours_between(&dir, &last, &fired, &now, &mut moved)?;
+        }
+        if let Some(live) = self.audit_live.as_mut() {
+            live.yours.extend(moved);
+            live.watched = Some(now);
+            live.in_call = !after;
+        }
+        Ok(())
+    }
+
+    /// What the user changed as the tree went from `last` to `now`, each
+    /// path with the tree that holds it as they left it: whatever moved
+    /// outside the spans the hooks ran in (`fired`, oldest first).
+    fn yours_between(
+        &self,
+        dir: &std::path::Path,
+        last: &str,
+        fired: &[crate::hooks::Firing],
+        now: &str,
+        yours: &mut std::collections::BTreeMap<String, String>,
+    ) -> Result<()> {
+        let mut last = last;
+        let spans = fired.iter().map(|(from, to)| (from.as_str(), to.as_str()));
+        for (from, to) in spans.chain([(now, now)]) {
+            if last != from {
+                for path in self
+                    .ctx
+                    .sandboxed(|| crate::git::paths_between(dir, last, from))?
+                {
+                    yours.insert(path, from.to_string());
+                }
+            }
+            last = to;
+        }
+        Ok(())
+    }
+
     /// Put back what an audit turn changed outside Ryter's own folder:
     /// the paths that differ between the checkpoint and the tree now,
     /// mapped from the repository's top to this session's folder, less
     /// everything under `.ryter/` (the audit's own files, and what the
-    /// user approved during the turn: a run file, a plan). Returns the
-    /// paths put back, as git names them.
-    fn audit_restore(&self, dir: &std::path::Path, before: &str) -> Result<Vec<String>> {
-        let Some(after) = self
-            .ctx
-            .sandboxed(|| crate::git::checkpoint(dir, "audit-after"))?
-        else {
+    /// user approved during the turn: a run file, a plan), and less what
+    /// the user changed meanwhile: `yours` from the watch, plus whatever
+    /// moved after the audit's last call ended (`watched`, when that call
+    /// came back) other than by its hooks (`fired`). A path both the
+    /// audit and the user changed is the user's, in either order: it goes
+    /// back to as they left it, and the chat names the checkpoint that
+    /// holds the version before the audit.
+    fn audit_restore(
+        &self,
+        dir: &std::path::Path,
+        before: &str,
+        yours: &std::collections::BTreeMap<String, String>,
+        watched: Option<&str>,
+        fired: &[crate::hooks::Firing],
+    ) -> Result<AuditRollback> {
+        let name = format!("audit-after-{}", &before[..before.len().min(12)]);
+        let Some(after) = self.ctx.sandboxed(|| crate::git::checkpoint(dir, &name))? else {
             return Err(Error::Config("no checkpoint after the audit".into()));
         };
-        let moved = self
+        let after_tree = self
             .ctx
-            .sandboxed(|| crate::git::checkpoint_tree(dir, before))?
-            != self
-                .ctx
-                .sandboxed(|| crate::git::checkpoint_tree(dir, &after))?;
-        if !moved {
-            return Ok(Vec::new());
-        }
+            .sandboxed(|| crate::git::checkpoint_tree(dir, &after))?;
         let top = self.ctx.sandboxed(|| crate::git::toplevel(dir))?;
         let here = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
         let prefix = here
             .strip_prefix(&top)
             .unwrap_or(std::path::Path::new(""))
             .to_path_buf();
+        let ours = |p: &String| crate::audit::kept_from_restore(&prefix, std::path::Path::new(p));
         let paths: Vec<String> = self
             .ctx
             .sandboxed(|| crate::git::paths_between(dir, before, &after))?
             .into_iter()
-            .filter(|p| !crate::audit::kept_from_restore(&prefix, std::path::Path::new(p)))
+            .filter(|p| !ours(p))
             .collect();
-        if !paths.is_empty() {
-            self.ctx
-                .sandboxed(|| crate::git::restore_paths(dir, before, &paths))?;
+        let mut yours = yours.clone();
+        if let Some(watched) = watched {
+            self.yours_between(dir, watched, fired, &after_tree, &mut yours)?;
         }
-        Ok(paths)
+        let (mut kept, put_back): (Vec<String>, Vec<String>) =
+            paths.into_iter().partition(|p| yours.contains_key(p));
+        if !put_back.is_empty() {
+            self.ctx
+                .sandboxed(|| crate::git::restore_paths(dir, before, &put_back))?;
+        }
+        // What the audit or a hook wrote over a change of the user's goes
+        // too, back to the tree that holds it as they left it, even where
+        // the audit's write made the file match the checkpoint again.
+        let mut by_tree: std::collections::BTreeMap<&str, Vec<String>> = Default::default();
+        for (path, tree) in yours.iter().filter(|(p, _)| !ours(p)) {
+            by_tree.entry(tree).or_default().push(path.clone());
+        }
+        for (tree, theirs) in by_tree {
+            let since = self
+                .ctx
+                .sandboxed(|| crate::git::paths_between(dir, tree, &after_tree))?;
+            let over: Vec<String> = theirs.into_iter().filter(|p| since.contains(p)).collect();
+            if !over.is_empty() {
+                self.ctx
+                    .sandboxed(|| crate::git::restore_paths(dir, tree, &over))?;
+                kept.extend(over);
+            }
+        }
+        kept.sort();
+        kept.dedup();
+        Ok(AuditRollback {
+            put_back,
+            kept,
+            after: Some(after),
+        })
     }
 
     /// An audit turn ended: put back whatever it changed, write the audit
@@ -2464,13 +2668,32 @@ impl Agent {
             asked,
             started,
             used_product,
+            watched,
+            in_call,
+            yours,
         } = live;
         let started = &started;
         let dir = self.ctx.workspace.clone();
+        let fired = self
+            .ctx
+            .hooks
+            .as_ref()
+            .map(|h| h.writes.stop())
+            .unwrap_or_default();
         let mut restored: Vec<String> = Vec::new();
+        let mut kept: Vec<String> = Vec::new();
+        let mut after: Option<String> = None;
         if let Some(before) = &checkpoint {
-            match self.audit_restore(&dir, before) {
-                Ok(paths) => restored = paths,
+            // A call that could change the tree never came back (the turn
+            // ended under it): what moved since the watch last looked is
+            // taken for the audit's, as everything was before the watch.
+            let watched = if in_call { None } else { watched.as_deref() };
+            match self.audit_restore(&dir, before, &yours, watched, &fired) {
+                Ok(done) => {
+                    restored = done.put_back;
+                    kept = done.kept;
+                    after = done.after;
+                }
                 // The tree can't be compared: put it back whole, and say
                 // so, rather than leave the audit's changes in place.
                 Err(e) => {
@@ -2492,6 +2715,44 @@ impl Agent {
                 }
             }
         }
+        // What was put back can be brought back: `/redo` restores the
+        // paths from the tree as the audit left it, until a build turn
+        // moves the files on and clears what `/redo` could do. The turn on
+        // record for `/undo` is that one step and no more: the tree right
+        // after the rollback, then those paths. The audit's whole tree
+        // won't do: a file of the user's the rollback recovered differs
+        // there too, and would read as changed since.
+        if let (Some(after), false) = (&after, restored.is_empty()) {
+            let undone_name = format!("audit-undone-{}", &after[..after.len().min(12)]);
+            let undone = self
+                .ctx
+                .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?;
+            if let Some(undone) = undone {
+                let redone_name = format!("audit-redone-{}", &after[..after.len().min(12)]);
+                let redone = self.ctx.sandboxed(|| {
+                    crate::git::checkpoint_of(&dir, &redone_name, &undone, after, &restored)
+                })?;
+                self.session.push_redo(crate::session::Redo {
+                    checkpoint: undone.clone(),
+                    record: crate::session::TurnRecord {
+                        after: Some(redone),
+                        ignored: Vec::new(),
+                    },
+                    files: after.clone(),
+                    undone,
+                    paths: restored.clone(),
+                    ignored: Vec::new(),
+                    audit: true,
+                })?;
+            }
+        }
+        if let Some(before) = &checkpoint {
+            if !restored.is_empty() || !kept.is_empty() {
+                self.emit(AgentEvent::Notice {
+                    message: audit_tree_notice(&restored, &kept, before),
+                })?;
+            }
+        }
         let root = self.root();
         let filed = self.audit_pending.take();
         // What the audit's last words said, where it filed nothing.
@@ -2505,16 +2766,6 @@ impl Agent {
             .next_back();
         if filed.is_none() && !asked && said.is_none() {
             self.last_audit_verdict = None;
-            if !restored.is_empty() {
-                self.emit(AgentEvent::Notice {
-                    message: format!(
-                        "the audit hat changed {} file{}; put back from the checkpoint: {}",
-                        restored.len(),
-                        if restored.len() == 1 { "" } else { "s" },
-                        restored.join(", ")
-                    ),
-                })?;
-            }
             return Ok(());
         }
         let (_, model, _) = self.hat_stack();
@@ -2547,6 +2798,7 @@ impl Agent {
                     &model,
                     &stamp,
                     &restored,
+                    &kept,
                     checkpoint.is_some(),
                     used_product,
                 );
@@ -2579,6 +2831,7 @@ impl Agent {
                     ran: audit.ran.clone(),
                     file: (!file.is_empty()).then_some(file),
                     restored,
+                    kept,
                     product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: true,
@@ -2604,6 +2857,7 @@ impl Agent {
                     ran: Vec::new(),
                     file: None,
                     restored,
+                    kept,
                     product_used: used_product,
                     checkpointed: checkpoint.is_some(),
                     filed: false,
@@ -3346,6 +3600,7 @@ impl Agent {
                 undone,
                 paths: paths.clone(),
                 ignored: saved.clone(),
+                audit: false,
             })?;
             let prev = self.session.meta.checkpoints.last().cloned();
             self.session.set_turn_checkpoint(prev)?;
@@ -3427,10 +3682,13 @@ impl Agent {
             .set_turn_record(&r.checkpoint, r.record.clone())?;
         self.session.set_turn_checkpoint(Some(r.checkpoint))?;
         self.emit(self.checkpoint_event())?;
+        // A `/redo` of an `/undo` of one of these knows only that it was
+        // a turn.
+        let who = if r.audit { "the audit" } else { "that turn" };
         let mut put = r.paths;
         put.extend(r.ignored.into_iter().map(|f| f.path));
         Ok(format!(
-            "redone: {} as the build turn left {}.",
+            "redone: {} as {who} left {}.",
             list(&put),
             if put.len() == 1 { "it" } else { "them" }
         ))
@@ -3585,6 +3843,7 @@ impl Agent {
                 tool_call_id: None,
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             }],
             tools: Vec::new(),
             max_tokens: Some(max_tokens),
@@ -3648,32 +3907,47 @@ impl Agent {
     /// Resolve limits for the same route used to send the request. A base
     /// route override must never leak onto another hat's smaller model.
     fn model_window(&self, model: &str, connection: &str) -> u64 {
+        self.stated_window(model, connection).0
+    }
+
+    /// [`Self::model_window`], and whether anything said so: `false` is the
+    /// guess for a model nothing knows.
+    fn stated_window(&self, model: &str, connection: &str) -> (u64, bool) {
         if let Some(window) = self
             .cfg
             .as_ref()
             .and_then(|c| c.context_windows.get(model))
             .filter(|v| **v > 0)
         {
-            return *window;
+            return (*window, true);
         }
         if model == self.model && connection == self.connection && self.context_window > 0 {
-            return self.context_window;
+            return (self.context_window, true);
         }
         if let Some(window) = crate::llm::model_cache::load(&self.home, connection)
             .and_then(|(models, _)| models.into_iter().find(|m| m.id == model))
             .and_then(|m| m.context_length)
             .filter(|v| *v > 0)
         {
-            return window;
+            return (window, true);
         }
+        let known = crate::compact::known_window(model);
         if let Some(window) = crate::config::load_last_route(&self.home)
             .filter(|r| r.model == model && r.connection == connection)
             .and_then(|r| r.context_length)
             .filter(|v| *v > 0)
         {
-            return window;
+            // The screen saves what it shows, and it shows the guess until a
+            // list says otherwise: a remembered 200k may be the guess again.
+            return (
+                window,
+                window != crate::compact::ASSUMED_WINDOW || known.is_some(),
+            );
         }
-        crate::compact::window_for(model)
+        match known {
+            Some(window) => (window, true),
+            None => (crate::compact::ASSUMED_WINDOW, false),
+        }
     }
 
     fn output_allowance(window: u64) -> u32 {
@@ -3727,9 +4001,12 @@ impl Agent {
         if r.from_provider {
             breakdown.insert(0, ("provider input".into(), r.tokens));
         }
+        let (_, model, connection) = self.hat_stack();
+        let (_, stated) = self.stated_window(&model, &connection);
         self.emit(AgentEvent::Context {
             tokens: r.tokens,
             window: r.window,
+            window_assumed: !stated,
             pct: r.pct,
             messages: r.messages,
             breakdown,
@@ -4041,6 +4318,7 @@ impl Agent {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         });
         let failed = match self.scout_rounds(id, &call, &mut run).await {
             Ok(()) => None,
@@ -4130,6 +4408,7 @@ impl Agent {
             let mut text = String::new();
             let mut calls = ToolCallAccumulator::default();
             let mut echo = MessagesEchoAccumulator::default();
+            let mut reasoned = ReasoningDetailsAccumulator::default();
             let mut usage = Usage::default();
             let mut reported_cost: Option<f64> = None;
             let mut host: Option<String> = None;
@@ -4145,6 +4424,7 @@ impl Agent {
                     let Some(delta) = delta else { break };
                     let delta = delta?;
                     echo.push(&delta);
+                    reasoned.push(&delta);
                     match delta {
                         StreamDelta::Text(t) => text.push_str(&t),
                         StreamDelta::ToolCall {
@@ -4198,6 +4478,7 @@ impl Agent {
                     Some(call_list.clone())
                 },
                 messages_blocks: echo.finish(),
+                reasoning_details: reasoned.finish(&call.model),
             });
             run.answer = text;
             if call_list.is_empty() {
@@ -4244,6 +4525,7 @@ impl Agent {
                     tool_call_id: Some(tc.id.clone()),
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 });
             }
         }
@@ -4449,6 +4731,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     mod acceptance;
+    mod wire;
     use super::*;
     use crate::llm::{MessagesBlock, ReplayProvider};
     use crate::tools::ToolContext;
@@ -4654,6 +4937,7 @@ mod tests {
             product: None,
             audit_pending: None,
             audit_live: None,
+            leaving_audit: None,
             last_audit_verdict: None,
             turn: 0,
             last_input_tokens: None,
@@ -4665,6 +4949,68 @@ mod tests {
             last_check: None,
             session_turns: 0,
         }
+    }
+
+    /// A reply cut off at the limit may hold a detail with no signature yet;
+    /// a whole one goes on the assistant's turn with its model's name.
+    #[tokio::test]
+    async fn only_a_finished_reply_keeps_its_reasoning_details() {
+        let detail = || {
+            StreamDelta::ReasoningDetail(serde_json::json!({
+                "type": "reasoning.text", "index": 0, "text": "t", "signature": "s"
+            }))
+        };
+        let whole = vec![
+            detail(),
+            StreamDelta::Text("done".into()),
+            StreamDelta::Done,
+        ];
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![whole]));
+        agent.turn("q").await.unwrap();
+        let kept = agent.session.transcript.last().unwrap();
+        let echo = kept.reasoning_details.as_ref().expect("kept");
+        assert_eq!(echo.model, "grok-4.6");
+        assert_eq!(echo.details[0]["signature"], "s");
+
+        let cut = vec![detail(), StreamDelta::Truncated, StreamDelta::Done];
+        let (_home, _cwd, mut agent) = setup(ReplayProvider::scripted(vec![
+            cut,
+            vec![StreamDelta::Text("the rest".into()), StreamDelta::Done],
+        ]));
+        agent.turn("q").await.unwrap();
+        let assistant = |m: &&Message| m.role == "assistant";
+        assert!(
+            agent
+                .session
+                .transcript
+                .iter()
+                .filter(assistant)
+                .all(|m| m.reasoning_details.is_none())
+        );
+    }
+
+    /// `/context` says when its window is a guess. A remembered route can
+    /// hold that same guess, saved by the screen that was showing it.
+    #[test]
+    fn a_window_nothing_states_is_said_to_be_assumed() {
+        let (home, _cwd, mut agent) = setup(ReplayProvider::new(vec![]));
+        let stated = |agent: &Agent, model: &str| agent.stated_window(model, "local");
+        assert_eq!(stated(&agent, "mystery"), (200_000, false));
+        assert_eq!(stated(&agent, "grok-4.6"), (500_000, true));
+
+        let route = |context_length| crate::config::LastRoute {
+            context_length,
+            ..crate::config::LastRoute::new("local", "mystery")
+        };
+        crate::config::save_last_route(home.path(), &route(Some(200_000))).unwrap();
+        assert_eq!(stated(&agent, "mystery"), (200_000, false));
+        crate::config::save_last_route(home.path(), &route(Some(8_192))).unwrap();
+        assert_eq!(stated(&agent, "mystery"), (8_192, true));
+
+        let mut cfg = crate::Config::default();
+        cfg.context_windows.insert("mystery".into(), 200_000);
+        agent.cfg = Some(cfg);
+        assert_eq!(stated(&agent, "mystery"), (200_000, true));
     }
 
     #[tokio::test]
@@ -6966,7 +7312,7 @@ mod tests {
         assert!(name.ends_with("-say-what-this-is.md"), "{name}");
         assert_eq!(
             std::fs::read_to_string(&files[0]).unwrap(),
-            format!("# Say what this is\n\n{A_PLAN}\n")
+            format!("# Say what this is\n\n{A_PLAN}\n\n<!-- ryter plan, schema 1 -->\n")
         );
         let saved = format!("{}/{name}", crate::plan::DIR);
         assert_eq!(
@@ -8736,7 +9082,10 @@ mod tests {
         };
         assert!(card.starts_with("audit: "), "{card}");
         assert!(
-            card.contains("\naudits 1 file, +1 −1, read-only\nabout $"),
+            card.contains(
+                "\naudits 1 file, +1 −1, read-only\nputs back what it changes; your own edits \
+                 meanwhile are kept\nabout $"
+            ),
             "{card}"
         );
         let evs: Vec<AgentEvent> = events.try_iter().collect();
@@ -9013,6 +9362,620 @@ mod tests {
             text.contains("left 2 files changed") && text.contains("- `probe.txt`"),
             "{text}"
         );
+        // What was put back is not lost: `/redo` brings it back as the
+        // audit left it, and `/undo` puts it back again.
+        assert!(
+            noticed(&evs, "`/redo` brings them back as the audit left them"),
+            "{evs:?}"
+        );
+        let msg = agent.redo().unwrap();
+        assert!(
+            msg.starts_with("redone: ") && msg.ends_with(" as the audit left them."),
+            "{msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("probe.txt")).unwrap(),
+            "x"
+        );
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi\ny"
+        );
+        let msg = agent.undo().unwrap();
+        assert!(msg.starts_with("undone: put back 2 files"), "{msg}");
+        assert!(!cwd.path().join("probe.txt").exists());
+        assert_eq!(
+            std::fs::read_to_string(cwd.path().join("hello.txt")).unwrap(),
+            "hi\n"
+        );
+    }
+
+    /// A file changed in an editor while the audit runs, while none of
+    /// its commands is running, is the user's: the rollback leaves it as
+    /// they left it and says so, and only the audit's own change is put
+    /// back. The rollback used to put back every path that differed from
+    /// the checkpoint and report the user's edit as the audit's.
+    #[tokio::test]
+    async fn an_edit_made_while_the_audit_ran_is_kept() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.provider = Arc::new(
+            ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "printf y >> hello.txt"}),
+                ),
+                file_audit_call("fail"),
+                say("filed"),
+            ])
+            .between({
+                let d = d.clone();
+                move |i| {
+                    // The second request: the command is over and the
+                    // model is thinking. The user edits a file and adds one.
+                    if i == 1 {
+                        std::fs::write(d.join("other.txt"), "edited by me\n").unwrap();
+                        std::fs::write(d.join("notes.txt"), "mine\n").unwrap();
+                    }
+                }
+            }),
+        );
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        std::fs::write(d.join("other.txt"), "theirs\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into(), "other.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "hi\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("other.txt")).unwrap(),
+            "edited by me\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(d.join("notes.txt")).unwrap(),
+            "mine\n"
+        );
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let [ev] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        let AgentEvent::Audited { restored, kept, .. } = ev else {
+            unreachable!()
+        };
+        assert_eq!(restored, &["hello.txt"]);
+        assert_eq!(kept, &["notes.txt", "other.txt"]);
+        assert!(
+            noticed(
+                &evs,
+                "Kept as you left them, changed while no command of the audit's was running: notes.txt, other.txt."
+            ),
+            "{evs:?}"
+        );
+        let text = std::fs::read_to_string(d.join(".ryter/audit.md")).unwrap();
+        assert!(
+            text.contains("left 1 file changed")
+                && text.contains("2 files changed while no command of the audit's was running")
+                && text.contains("- `notes.txt`"),
+            "{text}"
+        );
+    }
+
+    /// `/undo` after an audit's `/redo` takes back what `/redo` brought and
+    /// nothing else. The record held the whole tree from before the audit
+    /// to after it, so `/undo` put a file the rollback had kept back to
+    /// its older contents and deleted one the user had made, with no
+    /// clash, as neither had changed since. 0.43.0's reviews.
+    #[tokio::test]
+    async fn undo_after_an_audit_redo_leaves_what_the_rollback_kept() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.provider = Arc::new(
+            ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "printf y >> hello.txt"}),
+                ),
+                file_audit_call("fail"),
+                say("filed"),
+            ])
+            .between({
+                let d = d.clone();
+                move |i| {
+                    if i == 1 {
+                        std::fs::write(d.join("other.txt"), "edited by me\n").unwrap();
+                        std::fs::write(d.join("notes.txt"), "mine\n").unwrap();
+                    }
+                }
+            }),
+        );
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        std::fs::write(d.join("other.txt"), "theirs\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into(), "other.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        agent.turn("audit it").await.unwrap();
+        let read = |name: &str| std::fs::read_to_string(d.join(name)).unwrap();
+        let kept = |read: &dyn Fn(&str) -> String| {
+            assert_eq!(read("other.txt"), "edited by me\n");
+            assert_eq!(read("notes.txt"), "mine\n");
+        };
+        assert_eq!(read("hello.txt"), "hi\n");
+        kept(&read);
+        for who in ["the audit", "that turn"] {
+            assert_eq!(
+                agent.redo().unwrap(),
+                format!("redone: hello.txt as {who} left it.")
+            );
+            assert_eq!(read("hello.txt"), "hi\ny");
+            kept(&read);
+            let undone = agent.undo().unwrap();
+            assert!(
+                undone.starts_with("undone: put back 1 file (hello.txt)"),
+                "{undone}"
+            );
+            assert_eq!(read("hello.txt"), "hi\n");
+            kept(&read);
+        }
+    }
+
+    /// The rollback brings back a file of the user's the audit wrote over,
+    /// so the tree after it differs from the audit's in that file as well.
+    /// `/undo` after `/redo` compared with the audit's whole tree, took
+    /// that file for a later edit and refused. 0.43.0's fourth round.
+    #[tokio::test]
+    async fn undo_after_an_audit_redo_is_not_stopped_by_an_edit_it_recovered() {
+        for command in [
+            "printf y > hello.txt; printf y > other.txt",
+            "printf y > hello.txt; rm other.txt",
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            std::fs::write(d.join("other.txt"), "theirs\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into(), "other.txt".into()], "base").unwrap();
+            agent.provider = Arc::new(
+                ReplayProvider::scripted(vec![
+                    call("bash", serde_json::json!({"command": command})),
+                    file_audit_call("pass"),
+                    say("filed"),
+                ])
+                .between({
+                    let d = d.clone();
+                    move |i| {
+                        if i == 0 {
+                            std::fs::write(d.join("hello.txt"), "mine\n").unwrap();
+                        }
+                    }
+                }),
+            );
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            agent.turn("audit it").await.unwrap();
+            let read = |name: &str| std::fs::read_to_string(d.join(name)).unwrap();
+            assert_eq!(read("hello.txt"), "mine\n", "{command}");
+            assert_eq!(read("other.txt"), "theirs\n", "{command}");
+            for who in ["the audit", "that turn"] {
+                assert_eq!(
+                    agent.redo().unwrap(),
+                    format!("redone: other.txt as {who} left it."),
+                    "{command}"
+                );
+                assert_eq!(read("hello.txt"), "mine\n", "{command}");
+                let undone = agent.undo().unwrap();
+                assert!(
+                    undone.starts_with("undone: put back 1 file (other.txt)"),
+                    "{command}: {undone}"
+                );
+                assert_eq!(read("hello.txt"), "mine\n", "{command}");
+                assert_eq!(read("other.txt"), "theirs\n", "{command}");
+            }
+            // An edit after the redo is one: `/undo` still stops for it.
+            agent.redo().unwrap();
+            std::fs::write(d.join("other.txt"), "mine too\n").unwrap();
+            let refused = agent.undo().unwrap();
+            assert!(refused.starts_with("not undone"), "{command}: {refused}");
+        }
+    }
+
+    /// An audit's MCP tool that writes to the project is the audit's
+    /// change: its call was not watched, so the file was taken for an
+    /// edit of the user's and stayed changed.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_an_audits_mcp_tool_wrote_goes_back() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        let reply = |id: u32, result: &str| {
+            format!("printf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":{id},\"result\":{result}}}'\n")
+        };
+        let script = format!(
+            "read _\n{}read _\nread _\n{}read _\nprintf 'from MCP\\n' > '{}'\n{}sleep 30\n",
+            reply(1, r#"{"protocolVersion":"2024-11-05","capabilities":{}}"#),
+            reply(
+                2,
+                r#"{"tools":[{"name":"edit","description":"edits","inputSchema":{"type":"object","properties":{}}}]}"#
+            ),
+            d.join("hello.txt").display(),
+            reply(3, r#"{"content":[{"type":"text","text":"done"}]}"#),
+        );
+        let server: crate::config::McpServerConfig = serde_json::from_value(serde_json::json!({
+            "command": "sh",
+            "args": ["-c", script],
+        }))
+        .unwrap();
+        let hub = crate::mcp::McpHub::connect(&[("fake".to_string(), server)].into()).unwrap();
+        agent.ctx.mcp = Some(Arc::new(std::sync::Mutex::new(hub)));
+        agent.provider = Arc::new(ReplayProvider::scripted(vec![
+            call(
+                "use_tool",
+                serde_json::json!({"name": "fake__edit", "arguments": {}}),
+            ),
+            file_audit_call("pass"),
+            say("filed"),
+        ]));
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "hi\n",
+            "{evs:?}"
+        );
+        let [AgentEvent::Audited { restored, kept, .. }] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        assert_eq!(restored, &["hello.txt"]);
+        assert!(kept.is_empty(), "{kept:?}");
+    }
+
+    /// A hook is a command of the audit's too, on any tool, and it is
+    /// watched where it runs. Around a whole call the watch would take in
+    /// a question to the user, and `request_hat` may or may not end the
+    /// audit from inside its call, so what one wrote around `read_file` or
+    /// around a `request_hat` that changed nothing was taken for the user's.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_a_hook_wrote_during_an_audit_goes_back() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        for (event, tool, args) in [
+            (
+                "PostToolUse",
+                "read_file",
+                serde_json::json!({"path": "hello.txt"}),
+            ),
+            (
+                "PreToolUse",
+                "read_file",
+                serde_json::json!({"path": "hello.txt"}),
+            ),
+            (
+                "PostToolUse",
+                "request_hat",
+                serde_json::json!({"hat": "audit"}),
+            ),
+            (
+                "PreToolUse",
+                "request_hat",
+                serde_json::json!({"hat": "audit"}),
+            ),
+        ] {
+            agent.ctx.hooks = Some(hook_writing(event, tool, &d));
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![
+                call(tool, args),
+                file_audit_call("pass"),
+                say("filed"),
+            ]));
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            agent.turn("audit it").await.unwrap();
+            assert_eq!(
+                std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+                "hi\n",
+                "{event} {tool}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn hook_writing(
+        event: &str,
+        tool: &str,
+        project: &std::path::Path,
+    ) -> Arc<crate::hooks::HookSet> {
+        Arc::new(crate::hooks::HookSet::from_config(&[
+            crate::config::HookConfig {
+                event: event.into(),
+                matcher: Some(tool.into()),
+                command: Some(format!(
+                    "printf hooked > '{}'",
+                    project.join("hello.txt").display()
+                )),
+                url: None,
+            },
+        ]))
+    }
+
+    /// A hook's write and the user's edit on one file, in either order: the
+    /// file ends as the user left it. A path a hook had touched used to be
+    /// the audit's for the rest of the turn whatever came after, and the
+    /// rollback put the user's edit back to the checkpoint: 0.43.0's third
+    /// round. Written after the user's edit, the hook's write goes and the
+    /// edit stays. A later command makes no difference to either.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_hook_and_you_on_one_file_leave_it_as_you_left_it() {
+        // The request the user's edit comes during: 0 is before the call the
+        // hook fires on, 1 is after it.
+        for (edited_at, a_command_follows) in [(0, false), (0, true), (1, false), (1, true)] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+            agent.ctx.hooks = Some(hook_writing("PostToolUse", "read_file", &d));
+            let mut script = vec![call("read_file", serde_json::json!({"path": "hello.txt"}))];
+            if a_command_follows {
+                script.push(call("bash", serde_json::json!({"command": "true"})));
+            }
+            script.extend([file_audit_call("pass"), say("filed")]);
+            agent.provider = Arc::new(ReplayProvider::scripted(script).between({
+                let d = d.clone();
+                move |i| {
+                    if i == edited_at {
+                        std::fs::write(d.join("hello.txt"), "mine\n").unwrap();
+                    }
+                }
+            }));
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            let (tx, events) = std::sync::mpsc::channel();
+            agent.sink = Some(tx);
+            agent.turn("audit it").await.unwrap();
+            let case = (edited_at, a_command_follows);
+            assert_eq!(
+                std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+                "mine\n",
+                "{case:?}"
+            );
+            let evs: Vec<AgentEvent> = events.try_iter().collect();
+            let [AgentEvent::Audited { restored, kept, .. }] = audited(&evs)[..] else {
+                panic!("one audit: {evs:?}");
+            };
+            assert!(restored.is_empty(), "{case:?}: {restored:?}");
+            assert_eq!(kept, &["hello.txt"], "{case:?}");
+        }
+    }
+
+    /// The same for the audit's own command: an edit it then wrote over
+    /// goes back to as the user left it, not to the checkpoint and not to
+    /// what the command made of it. That holds where the command put the
+    /// file back to the checkpoint's contents, leaving nothing between the
+    /// checkpoint and the end to see.
+    #[tokio::test]
+    async fn an_edit_the_audit_wrote_over_goes_back_to_as_you_left_it() {
+        for command in ["printf y > hello.txt", "printf 'hi\\n' > hello.txt"] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+            agent.provider = Arc::new(
+                ReplayProvider::scripted(vec![
+                    call("bash", serde_json::json!({"command": command})),
+                    file_audit_call("pass"),
+                    say("filed"),
+                ])
+                .between({
+                    let d = d.clone();
+                    move |i| {
+                        if i == 0 {
+                            std::fs::write(d.join("hello.txt"), "mine\n").unwrap();
+                        }
+                    }
+                }),
+            );
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            agent.turn("audit it").await.unwrap();
+            assert_eq!(
+                std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+                "mine\n",
+                "{command}"
+            );
+        }
+    }
+
+    /// The user's yes to another hat closed the audit from inside the call
+    /// that asked, and `PostToolUse` fires after the call: what that hook
+    /// wrote came after the rollback, and stayed. 0.43.0's third round.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn what_a_hook_wrote_on_the_way_out_of_an_audit_goes_back() {
+        for (event, tool, args) in [
+            (
+                "PostToolUse",
+                "request_hat",
+                serde_json::json!({"hat": "build"}),
+            ),
+            (
+                "PreToolUse",
+                "request_hat",
+                serde_json::json!({"hat": "build"}),
+            ),
+            (
+                "PostToolUse",
+                "present_plan",
+                serde_json::json!({"title": "Fix", "plan": "Fix the greeting."}),
+            ),
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+            agent.ctx.hooks = Some(hook_writing(event, tool, &d));
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![
+                call(tool, args),
+                say("done"),
+                say("done"),
+            ]));
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            let (io, rx) = crate::user_io::UserIo::pair();
+            agent.ctx.user_io = Some(io);
+            let answering = std::thread::spawn(move || {
+                while let Ok(req) = rx.recv() {
+                    match req {
+                        crate::user_io::UserRequest::Plan { reply, .. } => {
+                            let _ = reply.send(crate::user_io::PlanAnswer::Approve);
+                        }
+                        crate::user_io::UserRequest::Permission { reply, .. } => {
+                            let _ = reply.send(crate::user_io::Permission::Allow);
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            agent.turn("audit it").await.unwrap();
+            agent.ctx.user_io = None;
+            answering.join().unwrap();
+            assert_eq!(agent.role, Role::Build, "{event} {tool}");
+            assert!(agent.audit_live.is_none(), "{event} {tool}");
+            assert_eq!(
+                std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+                "hi\n",
+                "{event} {tool}"
+            );
+        }
+    }
+
+    /// With hooks set, the watch used to take in every call, and a card
+    /// that waits on the user is a call: what they edited while it stood
+    /// was put back as the audit's. The plan panel closes the audit from
+    /// inside its call, and that was the sharpest case.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn an_edit_made_while_a_card_stood_is_kept_with_hooks_set() {
+        for (tool, args) in [
+            (
+                "present_plan",
+                serde_json::json!({"title": "Fix", "plan": "Fix the greeting."}),
+            ),
+            ("ask_user", serde_json::json!({"question": "which?"})),
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+            agent.ctx.hooks = Some(hook_writing("PostToolUse", "no_such_tool", &d));
+            agent.provider = Arc::new(ReplayProvider::scripted(vec![
+                call(tool, args),
+                say("done"),
+                say("done"),
+            ]));
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            let (io, rx) = crate::user_io::UserIo::pair();
+            agent.ctx.user_io = Some(io);
+            let answering = std::thread::spawn({
+                let d = d.clone();
+                move || {
+                    let mine = || std::fs::write(d.join("notes.txt"), "mine\n").unwrap();
+                    let mut carded = 0;
+                    while let Ok(req) = rx.recv() {
+                        match req {
+                            crate::user_io::UserRequest::Plan { reply, .. } => {
+                                mine();
+                                carded += 1;
+                                let _ = reply.send(crate::user_io::PlanAnswer::Approve);
+                            }
+                            crate::user_io::UserRequest::Question { reply, .. } => {
+                                mine();
+                                carded += 1;
+                                let _ = reply.send("that one".into());
+                            }
+                            crate::user_io::UserRequest::Permission { reply, .. } => {
+                                let _ = reply.send(crate::user_io::Permission::Allow);
+                            }
+                            _ => {}
+                        }
+                    }
+                    carded
+                }
+            });
+            agent.turn("audit it").await.unwrap();
+            agent.ctx.user_io = None;
+            assert_eq!(answering.join().unwrap(), 1, "{tool}");
+            assert_eq!(
+                std::fs::read_to_string(d.join("notes.txt")).unwrap(),
+                "mine\n",
+                "{tool}"
+            );
+        }
+    }
+
+    /// A file the audit changed and the user then changed too, while no
+    /// command ran, stays as the user left it: a conflict is not settled
+    /// by replacing their version. The chat names the checkpoint that
+    /// holds the version before the audit.
+    #[tokio::test]
+    async fn a_file_changed_by_the_audit_and_then_by_you_stays_yours() {
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+        let d = cwd.path().to_path_buf();
+        agent.provider = Arc::new(
+            ReplayProvider::scripted(vec![
+                call(
+                    "bash",
+                    serde_json::json!({"command": "printf y >> hello.txt"}),
+                ),
+                file_audit_call("pass"),
+                say("filed"),
+            ])
+            .between({
+                let d = d.clone();
+                move |i| {
+                    if i == 1 {
+                        std::fs::write(d.join("hello.txt"), "yours\n").unwrap();
+                    }
+                }
+            }),
+        );
+        std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+        crate::review::commit(&d, &["hello.txt".into()], "base").unwrap();
+        agent.put_on(Role::Audit).unwrap();
+        agent.ctx.always_approve = true;
+        let (tx, events) = std::sync::mpsc::channel();
+        agent.sink = Some(tx);
+        agent.turn("audit it").await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("hello.txt")).unwrap(),
+            "yours\n"
+        );
+        let evs: Vec<AgentEvent> = events.try_iter().collect();
+        let [ev] = audited(&evs)[..] else {
+            panic!("one audit: {evs:?}");
+        };
+        let AgentEvent::Audited { restored, kept, .. } = ev else {
+            unreachable!()
+        };
+        assert!(restored.is_empty(), "{restored:?}");
+        assert_eq!(kept, &["hello.txt"]);
+        assert!(
+            noticed(&evs, "The version before the audit: `git restore --source "),
+            "{evs:?}"
+        );
+        // Nothing was put back, so there is nothing for `/redo` to bring.
+        assert_eq!(agent.redo().unwrap(), "nothing to redo");
     }
 
     /// With no repository there is no checkpoint: the audit is told, held
@@ -10628,6 +11591,7 @@ mod tests {
                     tool_call_id: None,
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })
                 .unwrap();
             agent
@@ -10642,6 +11606,7 @@ mod tests {
                         arguments: r#"{"path":"hello.txt"}"#.into(),
                     }]),
                     messages_blocks: None,
+                    reasoning_details: None,
                 })
                 .unwrap();
             agent
@@ -10652,6 +11617,7 @@ mod tests {
                     tool_call_id: Some(format!("c{i}")),
                     tool_calls: None,
                     messages_blocks: None,
+                    reasoning_details: None,
                 })
                 .unwrap();
         }

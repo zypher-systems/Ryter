@@ -1359,6 +1359,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
         s.push_message(ryter_core::Message {
@@ -1367,6 +1368,7 @@ fn a_resumed_session_has_the_rack_it_had() {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
         let mut all = vec![AgentEvent::TurnStarted { turn, role, at: 0 }];
@@ -1484,6 +1486,7 @@ fn the_sessions_count_follows_new_and_delete() {
         tool_call_id: None,
         tool_calls: None,
         messages_blocks: None,
+        reasoning_details: None,
     })
     .unwrap();
     v.session_id = a.meta.id.to_string();
@@ -1571,6 +1574,7 @@ fn the_startup_reads_the_sessions_count_from_the_disk() {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         })
         .unwrap();
     drop(first);
@@ -1874,6 +1878,7 @@ fn reviewed(verdict: Option<bool>) -> View {
             ran: Vec::new(),
             file: None,
             restored: Vec::new(),
+            kept: vec![],
             checkpointed: true,
             product_used: false,
             filed: false,
@@ -2625,6 +2630,7 @@ fn the_wheel_scrolls_the_audit_card() {
         ran: vec!["cargo test".into()],
         file: Some(".ryter/audit.md".into()),
         restored: Vec::new(),
+        kept: vec![],
         checkpointed: true,
         product_used: false,
         filed: true,
@@ -4962,6 +4968,7 @@ fn a_docked_card_clears_its_rows() {
             ran: vec!["cargo test".into()],
             file: Some(".ryter/audit.md".into()),
             restored: Vec::new(),
+            kept: vec![],
             checkpointed: true,
             product_used: false,
             filed: true,

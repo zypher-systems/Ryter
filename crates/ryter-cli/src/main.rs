@@ -611,6 +611,7 @@ async fn run_prompt(
         product: None,
         audit_pending: None,
         audit_live: None,
+        leaving_audit: None,
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,
@@ -1207,6 +1208,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         product: None,
         audit_pending: None,
         audit_live: None,
+        leaving_audit: None,
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens: None,
@@ -1349,6 +1351,7 @@ fn serve_host_from_config(
         product: None,
         audit_pending: None,
         audit_live: None,
+        leaving_audit: None,
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens: None,
@@ -1430,7 +1433,7 @@ fn spend_cmd(id: Option<&str>) -> ryter_core::Result<()> {
         "session {}  model {}  total {}",
         session.meta.id,
         session.meta.model,
-        format_usd(session.meta.spend_usd_total)
+        session.meta.spend_label()
     );
     if session.meta.spend_unknown {
         println!("(some calls are unpriced or incomplete; the total is a lower bound)");
@@ -1469,7 +1472,7 @@ fn sessions_cmd() -> ryter_core::Result<()> {
             s.meta.id,
             s.meta.mode.map_or(Role::Build, Role::hat),
             s.meta.model,
-            format_usd(s.meta.spend_usd_total),
+            s.meta.spend_label(),
             s.preview
         );
     }

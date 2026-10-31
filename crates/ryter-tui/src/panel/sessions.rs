@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::text::Line;
-use ryter_core::{Session, format_usd};
+use ryter_core::Session;
 
 use super::{Body, Notice, Outcome, Panel, PanelEnv, widgets};
 use crate::action::{Action, SessionsMode};
@@ -23,8 +23,8 @@ pub struct Row {
     pub updated_ms: Option<u64>,
     /// Transcript rows.
     pub messages: usize,
-    /// Known spend.
-    pub spend: Option<f64>,
+    /// What it cost, as the rail says it.
+    pub spend: String,
     /// The hat it was left in.
     pub hat: String,
 }
@@ -110,7 +110,7 @@ impl Sessions {
                 },
                 updated_ms: s.updated_millis(),
                 messages: s.messages,
-                spend: s.meta.spend_usd_total,
+                spend: s.meta.spend_label(),
                 hat: s
                     .meta
                     .mode
@@ -216,7 +216,7 @@ impl Panel for Sessions {
                 wrap::truncate(&title, w.saturating_sub(44).max(12)),
                 relative(now, r.updated_ms),
                 r.messages.to_string(),
-                format_usd(r.spend),
+                r.spend.clone(),
                 r.hat.clone(),
                 r.short.clone(),
             ]

@@ -1,0 +1,27 @@
+event: message_start
+data: {"message":{"container":null,"content":[],"diagnostics":null,"id":"wire_1","model":"claude-opus-5-5","role":"assistant","stop_details":null,"stop_reason":null,"stop_sequence":null,"type":"message","usage":{"cache_creation":{"ephemeral_1h_input_tokens":0,"ephemeral_5m_input_tokens":177},"cache_creation_input_tokens":177,"cache_read_input_tokens":10851,"inference_geo":"global","input_tokens":2,"output_tokens":21,"service_tier":"standard","speed":"standard"}},"type":"message_start"}
+
+event: content_block_start
+data: {"content_block":{"text":"","type":"text"},"index":0,"type":"content_block_start"}
+
+event: ping
+data: {"type":"ping"}
+
+event: content_block_delta
+data: {"delta":{"text":"a.txt has 2718","type":"text_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_delta
+data: {"delta":{"text":" and b.txt has ","type":"text_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_delta
+data: {"delta":{"text":"3141.","type":"text_delta"},"index":0,"type":"content_block_delta"}
+
+event: content_block_stop
+data: {"index":0,"type":"content_block_stop"}
+
+event: message_delta
+data: {"delta":{"container":null,"stop_details":null,"stop_reason":"end_turn","stop_sequence":null},"type":"message_delta","usage":{"cache_creation_input_tokens":177,"cache_read_input_tokens":10851,"input_tokens":2,"output_tokens":21,"output_tokens_details":{"thinking_tokens":0}}}
+
+event: message_stop
+data: {"type":"message_stop"}
+

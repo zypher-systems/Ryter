@@ -38,14 +38,23 @@ impl ContextReport {
 
 /// Context window of a model Ryter knows; unknown is 200k.
 pub fn window_for(model: &str) -> u64 {
-    match model {
+    known_window(model).unwrap_or(ASSUMED_WINDOW)
+}
+
+/// The window taken for a model nothing says anything about.
+pub const ASSUMED_WINDOW: u64 = 200_000;
+
+/// Ryter's own row for `model`; `None` for an id it does not know by name.
+pub fn known_window(model: &str) -> Option<u64> {
+    Some(match model {
         "grok-4.7" | "grok-4.6" | "grok-4.6-latest" | "grok-4.5" | "grok-4.5-latest" => 500_000,
         "grok-4.3" | "grok-4.3-latest" => 1_000_000,
         m if m.starts_with("gpt-6") || m.starts_with("gpt-5.6") => 1_050_000,
         // Claude 4.6 and later; Haiku 4.5 and older keep 200k.
         m if crate::llm::claude_version(m).is_some_and(|v| v >= (4, 6)) => 1_000_000,
-        _ => 200_000,
-    }
+        m if crate::llm::claude_version(m).is_some() => 200_000,
+        _ => return None,
+    })
 }
 
 /// Compact token count (`0`, `12k`, `500k`, `1.2M`).
@@ -80,7 +89,7 @@ pub const KEEP_USER_TURNS: usize = 4;
 
 /// Cheap token estimate: UTF-8 bytes / 4, matching common harness heuristics.
 pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
-    let mut n = system.len();
+    let mut n = system.len() + reasoning_bytes(messages);
     for m in messages {
         n += m.role.len();
         if let Some(id) = &m.tool_call_id {
@@ -113,6 +122,21 @@ pub fn estimate_tokens(system: &str, messages: &[Message]) -> u64 {
         }
     }
     u64::try_from(n).unwrap_or(u64::MAX).div_ceil(4)
+}
+
+/// The reasoning a request hands back: the running tool loop's, as
+/// `chat_body` sends it. Past turns' is in the transcript and not on the wire.
+fn reasoning_bytes(messages: &[Message]) -> usize {
+    let loop_starts = messages
+        .iter()
+        .rposition(|m| m.role == "user")
+        .map_or(0, |at| at + 1);
+    messages[loop_starts..]
+        .iter()
+        .filter_map(|m| m.reasoning_details.as_ref())
+        .flat_map(|echo| &echo.details)
+        .map(|detail| detail.to_string().len())
+        .sum()
 }
 
 /// Per-contributor token estimates for the `/context` inspector.
@@ -151,6 +175,7 @@ pub fn breakdown(system: &str, messages: &[Message]) -> Vec<(String, u64)> {
         ("assistant text", assistant),
         ("tool calls", calls),
         ("tool output", tool_out),
+        ("reasoning", reasoning_bytes(messages)),
     ]
     .into_iter()
     .filter(|(_, n)| *n > 0)
@@ -257,6 +282,7 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }];
         next.extend(messages[cut..].iter().cloned());
         next
@@ -353,6 +379,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
+            reasoning_details: None,
         }
     }
 
@@ -366,7 +393,9 @@ mod tests {
         assert_eq!(window_for("claude-haiku-4-5"), 200_000);
         assert_eq!(window_for("gpt-6.1-sol"), 1_050_000);
         assert_eq!(window_for("gpt-5.6-luna"), 1_050_000);
-        assert_eq!(window_for("mystery"), 200_000);
+        assert_eq!(window_for("mystery"), ASSUMED_WINDOW);
+        assert_eq!(known_window("mystery"), None);
+        assert_eq!(known_window("claude-haiku-4-5"), Some(200_000));
         assert_eq!(format_tokens(0), "0");
         assert_eq!(format_tokens(500_000), "500k");
         assert_eq!(format_context_used(0, 500_000), "0/500k");
@@ -407,6 +436,7 @@ mod tests {
                     arguments: format!(r#"{{"path":"src/f{i}.rs"}}"#),
                 }]),
                 messages_blocks: None,
+                reasoning_details: None,
             });
             messages.push(Message {
                 role: "tool".into(),
@@ -414,6 +444,7 @@ mod tests {
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             });
         }
         let out = compact(&messages, "ship the flag", 2);
@@ -445,6 +476,7 @@ mod tests {
                 tool_call_id: Some("c1".into()),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             },
         ];
         let rows = breakdown("sys", &messages);
@@ -483,6 +515,7 @@ mod tests {
                     arguments: "{}".into(),
                 }]),
                 messages_blocks: None,
+                reasoning_details: None,
             });
             messages.push(Message {
                 role: "tool".into(),
@@ -490,6 +523,7 @@ mod tests {
                 tool_call_id: Some(format!("c{i}")),
                 tool_calls: None,
                 messages_blocks: None,
+                reasoning_details: None,
             });
         }
         let next = compact(&messages, "", 4);

@@ -1,0 +1,4 @@
+{"role":"user","content":"What is the number in notes.txt?"}
+{"role":"assistant","content":"","tool_calls":[{"id":"call_1","name":"read_file","arguments":"{\"path\":\"notes.txt\"}"}],"messages_blocks":[{"type":"thinking","thinking":"It is in the file.","signature":"sig_1"},{"type":"tool_use","id":"call_1","name":"read_file","input":{"path":"notes.txt"}}]}
+{"role":"tool","content":"   1|The kettle number is 7431.","tool_call_id":"call_1"}
+{"role":"assistant","content":"The number is 7431."}

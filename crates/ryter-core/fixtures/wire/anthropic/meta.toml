@@ -1,0 +1,5 @@
+connection = "anthropic"
+model = "claude-opus-5-5"
+captured = "2026-10-30"
+ryter = "0.42.0"
+commit = "17d66c6"

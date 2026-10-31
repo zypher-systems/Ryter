@@ -229,6 +229,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             verdict,
             headline,
             restored,
+            kept,
             filed,
             total_usd,
             ..
@@ -237,7 +238,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             let cost = total_usd.map_or_else(String::new, |usd| {
                 format!(" · {}", crate::chat::turn_usd(usd))
             });
-            let tree = if restored.is_empty() {
+            let mut tree = if restored.is_empty() {
                 String::new()
             } else {
                 format!(
@@ -246,6 +247,10 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
                     if restored.len() == 1 { "" } else { "s" }
                 )
             };
+            // The user's own edits during the audit, left as they were.
+            if !kept.is_empty() {
+                tree.push_str(&format!(" · kept {} of yours", kept.len()));
+            }
             view.system(format!(
                 "audit · {} · {headline}{cost}{tree}",
                 crate::chat::short_model(model)
@@ -370,6 +375,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
         AgentEvent::Context {
             tokens,
             window,
+            window_assumed,
             pct,
             messages,
             breakdown,
@@ -378,6 +384,7 @@ fn apply_inner(view: &mut View, ev: &AgentEvent) {
             view.ctx_pct = Some(*pct);
             view.ctx_tokens = Some(*tokens);
             view.ctx_window = Some(*window);
+            view.ctx_window_assumed = *window_assumed;
             view.ctx_messages = Some(*messages);
             view.ctx_breakdown = breakdown.clone();
         }
