@@ -2259,6 +2259,8 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     // unread among them is judged unread as well. Doubt only adds to what
     // is judged: an unread `$f` can pass, so a value must never be lost to it.
     let held = what_names_hold(&segs, &sets_of, &sure, &ctx.vars);
+    let sets_of = values_worked_out(sets_of, &sure, &held, &ctx.vars);
+    let held = what_names_hold(&segs, &sets_of, &sure, &ctx.vars);
     let in_doubt = |name: &str| held.iter().any(|h| h.name == name);
     vars.retain(|(n, _)| !in_doubt(n));
     // Names sure to have been set by now, and how deep: a value set under a
@@ -2379,7 +2381,8 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 };
                 // The worst of its readings, and a question at least where
                 // neither is what the shell makes of it.
-                let judged = (0..readings(&s.text, &cx))
+                let judged = readings(&s.text, &cx)
+                    .into_iter()
                     .map(|reading| {
                         let cx = ToolContext {
                             reading,
@@ -6012,6 +6015,12 @@ struct Given {
     value: Option<String>,
     /// `+=`: on top of what the name held, which the line may not say.
     adds: bool,
+    /// With no value, the text that reads other names, as [`lex`] left it:
+    /// [`values_worked_out`] can often say.
+    reads: Option<String>,
+    /// Worked out from a name the gate can't pin down: the value is one the
+    /// name may hold, not the one.
+    doubted: bool,
 }
 
 /// A name the gate can't pin to one value, and all it can say of it.
@@ -6065,8 +6074,8 @@ fn what_names_hold(
                 doubted |= !sure || element || defaulted;
                 unread |= defaulted;
                 for set in of_it {
-                    doubted |= set.adds;
-                    unread |= set.adds || set.value.is_none();
+                    doubted |= set.adds || set.doubted;
+                    unread |= set.adds || set.doubted || set.value.is_none();
                     let Some(v) = &set.value else { continue };
                     let joins = set.adds && values.len() < MOST_JOINED;
                     cut |= set.adds && !joins;
@@ -6114,10 +6123,13 @@ fn sets(s: &Seg) -> Vec<Given> {
     let given = |w: &str, as_lexed: &str, name: &str, value: String| {
         let skip = w.chars().count() - value.chars().count();
         let as_lexed: String = as_lexed.chars().skip(skip).collect();
+        let reads = reads_more(&as_lexed);
         Given {
             name: name.to_string(),
-            value: (!reads_more(&as_lexed)).then_some(value),
+            value: (!reads).then_some(value),
             adds: appends(w),
+            reads: reads.then_some(as_lexed),
+            doubted: false,
         }
     };
     if !said.is_empty() && said.iter().all(|w| assigned(w).is_some()) {
@@ -6133,23 +6145,22 @@ fn sets(s: &Seg) -> Vec<Given> {
     if let Some((name, list)) = loop_head(&lexed) {
         // [`lex`] drops an empty word, and it is a value like any other.
         let empty = (s.text.contains("''") || s.text.contains("\"\"")).then(String::new);
-        let empty = empty.map(Some);
+        let gives = |value: Option<String>, word: Option<&String>| Given {
+            name: name.clone(),
+            reads: word.filter(|w| value.is_none() && reads_more(w)).cloned(),
+            value,
+            adds: false,
+            doubted: false,
+        };
         if list.is_empty() && empty.is_none() {
-            return vec![Given {
-                name,
-                value: None,
-                adds: false,
-            }];
+            return vec![gives(None, None)];
         }
-        return list
+        let listing = list
             .iter()
-            .flat_map(|w| listed(w))
-            .chain(empty)
-            .map(|value| Given {
-                name: name.clone(),
-                value,
-                adds: false,
-            })
+            .flat_map(|w| listed(w).into_iter().map(move |value| (value, w)));
+        return listing
+            .map(|(value, w)| gives(value, Some(w)))
+            .chain(empty.map(|e| gives(Some(e), None)))
             .collect();
     }
     // `export NAME=value`, `declare`, `typeset`, `local` and `readonly` set
@@ -6192,9 +6203,112 @@ fn sets(s: &Seg) -> Vec<Given> {
             } else {
                 value.to_string()
             };
-            Some(given(w, as_lexed, name, value))
+            let mut set = given(w, as_lexed, name, value);
+            set.reads = set.reads.filter(|_| !upper && !lower);
+            Some(set)
         })
         .collect()
+}
+
+/// What `text`, which reads other names, comes to with each value `seen`
+/// holds for them, and whether a default stood in for a name that may have
+/// a value. Nothing where some of it is still only the shell's.
+fn built(text: &str, seen: &[(String, String)]) -> (Vec<String>, bool) {
+    let mut names: Vec<&String> = seen.iter().map(|(n, _)| n).collect();
+    names.sort();
+    names.dedup();
+    names.retain(|n| names_var(text, n) || !in_braces(text, n).is_empty());
+    if past_working_out(text, seen) {
+        return (Vec::new(), false);
+    }
+    let mut each = vec![text.to_string()];
+    for name in names {
+        let values = seen.iter().filter(|(n, _)| n == name);
+        let values: Vec<(String, String)> = values.cloned().collect();
+        each = each
+            .iter()
+            .flat_map(|t| {
+                let one = |v: &(String, String)| known_variables(t, std::slice::from_ref(v), true);
+                values.iter().map(one).collect::<Vec<_>>()
+            })
+            .collect();
+        if each.len() > MOST_JOINED {
+            return (Vec::new(), false);
+        }
+    }
+    let taken: Vec<String> = each.iter().map(|t| defaults_taken(t)).collect();
+    let defaulted = taken != each;
+    if taken.iter().any(|t| reads_more(t)) {
+        return (Vec::new(), false);
+    }
+    (taken.iter().map(|t| expand::plain(t)).collect(), defaulted)
+}
+
+/// `sets_of` with each value that reads names the line gave before it worked
+/// out, in the order the line runs: `f+=$x` adds what `x` holds by then, and
+/// `B=$A` is what `A` is. Read from a name in doubt ([`Held`]) it is in doubt
+/// too, and never more sure than the name it came from.
+fn values_worked_out(
+    sets_of: Vec<Vec<Given>>,
+    sure: &[bool],
+    held: &[Held],
+    outer: &[(String, String)],
+) -> Vec<Vec<Given>> {
+    let mut seen = outer.to_vec();
+    seen.extend(home_dir().map(|h| ("HOME".to_string(), h.to_string_lossy().into_owned())));
+    let mut unsure: Vec<String> = held.iter().map(|h| h.name.clone()).collect();
+    let mut all = Vec::new();
+    for (sets, sure) in sets_of.into_iter().zip(sure) {
+        let mut out = Vec::new();
+        for set in sets {
+            let read = set.reads.as_deref();
+            let (made, defaulted) = read.map_or((Vec::new(), false), |t| built(t, &seen));
+            let from_unsure = read.is_some_and(|t| unsure.iter().any(|n| names_var(t, n)));
+            let doubted = from_unsure || defaulted || made.len() > 1;
+            let mut each: Vec<Given> = made
+                .into_iter()
+                .map(|value| Given {
+                    name: set.name.clone(),
+                    value: Some(value),
+                    adds: set.adds,
+                    reads: None,
+                    doubted,
+                })
+                .collect();
+            if each.is_empty() {
+                each.push(set);
+            }
+            for set in &each {
+                let name = &set.name;
+                let Some(v) = &set.value else {
+                    if !set.adds {
+                        seen.retain(|(n, _)| n != name);
+                    }
+                    unsure.push(name.clone());
+                    continue;
+                };
+                if set.adds {
+                    let had = seen.iter().filter(|(n, _)| n == name);
+                    let joined = had
+                        .take(MOST_JOINED)
+                        .map(|(n, h)| (n.clone(), format!("{h}{v}")));
+                    let joined: Vec<(String, String)> = joined.collect();
+                    seen.extend(joined);
+                } else if *sure && !set.doubted && !unsure.contains(name) {
+                    seen.retain(|(n, _)| n != name);
+                } else {
+                    unsure.push(name.clone());
+                }
+                seen.push((name.clone(), v.clone()));
+                if set.adds {
+                    unsure.push(name.clone());
+                }
+            }
+            out.extend(each);
+        }
+        all.push(out);
+    }
+    all
 }
 
 /// What the `${name:=value}` forms of this part may set: the name keeps
@@ -6206,11 +6320,13 @@ fn defaults_set(seg: &str) -> Vec<Given> {
         while let Some(form) = default_form(&word, from) {
             from = form.at.start + 1;
             if form.op.ends_with('=') {
-                let value = (!reads_more(&form.operand)).then(|| expand::plain(&form.operand));
+                let reads = reads_more(&form.operand);
                 found.push(Given {
                     name: form.name,
-                    value,
+                    value: (!reads).then(|| expand::plain(&form.operand)),
                     adds: false,
+                    reads: reads.then_some(form.operand),
+                    doubted: false,
                 });
             }
         }
@@ -6839,10 +6955,14 @@ fn worked_on(word: &str, vars: &[(String, String)]) -> bool {
 
 /// In a [`ToolContext::reading`]: a word stands as its value, not as what
 /// the shell makes of it. The bits above say which of the words that
-/// [`may_vanish`] are gone, the first [`MOST_VANISHING`] on their own and
-/// any past those together with the last.
+/// [`may_vanish`] are gone.
 const AS_VALUE: usize = 1;
-const MOST_VANISHING: usize = 3;
+/// The most such words tried in every mix. Past it each is tried as the
+/// only one left, every run from the start as gone, and every name as unset
+/// ([`vanishing_mixes`]), and the part asks ([`past_reading`]).
+const MOST_MIXED: usize = 6;
+/// The most words a reading can say anything of. One past it stays.
+const MOST_MARKED: usize = 62;
 
 /// Whether a word, as [`lex_bare_names`] leaves it, is nothing but what a
 /// name the gate has no value for gives, outside quotes: unset, the shell leaves no word at all.
@@ -6861,24 +6981,55 @@ fn may_vanish(bare: &str, vars: &[(String, String)]) -> bool {
     whole && !vars.iter().any(|(n, _)| *n == name)
 }
 
-/// How many readings of a segment are judged ([`read`]). The program is one
-/// word, so what stands behind it as an argument says nothing of what would
-/// run: worked out wrong, `echo` led and the `cat` the shell runs was only
-/// its argument. Two questions make a reading, and every answer is judged:
-/// whether a word stands as worked out or as the value ([`AS_VALUE`]), and
-/// which of the words that [`may_vanish`] are gone, so `$g rm -rf /` is
-/// judged as the `rm` it is where `g` is unset.
-fn readings(seg: &str, ctx: &ToolContext) -> usize {
+/// Which of `words`, each one that [`may_vanish`], to take as gone, as bits.
+/// All of it the line can't say, so past [`MOST_MIXED`] no word may hang on
+/// another: the program is the first word left, and any word can be it.
+fn vanishing_mixes(words: &[&String]) -> Vec<usize> {
+    let count = words.len();
+    let all = (1usize << count) - 1;
+    if count <= MOST_MIXED {
+        return (0..=all).collect();
+    }
+    let gives_text = |w: &&String| {
+        let text = default_form(w, 0).filter(|form| !form.op.ends_with('+'));
+        text.is_some_and(|form| !form.operand.is_empty())
+    };
+    let unset = (0..count).filter(|at| !gives_text(&words[*at]));
+    let unset: usize = unset.map(|at| 1 << at).sum();
+    let alone = (0..count).map(|at| all & !(1 << at));
+    let leading = (0..=count).map(|at| (1 << at) - 1);
+    let mut mixes: Vec<usize> = alone.chain(leading).chain([unset]).collect();
+    mixes.sort_unstable();
+    mixes.dedup();
+    mixes
+}
+
+/// The readings of a segment to judge ([`read`]). The program is one word,
+/// so what stands behind it as an argument says nothing of what would run:
+/// worked out wrong, `echo` led and the `cat` the shell runs was only its
+/// argument. Two questions make a reading: whether a word stands as worked
+/// out or as the value ([`AS_VALUE`]), and which of the words that
+/// [`may_vanish`] are gone, so `$g rm -rf /` is judged as the `rm` it is
+/// where `g` is unset.
+fn readings(seg: &str, ctx: &ToolContext) -> Vec<usize> {
     let said = lex(seg);
     let bare = lex_bare_names(seg);
-    let vanishing = bare.iter().filter(|b| may_vanish(b, &ctx.vars));
-    let vanishing = vanishing.count().min(MOST_VANISHING);
-    if vanishing > 0 {
-        2 << vanishing
+    let vanishing: Vec<&String> = said
+        .iter()
+        .zip(&bare)
+        .filter(|(_, b)| may_vanish(b, &ctx.vars))
+        .map(|(w, _)| w)
+        .take(MOST_MARKED)
+        .collect();
+    if !vanishing.is_empty() {
+        let mixes = vanishing_mixes(&vanishing).into_iter();
+        mixes
+            .flat_map(|gone| [gone << 1, gone << 1 | AS_VALUE])
+            .collect()
     } else if said.iter().any(|w| worked_on(w, &ctx.vars)) {
-        2
+        vec![0, AS_VALUE]
     } else {
-        1
+        vec![0]
     }
 }
 
@@ -6886,14 +7037,19 @@ fn readings(seg: &str, ctx: &ToolContext) -> usize {
 /// name it knows, `${f:$n}`, `${f@E}`. The word as written and the value
 /// are judged, and neither is what will run.
 fn past_reading(seg: &str, ctx: &ToolContext) -> bool {
+    let bare = lex_bare_names(seg);
+    let vanishing = bare.iter().filter(|b| may_vanish(b, &ctx.vars));
+    vanishing.count() > MOST_MIXED || lex(seg).iter().any(|w| past_working_out(w, &ctx.vars))
+}
+
+/// Whether `word` does to a name in `vars` what the gate can't work out.
+fn past_working_out(word: &str, vars: &[(String, String)]) -> bool {
     let same = |s: &str| s.to_string();
-    lex(seg).iter().any(|w| {
-        ctx.vars.iter().any(|(n, v)| {
-            let text = v.strip_prefix(expand::LIVE).unwrap_or(v);
-            in_braces(w, n)
-                .iter()
-                .any(|b| operated(b, text, &ctx.vars, &same).is_none())
-        })
+    vars.iter().any(|(n, v)| {
+        let text = v.strip_prefix(expand::LIVE).unwrap_or(v);
+        in_braces(word, n)
+            .iter()
+            .any(|b| operated(b, text, vars, &same).is_none())
     })
 }
 
@@ -6978,9 +7134,9 @@ fn read(seg: &str, ctx: &ToolContext, every_pattern: bool) -> Vec<String> {
     let mut vanishing = 0;
     for (w, bare) in lex(seg).iter().zip(lex_bare_names(seg)) {
         if may_vanish(&bare, &ctx.vars) {
-            let which = 1 << vanishing.min(MOST_VANISHING - 1);
+            let gone = vanishing < MOST_MARKED && (ctx.reading >> 1) & (1 << vanishing) != 0;
             vanishing += 1;
-            if (ctx.reading >> 1) & which != 0 {
+            if gone {
                 behind.push(w.clone());
                 continue;
             }
@@ -15632,6 +15788,18 @@ mod tests {
             ("export f=.s f+=sh/id_ed25519; cat $f", Decision::Deny),
             ("f=/et f+=c; rm -rf $f", Decision::Deny),
             ("f=/e f+=tc; rm -rf $f", Decision::Deny),
+            // What `+=` adds may be what another name holds.
+            ("f=.s; x=sh/id_ed25519; f+=$x; cat $f", Decision::Deny),
+            ("f=.s; x=sh/id_ed25519; f+=${x}; cat $f", Decision::Deny),
+            ("f=.s; x=sh/id_ed25519; f+=\"$x\"; cat $f", Decision::Deny),
+            ("f=.ss; x=h/id_ed25519; f+=$x; cat $f", Decision::Deny),
+            ("f=/et; x=c; f+=$x; rm -rf $f", Decision::Deny),
+            ("f=/e; x=tc; f+=$x; rm -rf $f", Decision::Deny),
+            ("f=.s x=sh/id_ed25519 f+=$x; cat $f", Decision::Deny),
+            (
+                "for x in sh/id_ed25519; do f=.s; f+=$x; cat $f; done",
+                Decision::Deny,
+            ),
             // `=` starts the chain again, however many came before.
             (
                 "f=0 f=1 f=2 f=3 f=4 f=.s f+=sh/id_ed25519; cat $f",
@@ -15740,6 +15908,36 @@ mod tests {
         }
     }
 
+    /// A value built from names the line gave is what they hold, and no
+    /// surer than they are. Judged unread, each of these passed or asked
+    /// less than the plain command. 0.43.0's seventh round.
+    #[cfg(unix)]
+    #[test]
+    fn a_value_read_from_a_name_is_what_the_name_holds() {
+        let m = machine();
+        for (cmd, verdict) in [
+            ("A=/; B=$A; rm -rf $B", Decision::Deny),
+            ("A=/; B=$A; C=$B; rm -rf $C", Decision::Deny),
+            ("A=/et; B=${A}c; rm -rf $B", Decision::Deny),
+            ("A=x/etc; B=${A#x}; rm -rf $B", Decision::Deny),
+            ("A=/etc/passwd; B=$A; sed -i -e 's/a/b/' $B", Decision::Ask),
+            ("f=${y:-/etc}; rm -rf $f", Decision::Deny),
+            ("f=$HOME/.ssh/id_ed25519; cat $f", Decision::Deny),
+            ("A=/; for f in $A; do rm -rf $f; done", Decision::Deny),
+            ("for x in a /; do f=$x; rm -rf $f; done", Decision::Deny),
+            ("x=/; if a; then x=b; fi; f=$x; rm -rf $f", Decision::Deny),
+            // From a name in doubt it stays in doubt.
+            ("x=a; read x; f=$x; cat $f/id", Decision::Ask),
+            ("x=a; if b; then read x; fi; f=$x; cat $f/id", Decision::Ask),
+            // And what the line never gave stays the shell's.
+            ("f=$y; echo $f", Decision::Allow),
+            ("x=README.md; f=$x; cat $f", Decision::Allow),
+            ("A=src; B=$A/main.py; echo $B", Decision::Allow),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
     /// A word the shell leaves empty is no word, so the next one is the
     /// program, and a value standing in its place made `cat` an argument.
     /// Bash ran each of these. 0.43.0's sixth round.
@@ -15766,6 +15964,33 @@ mod tests {
             ("${g} rm -rf /", Decision::Deny),
             ("${g:+x} rm -rf /", Decision::Deny),
             ("${g:-echo} rm -rf /", Decision::Deny),
+            // However many there are, any one can be the word that stays.
+            (
+                "${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:-sudo} id",
+                Decision::Deny,
+            ),
+            ("${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:-su}", Decision::Deny),
+            (
+                "${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:-doas} id",
+                Decision::Deny,
+            ),
+            (
+                "${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:-pkexec} id",
+                Decision::Deny,
+            ),
+            ("$a $b $c $d $e $f $g rm -rf /", Decision::Deny),
+            (
+                "${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:+x/y} ${e:+x/y} ${f:+x/y} ${g:+x/y} ${h:-su}",
+                Decision::Deny,
+            ),
+            (
+                "${a:+x} ${b:+x} ${c:+x} ${d:+x} ${e:+x} ${f:+x} ${g:+x} ${h:-rm} ${i:--rf} /",
+                Decision::Deny,
+            ),
+            ("${a:+x} ${b:+x} ${c:+x} ${d:+su} ${e:+x}", Decision::Deny),
+            // Past the mixes tried, the rest is a question.
+            ("echo $a $b $c $d $e $f $g", Decision::Ask),
+            ("echo $a $b $c $d $e $f", Decision::Allow),
             // Each word keeps its place: a flag worked out is a flag.
             ("f=-; rm ${f}rf /", Decision::Deny),
             ("f=echo; ${f#x} hi", Decision::Allow),

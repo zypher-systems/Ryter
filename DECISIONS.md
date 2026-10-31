@@ -2,6 +2,24 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-31 — The seventh round of 0.43.0: no word hangs on another, and a value read from a name is that name's
+
+**What the round showed.** One review approved `7cf075c` and one rejected it, rightly, so both must see the new head. Two limits, each drawn in the sixth round. Past three words that may vanish the rest shared a bit, so a fourth word could not be kept while the third was gone, and `${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:-su}` was a question where `su` is refused. And `f+=$x` gave no value even where the line had just given `x` one, so `f=.s; x=sh/id_ed25519; f+=$x; cat $f` passed.
+
+**Vanishing.** Which words vanish can't be told, and every mix is 2^n. The way out is what decides the verdict: the program is the first word left, and any word can be it. Up to six such words are tried in every mix. Past that each is tried as the only one left, each run from the start as gone, and every name as unset, so no word hangs on another, and the part asks, because the mixes between went unread. The ask is named in the guide. `ToolContext.reading` is now one of a list `readings` builds, not a count. The cap is six because seven is rare in a real line and 128 readings a part is nothing.
+
+**Values read from names.** `sets` runs before anything is known, so `values_worked_out` walks the line in order after it, working out each value that reads other names from what the line has given by then, with `built`. That takes `f+=$x`, and the same step takes `B=$A`, `f=${A#x}`, `f=${y:-/etc}`, `for f in $A` and `f=$HOME/.ssh/key`, all of which were unread. The review named only `+=`, and stopping there would have left `A=/; B=$A; rm -rf $B` a question.
+
+The danger is the opposite one: an exact value for a name that isn't exact is looser than an unread word, as `cat $f/id` asks and `cat a/id` doesn't. So a value read from a name in doubt, or from several values, or through a default on a name that may be set, is `doubted`: it joins what the name may hold and the unread verdict stays. `x=a; read x; f=$x; cat $f/id` asks as it did. This is why `what_names_hold` runs twice, once to learn what is in doubt and once on the worked-out values.
+
+An existing test caught the one looseness in the first attempt: a `*.html` list word carries a `None` for what the line may make, and that must not be worked out, as it reads no name.
+
+**How it was checked.** As the last round showed, a clean run means nothing until the generator has failed on the rejected code, so that came first. The argv generator gained indirect values (`i=x; j=$i`, `j+=$i`, `j=${i#x}`), up to six vanishing words in a row and the refused programs. On `7cf075c`: 412 forms too lenient of 15,000. On the fix, same seeds: none. The last runs: 40,000 argv forms and 8,000 forms reaching a stopped path, none more lenient than the plain command, and every line where bash ran a hidden command refused with `rm -rf /` in its place.
+
+Old against new on 75,727 lines: against `7cf075c`, the head one review approved, 1,167 tighter and 321 looser, and against `83555d7` 16,857 and 759. Every looser line was held to the verdict of the plain command. They are lines an accident refused, such as `sed … /etc/passwd` going from Deny to the Ask it gets written plainly. Replay of 1,573 real commands: no verdict changed, which is what lets `B=$A` stand, as the review did not ask for it. No saved format changed.
+
+**Left, and said:** past six vanishing words, a command that needs two particular words kept while others are gone, in no order the three tried mixes cover, is a question and not a refusal. `$g` with a value the line can't show still passes as an argument.
+
 ### 2026-10-31 — The sixth round of 0.43.0: a reading is the command the shell would be given
 
 **What the round showed.** Both reviews rejected `9ef2bae`, and the first of the three holes was mine. The fifth round's decision says a reading can't lose anything if `operated` is wrong about the program. That was not so: `read` ran a word's alternatives in place, so where the worked-out word came to nothing, `f=echo; ${f#echo} cat .env` had the value `echo` in front of `cat` in both readings, and an empty unquoted word is no word. Bash ran `cat`. `83555d7` refused it. The fifth round's comparison of old and new read 57 looser lines and accepted them, and its generators never built this shape, so a clean fuzz said nothing about it.
