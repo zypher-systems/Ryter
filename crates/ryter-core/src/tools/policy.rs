@@ -3162,6 +3162,11 @@ fn assigned(word: &str) -> Option<(&str, &str)> {
     .then_some((name, value))
 }
 
+/// Whether `word`, an assignment, adds to what the name holds: `NAME+=value`.
+fn appends(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(n, _)| n.ends_with('+'))
+}
+
 /// Variables that change how the shell reads the rest of the command:
 /// where `~` is, how words are split, what a pattern matches, what a new
 /// shell runs first. With one of these set, the command the gate read is
@@ -5770,9 +5775,9 @@ fn loop_head(said: &[String]) -> Option<(String, Vec<String>)> {
 }
 
 /// What one word of a `for` list (as [`lex`] leaves it) gives the name:
-/// its text, or `None` where only the shell can read it. A pattern or a
-/// `{a,b}` list is kept to be expanded where it is used, and a pattern may
-/// also match what the line makes or moves, which is `None` as well.
+/// each value of a `{a,b}` list, or `None` where only the shell can read
+/// it. A pattern is kept to be expanded where it is used, and may also
+/// match what the line makes or moves, which is `None` as well.
 fn listed(word: &str) -> Vec<Option<String>> {
     if word.contains(['$', '`']) {
         return vec![None];
@@ -5780,12 +5785,20 @@ fn listed(word: &str) -> Vec<Option<String>> {
     if !word.contains(['*', '?', '[', '{']) {
         return vec![Some(expand::plain(word))];
     }
-    let live = Some(format!("{}{word}", expand::LIVE));
-    if expand::has_glob(word) {
-        vec![live, None]
-    } else {
-        vec![live]
+    let live = |w: &str| Some(format!("{}{w}", expand::LIVE));
+    let mut each = Vec::new();
+    if !expand::braces(word, &mut each) {
+        return vec![live(word)];
     }
+    each.iter()
+        .flat_map(|w| {
+            if expand::has_glob(w) {
+                vec![live(w), None]
+            } else {
+                vec![Some(expand::plain(w))]
+            }
+        })
+        .collect()
 }
 
 /// Variables the shell sets by itself, with nothing on the line naming
@@ -5793,6 +5806,9 @@ fn listed(word: &str) -> Vec<Option<String>> {
 const SHELL_SETS: &[&str] = &[
     "_", "REPLY", "MAPFILE", "OPTARG", "OPTIND", "RANDOM", "SRANDOM", "SECONDS", "LINENO",
 ];
+
+/// The most values a name may hold for `+=` still to be joined to each.
+const MOST_JOINED: usize = 32;
 
 /// A name the gate can't pin to one value, and all it can say of it.
 struct Held {
@@ -5832,13 +5848,25 @@ fn what_names_hold(
         for ((s, set), sure) in segs.iter().zip(sets_of).zip(sure) {
             let mut of_it = set.iter().filter(|(n, _)| n == name).peekable();
             if of_it.peek().is_some() {
-                // An element may not be the one `$name` reads.
+                // An element may not be the one `$name` reads, and what
+                // `+=` adds to is what the name held by then.
                 let element = steps(&s.text, name) && s.text.contains(&format!("{name}["));
-                doubted |= !sure || element;
+                let adds = words(&s.text)
+                    .iter()
+                    .any(|w| appends(w) && assigned(w).is_some_and(|(n, _)| n == name));
+                doubted |= !sure || element || adds;
+                let had = values.clone();
                 for (_, value) in of_it {
                     match value {
-                        Some(v) if !values.contains(v) => values.push(v.clone()),
-                        Some(_) => {}
+                        Some(v) => {
+                            let joined = had.iter().map(|h| format!("{h}{v}"));
+                            let joined = joined.filter(|_| adds && had.len() < MOST_JOINED);
+                            for v in joined.chain([v.clone()]).collect::<Vec<_>>() {
+                                if !values.contains(&v) {
+                                    values.push(v);
+                                }
+                            }
+                        }
                         None => unread = true,
                     }
                 }
@@ -5860,20 +5888,29 @@ fn what_names_hold(
 /// What this part of a command sets as far as its words say: each name, with
 /// the value it is given or `None` where only the shell can read that. A
 /// `for` head gives its name once per value. `export NAME` alone leaves a
-/// value as it was, and `A=b cmd` sets `A` for `cmd` only.
+/// value as it was, and `A=b cmd` sets `A` for `cmd` only. `A+=b` gives the
+/// name `b` on top of what it held: [`what_names_hold`] joins them, and what
+/// it held may be something the line never gave it.
 fn sets(s: &Seg) -> Vec<(String, Option<String>)> {
     let mut said = words(&s.text);
     strip_keywords(&mut said);
-    let plain = |w: &str, value: String| {
-        (!w.contains("+=") && !value.contains(['$', '`'])).then_some(value)
+    let given = |w: &str, name: &str, value: String| {
+        let value = (!value.contains(['$', '`'])).then_some(value);
+        let name = name.to_string();
+        if appends(w) && value.is_some() {
+            vec![(name.clone(), value), (name, None)]
+        } else {
+            vec![(name, value)]
+        }
     };
     if !said.is_empty() && said.iter().all(|w| assigned(w).is_some()) {
         return said
             .iter()
             .filter_map(|w| {
                 let (name, value) = assigned(w)?;
-                Some((name.to_string(), plain(w, value.to_string())))
+                Some(given(w, name, value.to_string()))
             })
+            .flatten()
             .collect();
     }
     let mut lexed = lex(&s.text);
@@ -5927,8 +5964,9 @@ fn sets(s: &Seg) -> Vec<(String, Option<String>)> {
             } else {
                 value.to_string()
             };
-            Some((name.to_string(), plain(w, value)))
+            Some(given(w, name, value))
         })
+        .flatten()
         .collect()
 }
 
@@ -6051,41 +6089,249 @@ fn names_var(text: &str, name: &str) -> bool {
         .any(|(at, _)| ends(&text[at + plain.len()..]))
 }
 
-/// Where `word` reads `name` in braces, and whether the value is all that
-/// comes of it: `${name}`, or `${name[0]}` and the like, which an unset
-/// array leaves the same. What an operator makes of a value only the shell
-/// works out (`${f%.x}` on `.env.x`, `${f/a/.env}`). In double quotes the
-/// `{` comes marked.
-fn in_braces(word: &str, name: &str) -> Vec<(std::ops::Range<usize>, bool)> {
-    let mut found = Vec::new();
+/// One `${name…}` in a word.
+struct Braced {
+    at: std::ops::Range<usize>,
+    /// What follows the name inside the braces.
+    what: String,
+    /// In double quotes, where the `{` comes marked: a `*` is marked too
+    /// there, and in the operand of an operator it is still a pattern.
+    quoted: bool,
+}
+
+/// Where `word` reads `name` in braces. One nested in another of the same
+/// name is part of the outer one, and is read with it.
+fn in_braces(word: &str, name: &str) -> Vec<Braced> {
+    let mut found: Vec<Braced> = Vec::new();
     for open in [
         format!("${{{name}"),
         format!("${}{name}", expand::quoted('{')),
     ] {
         for (at, _) in word.match_indices(&open) {
             let rest = &word[at + open.len()..];
+            if rest.starts_with(of_a_name) {
+                continue;
+            }
+            // Only `${` opens: a lone `{` in an operand is just a character.
             let mut deep = 1;
+            let mut after_dollar = false;
             let end = rest.char_indices().find_map(|(i, c)| {
-                deep += i32::from(c == '{' || c == expand::quoted('{')) - i32::from(c == '}');
+                deep += i32::from(after_dollar && (c == '{' || c == expand::quoted('{')));
+                deep -= i32::from(c == '}');
+                after_dollar = c == '$';
                 (deep == 0).then_some(i)
             });
-            if let Some(end) = end.filter(|_| !rest.starts_with(of_a_name)) {
-                let whole = matches!(
-                    expand::plain(&rest[..end]).as_str(),
-                    "" | "[0]" | "[@]" | "[*]"
-                );
-                found.push((at..at + open.len() + end + 1, whole));
+            if let Some(end) = end {
+                found.push(Braced {
+                    at: at..at + open.len() + end + 1,
+                    what: rest[..end].to_string(),
+                    quoted: open.contains(expand::quoted('{')),
+                });
             }
         }
     }
-    found.sort_by_key(|(at, _)| at.start);
+    found.sort_by_key(|b| b.at.start);
+    let mut reached = 0;
+    found.retain(|b| {
+        let outer = b.at.start >= reached;
+        if outer {
+            reached = b.at.end;
+        }
+        outer
+    });
     found
+}
+
+/// Whether a `${name…}` is more than the value: an unset array leaves
+/// `${name[0]}` and the like the same.
+fn past_the_value(what: &str) -> bool {
+    !matches!(expand::plain(what).as_str(), "" | "[0]" | "[@]" | "[*]")
+}
+
+/// What the shell makes of `value` past the operator in `form`, `value`
+/// being what the name holds as text. `None` where only the shell can say:
+/// an operand it works out when it runs, `${name:$n}`, `${name@E}`. `put`
+/// writes out a piece of the value as [`known_variables`] does.
+fn operated(
+    form: &Braced,
+    value: &str,
+    vars: &[(String, String)],
+    put: &dyn Fn(&str) -> String,
+) -> Option<String> {
+    const OPERATORS: &[&str] = &[
+        "##", "%%", "//", "/#", "/%", ":-", ":=", ":?", ":+", "^^", ",,", "@L", "@U", "@u", "#",
+        "%", "/", "-", "=", "?", "+", "^", ",", ":",
+    ];
+    let mut what: Vec<char> = form.what.chars().collect();
+    let plain: String = expand::plain(&form.what);
+    if ["[0]", "[@]", "[*]"].iter().any(|s| plain.starts_with(s)) {
+        what.drain(..3);
+    }
+    let plain: String = expand::plain(&what.iter().collect::<String>());
+    if plain.is_empty() {
+        return Some(put(value));
+    }
+    let op = OPERATORS.iter().find(|op| plain.starts_with(**op))?;
+    let rest: String = what[op.len()..].iter().collect();
+    let operand = || known_variables(&rest, vars, true);
+    let chars: Vec<char> = value.chars().collect();
+    let piece = |c: &[char]| put(&c.iter().collect::<String>());
+    let pattern = |word: &str| -> Option<Vec<char>> {
+        let word = known_variables(word, vars, true);
+        if word.contains(['$', '`', '(']) || word.contains("[:") {
+            return None;
+        }
+        Some(if form.quoted {
+            expand::plain(&word).chars().collect()
+        } else {
+            word.chars().collect()
+        })
+    };
+    match *op {
+        ":-" | ":=" if chars.is_empty() => Some(operand()),
+        ":-" | ":=" | "-" | "=" | ":?" | "?" => Some(put(value)),
+        ":+" if chars.is_empty() => Some(String::new()),
+        ":+" | "+" => Some(operand()),
+        "@L" | "@U" | "@u" if !rest.is_empty() => None,
+        "@L" | "@U" | "@u" | "^^" | ",," | "^" | "," => {
+            let want = if rest.is_empty() {
+                vec!['?']
+            } else {
+                pattern(&rest)?
+            };
+            let lower = matches!(*op, "@L" | ",," | ",");
+            let every = !matches!(*op, "@u" | "^" | ",");
+            let mut out = String::new();
+            for (i, c) in chars.iter().enumerate() {
+                let changed = (every || i == 0) && expand::exactly(&want, &[*c]);
+                out += &put(&match (changed, lower) {
+                    (false, _) => c.to_string(),
+                    (true, true) => c.to_lowercase().collect(),
+                    (true, false) => c.to_uppercase().collect(),
+                });
+            }
+            Some(out)
+        }
+        "#" | "##" => {
+            let want = pattern(&rest)?;
+            let mut ends: Vec<usize> = (0..=chars.len()).collect();
+            if *op == "##" {
+                ends.reverse();
+            }
+            let end = ends
+                .into_iter()
+                .find(|&k| expand::exactly(&want, &chars[..k]))
+                .unwrap_or(0);
+            Some(piece(&chars[end..]))
+        }
+        "%" | "%%" => {
+            let want = pattern(&rest)?;
+            let mut starts: Vec<usize> = (0..=chars.len()).collect();
+            if *op == "%" {
+                starts.reverse();
+            }
+            let start = starts
+                .into_iter()
+                .find(|&k| expand::exactly(&want, &chars[k..]))
+                .unwrap_or(chars.len());
+            Some(piece(&chars[..start]))
+        }
+        "/" | "//" | "/#" | "/%" => {
+            let (from, to) = operands(&rest);
+            let want = pattern(&from)?;
+            let to = known_variables(&to, vars, true);
+            Some(replaced(&chars, &want, &to, op, &piece))
+        }
+        ":" => {
+            let (offset, length) = match rest.split_once(':') {
+                Some((o, l)) => (o, Some(l)),
+                None => (rest.as_str(), None),
+            };
+            let from = offset.parse::<usize>().ok()?.min(chars.len());
+            let to = match length {
+                None => chars.len(),
+                Some(l) => match l.parse::<i64>().ok()? {
+                    l if l < 0 => chars.len().checked_sub(l.unsigned_abs() as usize)?,
+                    l => from.saturating_add(l as usize).min(chars.len()),
+                },
+            };
+            (from <= to).then(|| piece(&chars[from..to]))
+        }
+        _ => None,
+    }
+}
+
+/// What a `${name/pattern/text}` says after its operator: the pattern ends
+/// at the first `/` past its first character, which a slash may be.
+fn operands(rest: &str) -> (String, String) {
+    let skip = rest.chars().next().map_or(0, char::len_utf8);
+    match rest[skip..].find('/') {
+        Some(at) => (
+            rest[..skip + at].to_string(),
+            rest[skip + at + 1..].to_string(),
+        ),
+        None => (rest.to_string(), String::new()),
+    }
+}
+
+/// `chars` with what matches `want` changed to `to`, as `op` says: the
+/// first match, the longest there, or all, or only at either end.
+fn replaced(
+    chars: &[char],
+    want: &[char],
+    to: &str,
+    op: &str,
+    piece: &dyn Fn(&[char]) -> String,
+) -> String {
+    let at_start = |from: usize| {
+        (from..=chars.len())
+            .rev()
+            .find(|&end| expand::exactly(want, &chars[from..end]))
+    };
+    let mut out = String::new();
+    if want.is_empty() {
+        return piece(chars);
+    }
+    match op {
+        "/#" => match at_start(0) {
+            Some(end) => piece(&[]) + to + &piece(&chars[end..]),
+            None => piece(chars),
+        },
+        "/%" => {
+            let from = (0..=chars.len()).find(|&k| expand::exactly(want, &chars[k..]));
+            match from {
+                Some(from) => piece(&chars[..from]) + to,
+                None => piece(chars),
+            }
+        }
+        _ => {
+            let mut from = 0;
+            let mut copied = 0;
+            // A match that runs to the end leaves no second, empty one.
+            while from < chars.len().max(1) {
+                let Some(end) = at_start(from) else {
+                    from += 1;
+                    continue;
+                };
+                out += &piece(&chars[copied..from]);
+                out += to;
+                copied = end;
+                from = end.max(from + 1);
+                if op == "/" {
+                    break;
+                }
+            }
+            out + &piece(&chars[copied.min(chars.len())..])
+        }
+    }
 }
 
 /// `word` with the variables an earlier part of the command set put in:
 /// `$B/health` after `B=http://localhost:8001`. One that wasn't set there
-/// stays as written, a word only the shell can read.
-fn known_variables(word: &str, vars: &[(String, String)]) -> String {
+/// stays as written, a word only the shell can read. With `worked_out`, a
+/// `${name…}` is what the shell makes of the value ([`operated`]) where the
+/// gate can say; without, and otherwise, it is the value as it stands.
+fn known_variables(word: &str, vars: &[(String, String)], worked_out: bool) -> String {
     if !word.contains('$') || vars.is_empty() {
         return word.to_string();
     }
@@ -6096,13 +6342,22 @@ fn known_variables(word: &str, vars: &[(String, String)]) -> String {
     for (name, value) in by_length {
         // Put in as the shell would leave it inside quotes: no pattern in
         // the value is expanded again.
-        let value: String = match value.strip_prefix(expand::LIVE) {
-            Some(live) => live.to_string(),
-            None => value.chars().map(expand::quoted).collect(),
+        let (text, live) = match value.strip_prefix(expand::LIVE) {
+            Some(live) => (live, true),
+            None => (value.as_str(), false),
         };
-        for (at, _) in in_braces(&out, name).into_iter().rev() {
-            out.replace_range(at, &value);
+        let put = |text: &str| -> String {
+            if live {
+                text.to_string()
+            } else {
+                text.chars().map(expand::quoted).collect()
+            }
+        };
+        for form in in_braces(&out, name).into_iter().rev() {
+            let made = operated(&form, text, vars, &put).filter(|_| worked_out);
+            out.replace_range(form.at, &made.unwrap_or_else(|| put(text)));
         }
+        let value = put(text);
         let plain = format!("${name}");
         let mut rest = out.as_str();
         let mut done = String::new();
@@ -6141,7 +6396,7 @@ fn read(seg: &str, ctx: &ToolContext, every_pattern: bool) -> Vec<String> {
     lex(seg)
         .iter()
         .flat_map(|w| {
-            let known = known_variables(w, &ctx.vars);
+            let known = known_variables(w, &ctx.vars, false);
             // The shell splits a `$name` outside quotes on the spaces in
             // its value, and the lexed word no longer says whether it was
             // quoted: both readings are judged, the split one first, so
@@ -6150,19 +6405,28 @@ fn read(seg: &str, ctx: &ToolContext, every_pattern: bool) -> Vec<String> {
                 .vars
                 .iter()
                 .any(|(n, v)| v.contains(char::is_whitespace) && names_var(w, n));
-            let mut each: Vec<String> = known
-                .split_whitespace()
-                .filter(|_| splits)
-                .map(str::to_string)
-                .collect();
-            each.push(known);
-            // Past an operator the value is a guess, and the word as
-            // written stands beside it, for what only the shell reads.
-            if ctx
+            let mut each: Vec<String> = Vec::new();
+            // Past an operator the word is what the shell makes of the
+            // value, first for the same reason. The value as it stands is
+            // still judged, and the word as written, for what only the
+            // shell reads.
+            let operator = ctx
                 .vars
                 .iter()
-                .any(|(n, _)| in_braces(w, n).iter().any(|(_, whole)| !whole))
-            {
+                .any(|(n, _)| in_braces(w, n).iter().any(|b| past_the_value(&b.what)));
+            if operator {
+                let made = known_variables(w, &ctx.vars, true);
+                each.extend(made.split_whitespace().map(str::to_string));
+                each.push(made);
+            }
+            each.extend(
+                known
+                    .split_whitespace()
+                    .filter(|_| splits)
+                    .map(str::to_string),
+            );
+            each.push(known);
+            if operator {
                 each.push(w.clone());
             }
             each
@@ -14732,9 +14996,99 @@ mod tests {
 
     /// `"${f}"` in double quotes, `${f[0]}` and `${f[@]}` are `$f`, and the
     /// gate read none of them as it: `A=/etc/passwd; sed -i … "${A}"` ran.
-    /// With an operator the shell makes something else of the value, so
-    /// the value and the unread word are judged both: taken for the value
-    /// alone, `${f/a/.env}` on `a` would pass.
+    /// A prefix, a suffix or a substitution makes a path of what the line
+    /// gave as something else: judged as the value, each of these passed
+    /// or asked and bash ran what the part alone is stopped for. Each pair
+    /// was run through bash for what it leaves. 0.43.0's fourth round.
+    #[cfg(unix)]
+    #[test]
+    fn what_an_operator_makes_of_a_value_is_judged() {
+        let m = machine();
+        for (cmd, verdict) in [
+            (
+                "f=pre/etc/passwd; sed -i -e 's/a/b/' ${f#pre}",
+                Decision::Ask,
+            ),
+            (
+                "for f in pre/etc/passwd; do sed -i -e 's/a/b/' ${f#pre}; done",
+                Decision::Ask,
+            ),
+            ("f=pre.ssh/id_ed25519; cat ${f#pre}", Decision::Deny),
+            ("f=pre.ssh/id_ed25519; cat \"${f#pre}\"", Decision::Deny),
+            ("f=a/.env; cat \"${f##*/}\"", Decision::Deny),
+            ("f=zzz/; rm -rf ${f#zzz}", Decision::Deny),
+            ("f=/tmp; rm -rf ${f%tmp}", Decision::Deny),
+            ("f=/tmp; rm -rf ${f/tmp/}", Decision::Deny),
+            ("for f in a; do rm -rf ${f/a//}; done", Decision::Deny),
+            ("f=a; rm -rf ${f:+/}", Decision::Deny),
+            ("f=; rm -rf ${f:-/}", Decision::Deny),
+            ("f=x/; rm -rf ${f:1}", Decision::Deny),
+            ("f=.ENV; cat ${f,,}", Decision::Deny),
+            ("f=.ENV; cat ${f@L}", Decision::Deny),
+            ("f=.ENV; cat ${f,,[A-Z]}", Decision::Deny),
+            ("f=a.ssh/id_ed25519; cat ${f//[ab]/}", Decision::Deny),
+            ("P=pre; f=pre.env; cat ${f#$P}", Decision::Deny),
+            ("f=pre.env; cat ${f[0]#pre}", Decision::Deny),
+            // A list and what a pattern leaves are worked on the same way.
+            (
+                "for f in {pre/etc/passwd,x}; do sed -i -e 's/a/b/' ${f#pre}; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in src/*; do sed -i -e 's/a/b/' ${f#src}; done",
+                Decision::Ask,
+            ),
+            // It is the program too, whichever word it stands in.
+            ("f=xsudo; ${f#x} id", Decision::Deny),
+            // And what the line leaves alone stays alone.
+            ("f=src/main.rs; cat ${f#src/}", Decision::Ask),
+            ("f=ok; cat ${f:+a}${f%k}", Decision::Allow),
+            ("f=a.md; mv $f ${f%.md}.txt", Decision::AskOutside),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
+    /// `+=` gave no value, so what it added passed as an unread word.
+    #[cfg(unix)]
+    #[test]
+    fn what_a_name_is_added_to_is_judged() {
+        let m = machine();
+        for (cmd, verdict) in [
+            ("f+=/etc/passwd; sed -i -e 's/a/b/' $f", Decision::Ask),
+            ("f+=/; rm -rf $f", Decision::Deny),
+            ("f=.s; f+=sh/id_ed25519; cat $f", Decision::Deny),
+            ("f=a; f+=/b; f+=/; f+=.env; cat \"$f\"", Decision::Deny),
+            ("f[0]+=.env; cat $f", Decision::Deny),
+            ("export f+=.env; cat $f", Decision::Deny),
+            ("A=b+=c; cat ${A}.txt", Decision::Allow),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
+    /// One of a name inside another of it: the inner range ran past the
+    /// end of the outer once it was written over, and the gate panicked
+    /// before the command could run.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_inside_its_own_braces_is_read_once() {
+        let m = machine();
+        for (cmd, verdict) in [
+            ("A=x; echo ${A:-${A}}", Decision::Allow),
+            ("A=x; echo \"${A:+prefix${A}}\"", Decision::Allow),
+            ("A=x; cat ${A:-${A}}", Decision::Allow),
+            ("A=.env; cat ${A:-${A}}", Decision::Deny),
+            ("A=x; cat ${A:+.en${A:0:0}v}", Decision::Deny),
+            ("A=.env; cat ${A:-{}", Decision::Deny),
+            ("A=é; echo ${A:-${A:-${A}}}é", Decision::Allow),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
+    /// With an operator the shell makes something else of the value: taken
+    /// for the value alone, `${f/a/.env}` on `a` would pass.
     #[cfg(unix)]
     #[test]
     fn a_value_is_read_however_the_braces_are_written() {
@@ -14765,8 +15119,8 @@ mod tests {
                 Decision::Ask,
             ),
             // What an operator makes of a value in the project is not the
-            // value: these read `.env`, and still count as an unread word.
-            ("for f in a; do cat ${f/a/.env}; done", Decision::Ask),
+            // value: these read `.env`.
+            ("for f in a; do cat ${f/a/.env}; done", Decision::Deny),
             ("for f in a; do cat \"${f:+.env}\"; done", Decision::Deny),
             ("for f in .env.x; do cat ${f%.x}; done", Decision::Deny),
             ("for f in a.x; do cat ${f%.x}; done", Decision::Ask),

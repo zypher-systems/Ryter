@@ -81,6 +81,55 @@ pub fn checkpoint(dir: &Path, name: &str) -> Result<Option<String>> {
     Ok(Some(sha))
 }
 
+/// Snapshot `base` with `paths` as `from` has them: what restoring those
+/// paths over `base` leaves, and nothing else of `from`. Built in a private
+/// index: no working file is touched.
+pub fn checkpoint_of(
+    dir: &Path,
+    name: &str,
+    base: &str,
+    from: &str,
+    paths: &[String],
+) -> Result<String> {
+    let root = toplevel(dir)?;
+    let scratch = Scratch::new(dir)?;
+    let index = scratch.path().join("index");
+    git_with_index(&root, &index, &["read-tree", base])?;
+    for chunk in paths.chunks(200) {
+        let mut args = vec![
+            "--literal-pathspecs",
+            "restore",
+            "--source",
+            from,
+            "--staged",
+            "--",
+        ];
+        args.extend(chunk.iter().map(String::as_str));
+        git_with_index(&root, &index, &args)?;
+    }
+    let tree = git_with_index(&root, &index, &["write-tree"])?
+        .trim()
+        .to_string();
+    let sha = git_as(
+        dir,
+        &[
+            "commit-tree",
+            tree.as_str(),
+            "-p",
+            base,
+            "-m",
+            "ryter undo checkpoint",
+        ],
+    )?
+    .trim()
+    .to_string();
+    git(
+        dir,
+        &["update-ref", &format!("refs/ryter/undo/{name}"), &sha],
+    )?;
+    Ok(sha)
+}
+
 /// The tree a checkpoint recorded, to compare against the files now.
 pub fn checkpoint_tree(dir: &Path, sha: &str) -> Result<String> {
     Ok(git(dir, &["rev-parse", &format!("{sha}^{{tree}}")])?

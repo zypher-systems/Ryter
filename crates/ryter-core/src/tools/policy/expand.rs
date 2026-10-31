@@ -109,7 +109,7 @@ pub(super) fn expand(word: &str, at: &Places) -> Vec<String> {
 
 /// Expand the first `{a,b}` list in `word`, and the lists in what that
 /// leaves. `false` when there are too many to list.
-fn braces(word: &str, out: &mut Vec<String>) -> bool {
+pub(super) fn braces(word: &str, out: &mut Vec<String>) -> bool {
     let mut chars: Vec<char> = word.chars().collect();
     let mut i = 0;
     while i < chars.len() {
@@ -358,16 +358,76 @@ fn squeeze(part: &str) -> Vec<char> {
 /// character: which ones is not worked out, and matching too much only
 /// means more is judged.
 pub(super) fn matches(pattern: &[char], name: &[char]) -> bool {
-    match pattern.first() {
-        None => name.is_empty(),
-        Some('*') => (0..=name.len()).any(|k| matches(&pattern[1..], &name[k..])),
-        Some('?') => !name.is_empty() && matches(&pattern[1..], &name[1..]),
-        Some('[') => match set_end(pattern) {
-            Some(end) => !name.is_empty() && matches(&pattern[end + 1..], &name[1..]),
-            None => name.first() == Some(&'[') && matches(&pattern[1..], &name[1..]),
-        },
-        Some(&c) => name.first() == Some(&real(c)) && matches(&pattern[1..], &name[1..]),
+    fits(pattern, name, false)
+}
+
+/// [`matches`], with a set (`[a-z]`) worked out, for a pattern whose match
+/// makes a word instead of finding one.
+pub(super) fn exactly(pattern: &[char], name: &[char]) -> bool {
+    fits(pattern, name, true)
+}
+
+fn fits(pattern: &[char], name: &[char], sets: bool) -> bool {
+    let (mut p, mut n) = (0, 0);
+    // The last `*`, what follows it, and how much of the name it has taken:
+    // a miss goes back there and gives it one more, so a word with many
+    // stars costs no more than one.
+    let mut star: Option<(usize, usize)> = None;
+    loop {
+        // How far this step of the pattern goes, where it fits the name.
+        let step = match pattern.get(p) {
+            Some('*') => {
+                star = Some((p + 1, n));
+                p += 1;
+                continue;
+            }
+            None => None,
+            Some('?') => (n < name.len()).then_some(p + 1),
+            Some('[') => match set_end(&pattern[p..]) {
+                Some(end) => name
+                    .get(n)
+                    .filter(|c| !sets || in_set(&pattern[p + 1..p + end], **c))
+                    .map(|_| p + end + 1),
+                None => (name.get(n) == Some(&'[')).then_some(p + 1),
+            },
+            Some(&c) => (name.get(n) == Some(&real(c))).then_some(p + 1),
+        };
+        match step {
+            Some(next) => {
+                p = next;
+                n += 1;
+            }
+            None if p == pattern.len() && n == name.len() => return true,
+            None => match star {
+                Some((after, taken)) if taken < name.len() => {
+                    star = Some((after, taken + 1));
+                    (p, n) = (after, taken + 1);
+                }
+                _ => return false,
+            },
+        }
     }
+}
+
+/// Whether `c` is one of `set`, the text between the brackets.
+fn in_set(set: &[char], c: char) -> bool {
+    let (negated, set) = match set.split_first() {
+        Some(('!' | '^', rest)) => (true, rest),
+        _ => (false, set),
+    };
+    let mut found = false;
+    let mut i = 0;
+    while i < set.len() {
+        let from = real(set[i]);
+        if set.get(i + 1) == Some(&'-') && i + 2 < set.len() {
+            found |= (from..=real(set[i + 2])).contains(&c);
+            i += 3;
+        } else {
+            found |= from == c;
+            i += 1;
+        }
+    }
+    found != negated
 }
 
 /// Where the set that opens `pattern` closes. A `]` straight after the

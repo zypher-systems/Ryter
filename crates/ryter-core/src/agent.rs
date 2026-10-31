@@ -2717,20 +2717,25 @@ impl Agent {
         }
         // What was put back can be brought back: `/redo` restores the
         // paths from the tree as the audit left it, until a build turn
-        // moves the files on and clears what `/redo` could do. The tree
-        // right after the rollback differs from that one by those paths
-        // alone, so `/undo` after a `/redo` takes back those and nothing
-        // the rollback kept.
+        // moves the files on and clears what `/redo` could do. The turn on
+        // record for `/undo` is that one step and no more: the tree right
+        // after the rollback, then those paths. The audit's whole tree
+        // won't do: a file of the user's the rollback recovered differs
+        // there too, and would read as changed since.
         if let (Some(after), false) = (&after, restored.is_empty()) {
             let undone_name = format!("audit-undone-{}", &after[..after.len().min(12)]);
             let undone = self
                 .ctx
                 .sandboxed(|| crate::git::checkpoint(&dir, &undone_name))?;
             if let Some(undone) = undone {
+                let redone_name = format!("audit-redone-{}", &after[..after.len().min(12)]);
+                let redone = self.ctx.sandboxed(|| {
+                    crate::git::checkpoint_of(&dir, &redone_name, &undone, after, &restored)
+                })?;
                 self.session.push_redo(crate::session::Redo {
                     checkpoint: undone.clone(),
                     record: crate::session::TurnRecord {
-                        after: Some(after.clone()),
+                        after: Some(redone),
                         ignored: Vec::new(),
                     },
                     files: after.clone(),
@@ -9515,6 +9520,65 @@ mod tests {
             );
             assert_eq!(read("hello.txt"), "hi\n");
             kept(&read);
+        }
+    }
+
+    /// The rollback brings back a file of the user's the audit wrote over,
+    /// so the tree after it differs from the audit's in that file as well.
+    /// `/undo` after `/redo` compared with the audit's whole tree, took
+    /// that file for a later edit and refused. 0.43.0's fourth round.
+    #[tokio::test]
+    async fn undo_after_an_audit_redo_is_not_stopped_by_an_edit_it_recovered() {
+        for command in [
+            "printf y > hello.txt; printf y > other.txt",
+            "printf y > hello.txt; rm other.txt",
+        ] {
+            let (_home, cwd, mut agent) = repo_setup(ReplayProvider::scripted(vec![]));
+            let d = cwd.path().to_path_buf();
+            std::fs::write(d.join("hello.txt"), "hi\n").unwrap();
+            std::fs::write(d.join("other.txt"), "theirs\n").unwrap();
+            crate::review::commit(&d, &["hello.txt".into(), "other.txt".into()], "base").unwrap();
+            agent.provider = Arc::new(
+                ReplayProvider::scripted(vec![
+                    call("bash", serde_json::json!({"command": command})),
+                    file_audit_call("pass"),
+                    say("filed"),
+                ])
+                .between({
+                    let d = d.clone();
+                    move |i| {
+                        if i == 0 {
+                            std::fs::write(d.join("hello.txt"), "mine\n").unwrap();
+                        }
+                    }
+                }),
+            );
+            agent.put_on(Role::Audit).unwrap();
+            agent.ctx.always_approve = true;
+            agent.turn("audit it").await.unwrap();
+            let read = |name: &str| std::fs::read_to_string(d.join(name)).unwrap();
+            assert_eq!(read("hello.txt"), "mine\n", "{command}");
+            assert_eq!(read("other.txt"), "theirs\n", "{command}");
+            for who in ["the audit", "that turn"] {
+                assert_eq!(
+                    agent.redo().unwrap(),
+                    format!("redone: other.txt as {who} left it."),
+                    "{command}"
+                );
+                assert_eq!(read("hello.txt"), "mine\n", "{command}");
+                let undone = agent.undo().unwrap();
+                assert!(
+                    undone.starts_with("undone: put back 1 file (other.txt)"),
+                    "{command}: {undone}"
+                );
+                assert_eq!(read("hello.txt"), "mine\n", "{command}");
+                assert_eq!(read("other.txt"), "theirs\n", "{command}");
+            }
+            // An edit after the redo is one: `/undo` still stops for it.
+            agent.redo().unwrap();
+            std::fs::write(d.join("other.txt"), "mine too\n").unwrap();
+            let refused = agent.undo().unwrap();
+            assert!(refused.starts_with("not undone"), "{command}: {refused}");
         }
     }
 

@@ -2,6 +2,24 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-31 — The fourth round of 0.43.0: what an operator makes of a value is worked out, and a redo's record is the redo
+
+**The gate.** Both reviews rejected `ff8270b`. Pasting the value over a `${name…}` judged `${f#pre}` on `pre/etc/passwd` as `pre/etc/passwd`, a path in the project, and the word as written beside it is no path at all, so `sed -i` on `/etc/passwd` passed and `rm -rf ${f%tmp}` on `/tmp` was a question where `rm -rf /` is refused. And the same pasting took a range out of a word it had already rewritten: `in_braces` gave the inner and outer `${A}` of `${A:-${A}}`, and `replace_range` panicked while checking the command.
+
+The gate now works out the operators bash has on a known value: strips, substitutions, substrings, defaults, case. It reads the operand with the same rule, so one nested in another is judged once, the outermost, and the panic has nothing left to stand on. What is worked out is added: the word goes first, so it is the program if it stands there, and the value and the written word stay beside it. Nothing can get looser by this, which is why a wrong strip costs a question at most. `operated` gives `None` for what the shell works out at run time (`${f:$n}`, `${f@E}`, a class in a set), and those are as they were.
+
+The forms were compared with the real bash on 13 values and 86 operators, then each path the gate stops was reached through 29 forms and held to the verdict of the path written plainly (1,392 pairs). That found sets taken as any character: `matches` was written for finding files, where more is safe, and for making a word it is not, so `exactly` works a set out. It stays loose for the glob. `matches` also multiplied its cost with each `*`, harmless on a file name, not on a value a command chooses: it now goes back to the last star. A `{a,b}` list in a `for` head is split where it is written, so an operator sees each value.
+
+Past that comparison four cases stay a question and not a refusal: `for f in ''` loses the empty word in `lex`, so `rm -rf ${f:-/etc/passwd}` there asks.
+
+`f+=x` gave no value, an unread word that can pass. It now gives `x`, joined to whatever the name held and alone, with the doubt that it held something else. The joins stop at 32 values, past which the doubt carries it.
+
+Replay of 1,573 real commands against `ff8270b`: no verdict changed. The list of 187 forms: one `Ask` became `AskOutside`.
+
+**The audit.** Round 3 made the rollback recover a user's file the audit wrote over, and that broke the record `/redo` leaves: its end snapshot was the audit's whole tree, which now differs from the tree after the rollback in those files too. `/undo` after `/redo` read them as edited since and refused. The record now ends on what the redo leaves and no more: `checkpoint_of` builds the tree after the rollback with the redone paths from the audit's, in a private index, touching no file. No saved field changed, so `fixtures/persisted/0.43.0` stands.
+
+**Left, and said:** a form whose operand only the shell knows stays the value and an unread word, the same class as a bare unknown `$f`. A space inside the braces splits the word for `lex`, which reads the pieces as words of their own. `cp "$f" "${f%.txt}.bak"` still asks because of the written word, though the gate now knows the answer: dropping it would lower the ask count and needs its own replay.
+
 ### 2026-10-30 — The third round of 0.43.0: a list's every word counts, and the order of the tree's moves decides whose they are
 
 **The gate.** Both reviews rejected `73efaa0`. `f[0]=x` sets `$f`, and neither `sets` nor `steps` read it. A list with one word the gate left to the shell gave no values at all, so the literals beside it were lost, and an unread `$f` can pass: `for f in /etc/passwd *.txt` ran `sed -i` where `for f in notes.txt /etc/passwd` asked. Checking the same mechanism turned up three of the same kind no review had named: a pattern or a list on its own (`/etc/pass*`, `/etc/{passwd,hosts}`), `"${A}"` in double quotes, and `${A[0]}`. The last two passed `A=/etc/passwd` unread, on main as well.
