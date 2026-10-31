@@ -2252,7 +2252,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     // rules for it are a language of their own, and each reading of it the
     // gate tried let a command through that it would have stopped written
     // plainly. Refused, the model writes the value out.
-    if segs.iter().any(works_on_names) || copies_a_name(&sets_of) {
+    if segs.iter().any(works_on_names) || copies_a_name(&sets_of) || gives_positionals(&segs) {
         return Judged::deny();
     }
     // A name is known by one value where only plain parts sure to run set
@@ -2290,7 +2290,8 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     for (at, s) in segs.iter().enumerate() {
         let for_sure = sure[at];
         let as_root = !s.inside && after_sudo(&s.text).is_some();
-        if as_root && something_ran {
+        let ran_before = something_ran;
+        if as_root && ran_before {
             return Judged::deny();
         }
         let said = words(&s.text);
@@ -2389,6 +2390,11 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 // `git $u push` is `git push`. Only ever a second judgement,
                 // so it can add to the verdict and take nothing from it.
                 let judged = match without_vanishing_words(&s.text, &cx.vars) {
+                    // A reading that comes to a root command is held to the
+                    // same order as one written plainly.
+                    Ok(Some(left)) if ran_before && !s.inside && after_sudo(&left).is_some() => {
+                        return Judged::deny();
+                    }
                     Ok(Some(left)) => judge(&s.text).and(judge(&left)),
                     Ok(None) => judge(&s.text),
                     // A list the gate can't write out is a part it can't read.
@@ -4453,6 +4459,24 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
         );
     }
     let parts = split(cmd);
+    if gives_positionals(&parts) {
+        return Some(
+            "`set -- …` gives `$1` and `$@` values the gate can't read, so the command is \
+             refused. Write the words out where they are used.",
+        );
+    }
+    let verb_unread = parts.iter().any(|s| {
+        let w = read(&s.text, ctx, false);
+        let p = parse(&w);
+        p.prog == Some("git") && reads_more(git_verb(&w[p.args.saturating_sub(1).min(w.len())..]))
+    });
+    if verb_unread {
+        return Some(
+            "`git` gets its verb here from a variable or a substitution, which the gate \
+             can't read, so the command is refused. Write the verb out: `git status`, \
+             `git push`.",
+        );
+    }
     let sets_of: Vec<Vec<Given>> = parts.iter().map(sets).collect();
     if parts.iter().any(works_on_names) || copies_a_name(&sets_of) {
         return Some(
@@ -4894,6 +4918,10 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
         }
         i += 1;
     }
+    // A word that came to nothing is no verb: the next one is.
+    while i < words.len() && words[i].is_empty() {
+        i += 1;
+    }
     let sub = words.get(i).map(String::as_str).unwrap_or("");
     let rest = &words[i.min(words.len())..];
     // `git --version` / `git --help` carry no verb: a look, as `git version`.
@@ -4905,6 +4933,12 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
         })
     {
         return Decision::Allow;
+    }
+    // A verb the gate can't read, `git $(x)` or `git $v`, could be any of
+    // them: refused, as a program it can't read is, and the model is told
+    // to write it out.
+    if reads_more(sub) {
+        return Decision::Deny;
     }
     // `git remote`, `remote -v`, `remote show` and `remote get-url` print
     // the remotes; the rest of the verb changes them. A real session's
@@ -4972,11 +5006,16 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
             _ => Decision::Deny,
         };
     }
+    // An argument the gate can't read, where a flag would change the
+    // verdict, is taken for the flag. Where none would, it passes, as any
+    // word the gate can't read does.
+    let unread = rest.iter().skip(1).any(|w| reads_more(w));
     // Ref deletion reaches the user's branches.
     let deletes_ref = matches!(sub, "branch" | "tag" | "worktree")
-        && words
-            .iter()
-            .any(|w| w == "-d" || w == "-D" || w == "--delete" || w == "remove");
+        && (unread
+            || words
+                .iter()
+                .any(|w| w == "-d" || w == "-D" || w == "--delete" || w == "remove"));
     if deletes_ref {
         return Decision::Ask;
     }
@@ -5025,7 +5064,7 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
                 "stash" => rest.iter().any(|w| matches!(w.as_str(), "drop" | "clear")),
                 _ => false,
             };
-            if discards {
+            if discards || unread && matches!(sub, "reset" | "checkout" | "switch" | "stash") {
                 Decision::Ask
             } else {
                 Decision::Allow
@@ -6523,7 +6562,7 @@ fn left_of(word: &str, vars: &[(String, String)]) -> Option<String> {
                 break;
             };
             match held {
-                InQuotes::Text => out.extend(&chars[i..=close]),
+                InQuotes::Text(kept) => out.push_str(&kept),
                 InQuotes::Empty => quotes = true,
                 InQuotes::Gone => {}
             }
@@ -6570,8 +6609,8 @@ fn left_of(word: &str, vars: &[(String, String)]) -> Option<String> {
 
 /// What a `"…"` holds, for the word it is part of.
 enum InQuotes {
-    /// Text: the quotes and all stay as written.
-    Text,
+    /// Text, quotes and all, with what may be nothing taken out of it.
+    Text(String),
     /// Nothing but expansions that may be nothing: an empty word on its
     /// own, and nothing glued to text.
     Empty,
@@ -6580,7 +6619,8 @@ enum InQuotes {
 }
 
 /// Where the `"` that closes the one before `from` is, and what the quotes
-/// hold. `None` where they never close.
+/// hold: the text, with each expansion that may be nothing taken out, or
+/// nothing at all.
 fn quoted(chars: &[char], from: usize, empty: &dyn Fn(&str) -> bool) -> Option<(usize, InQuotes)> {
     let mut close = from;
     while close < chars.len() && chars[close] != '"' {
@@ -6590,27 +6630,34 @@ fn quoted(chars: &[char], from: usize, empty: &dyn Fn(&str) -> bool) -> Option<(
         return None;
     }
     let subst: Vec<char> = SUBST.chars().collect();
-    let (mut k, mut at_sign) = (from, false);
+    let (mut k, mut at_sign, mut kept) = (from, false, String::from('"'));
     while k < close {
         if chars[k..close].starts_with(&subst) {
             k += subst.len();
             continue;
         }
-        if chars[k] != '$' {
-            return Some((close, InQuotes::Text));
-        }
-        match nothing_of(chars, k + 1, empty) {
-            Some((past, at)) if past <= close => {
+        if chars[k] == '$' {
+            if let Some((past, at)) =
+                nothing_of(chars, k + 1, empty).filter(|(past, _)| *past <= close)
+            {
                 at_sign |= at;
                 k = past;
+                continue;
             }
-            _ => return Some((close, InQuotes::Text)),
         }
+        // Text, or an expansion that is always something: kept.
+        kept.push(chars[k]);
+        if chars[k] == '\\' && k + 1 < close {
+            kept.push(chars[k + 1]);
+            k += 1;
+        }
+        k += 1;
     }
-    let held = if at_sign {
-        InQuotes::Gone
-    } else {
-        InQuotes::Empty
+    kept.push('"');
+    let held = match (kept.len(), at_sign) {
+        (2, true) => InQuotes::Gone,
+        (2, false) => InQuotes::Empty,
+        _ => InQuotes::Text(kept),
     };
     Some((close, held))
 }
@@ -6649,6 +6696,36 @@ fn nothing_of(chars: &[char], at: usize, empty: &dyn Fn(&str) -> bool) -> Option
             empty(&name).then(|| (at + name.chars().count(), false))
         }
     }
+}
+
+/// Whether the line gives the positional parameters values the gate can't
+/// read: `set -- a b`, or `set a b`. They then stand anywhere `$1` or `$@`
+/// does, so the line is refused and the model writes the words out. A
+/// function's `$1` is the call's word: as a verb or a program it is
+/// refused with the other words the gate can't read, as an argument it
+/// passes, as any such word does.
+fn gives_positionals(segs: &[Seg]) -> bool {
+    segs.iter().any(|s| {
+        let mut w = lex(&s.text);
+        strip_keywords(&mut w);
+        if w.first().map(String::as_str) != Some("set") {
+            return false;
+        }
+        let mut rest = w[1..].iter().map(String::as_str).peekable();
+        while let Some(a) = rest.next() {
+            match a {
+                "--" => return rest.peek().is_some(),
+                // `-o pipefail`, `-euo pipefail`: the option's own word.
+                _ if a.starts_with(['-', '+']) => {
+                    if a.contains('o') {
+                        rest.next();
+                    }
+                }
+                _ => return true,
+            }
+        }
+        false
+    })
 }
 
 /// Whether a name takes its value from one the line set before it: `B=$A`,
@@ -15612,10 +15689,20 @@ mod tests {
                 "{cmd}"
             );
         }
+        for (cmd, says) in [
+            ("set -- a; echo $1", "Write the words out"),
+            ("f() { git \"$@\"; }; f push", "Write the verb out"),
+            ("git $(echo push)", "Write the verb out"),
+            ("git ${u}push x", "Write the verb out"),
+        ] {
+            let hint = bash_hint(&json!({ "command": cmd }), &cx);
+            assert!(hint.is_some_and(|h| h.contains(says)), "{cmd}: {hint:?}");
+        }
     }
 
     /// Empty and outside quotes a word is no word, so the next is the
-    /// program. In quotes it stays, and names no program.
+    /// program. In quotes it stays, and names no program. A `{a,b}` list
+    /// is written out first, as the shell writes it, so `{,x}` is `x`.
     #[cfg(unix)]
     #[test]
     fn a_word_that_comes_to_nothing_leaves_the_next_one_the_program() {
@@ -15627,91 +15714,22 @@ mod tests {
             ("for f in ''; do $f rm -rf /; done", Decision::Deny),
             ("f=; env $f cat .env", Decision::Deny),
             ("f=echo; $f hi", Decision::Allow),
-            // With no value, the name may be unset and leave no word.
-            ("git $u push", Decision::Ask),
-            ("git ${u} reset --hard", Decision::Ask),
-            ("v=push; git $u \"$v\"", Decision::Ask),
-            // However the words are parted.
-            ("git\t${u}\treset --hard", Decision::Ask),
-            ("git\t$u\tpush", Decision::Ask),
-            ("git\t$u\trm -rf .", Decision::Ask),
-            ("git \\\n$u \\\npush", Decision::Ask),
-            ("if true; then git\t$u\tpush; fi", Decision::Ask),
-            // And whatever else may leave none.
-            ("git $u$v push", Decision::Ask),
-            ("git ${u}${v} push", Decision::Ask),
-            ("git $@ push", Decision::Ask),
-            ("git $* push", Decision::Ask),
-            ("git \"$@\" push", Decision::Ask),
-            ("git $! push", Decision::Ask),
-            ("git ${u[@]} push", Decision::Ask),
-            ("git \"${u[@]}\" push", Decision::Ask),
-            ("git $(true) push", Decision::Ask),
-            ("git `true` push", Decision::Ask),
+            // The empty alternative of a list is no word.
             ("git {,} push", Decision::Ask),
-            // Glued together however, and in the shell's own quotes.
-            ("git \"$@\"\"$@\" push", Decision::Ask),
-            ("git $u\"$@\" reset --hard", Decision::Ask),
-            ("git \"$@\"$u reset --hard", Decision::Ask),
-            ("git \"$@$@\" push", Decision::Ask),
-            ("git \"$@$u\" push", Decision::Ask),
-            ("git $\"$@\" push", Decision::Ask),
-            ("git \"${u[@]}\"${v[@]} push", Decision::Ask),
-            ("git \"$@\"$(true) push", Decision::Ask),
-            ("git `true`\"$@\" push", Decision::Ask),
-            ("git $1 push", Decision::Ask),
-            ("git ${*} push", Decision::Ask),
-            ("git {,}$u push", Decision::Ask),
-            ("git $u{,} push", Decision::Ask),
-            ("git {,,}$u push", Decision::Ask),
-            ("git {\"$@\",} push", Decision::Ask),
-            ("git {$u,$v} push", Decision::Ask),
-            ("git {,{,}} push", Decision::Ask),
-            // `$'…'` is a quote of its own, and its `\'` closes nothing.
-            ("git -c x.y=$'a\\'b' $u reset --hard", Decision::Ask),
-            ("git -c x.y=$'a\\'b' $u push", Decision::Ask),
-            // Nothing glued to text leaves the text.
-            ("git \"$@\"push x", Decision::Ask),
-            ("git ${u}push x", Decision::Ask),
-            ("git \"$u\"push x", Decision::Ask),
-            ("git $u\"push\" x", Decision::Ask),
-            ("git pu${u}sh x", Decision::Ask),
-            ("git $u''push x", Decision::Ask),
-            ("f=; git ${f}push x", Decision::Ask),
-            // A list is written out first, as a `for` list is.
+            ("git {,}{,} push", Decision::Ask),
             ("git {,push} x", Decision::Ask),
             ("git {,\\push} x", Decision::Ask),
             ("git {p..p}ush x", Decision::Ask),
             ("git {pu,}sh x", Decision::Ask),
             ("git {{,push},} x", Decision::Ask),
-            ("git {,\"$@\"push} x", Decision::Ask),
             ("git {,x}push x", Decision::Ask),
-            // Quotes keep a word, and text is a word.
-            ("git \"$u\" push", Decision::Allow),
-            ("git $u\"\" push", Decision::Allow),
-            ("git '$u' push", Decision::Allow),
-            ("git \"${u[*]}\" push", Decision::Allow),
-            ("git \\$u push", Decision::Allow),
-            ("git \"$@\"\"\" push", Decision::Allow),
-            ("git \"$*\" push", Decision::Allow),
-            ("git \"$*\"$u push", Decision::Allow),
-            ("git \"$1\" push", Decision::Allow),
-            ("git $u$'' push", Decision::Allow),
-            ("git \"$@\"x push", Decision::Allow),
-            ("git \"x$@\" push", Decision::Allow),
-            ("git $u\\$v push", Decision::Allow),
-            // Always a word: a count, a number, the shell's own name.
-            ("git $# push", Decision::Allow),
-            ("git ${#u} push", Decision::Allow),
-            ("git $0 push", Decision::Allow),
-            ("git $10 push", Decision::Allow),
-            ("git $'x' $u push", Decision::Allow),
-            ("f=x; git $f push", Decision::Allow),
+            // However the words are parted.
+            ("git\t{,push}\tx", Decision::Ask),
+            ("git \\\n{,push} \\\nx", Decision::Ask),
+            ("if true; then git\t{,push}\tx; fi", Decision::Ask),
             // A list's other words are words: `x` is the verb here.
             ("git {x,push} y", Decision::Allow),
             ("git {a,{,push}} x", Decision::Allow),
-            ("git {a,}$u push", Decision::Allow),
-            ("git {$u} push", Decision::Allow),
             ("git x{,} push", Decision::Allow),
             ("git \"{,push}\" y", Decision::Allow),
             ("git '{,push}' y", Decision::Allow),
@@ -15720,6 +15738,9 @@ mod tests {
             ("echo {1..3}", Decision::Allow),
             ("mkdir -p a/{b,c}/{d,e}", Decision::Allow),
             ("cp x{,.bak}", Decision::Allow),
+            // A value is read where the line gave it.
+            ("f=x; git $f push", Decision::Allow),
+            ("f=push; git $f", Decision::Ask),
             ("$g rm -rf /", Decision::Deny),
             ("${g} rm -rf /", Decision::Deny),
             ("cat $f", Decision::Allow),
@@ -15729,9 +15750,9 @@ mod tests {
         }
     }
 
-    /// A `{a,b}` list is written out before the words are judged, as the
-    /// shell writes it out before the command runs: `{,x}` is `x`, and
-    /// `{,x}` as the program is `x` as the program. A list that stands for
+    /// `{,sudo} id` is `sudo id`, judged as it is written plainly: the
+    /// root card in the build hat, refused elsewhere, and refused after
+    /// anything but a `cd` or another root command. A list that stands for
     /// more words than the gate reads is a part it can't read.
     #[cfg(unix)]
     #[test]
@@ -15742,6 +15763,9 @@ mod tests {
             "{,rm} -rf /",
             "rm -rf ${u}/",
             "${u}sudo id",
+            "echo hi; {,sudo} id",
+            "true; {,sudo} cat link",
+            "true; \"$u\"sudo cat link",
         ]);
         for role in HATS {
             let want = if role == Role::Build {
@@ -15750,14 +15774,115 @@ mod tests {
                 Decision::Deny
             };
             assert_eq!(m.decide("{,sudo} id", role), want, "{role:?}");
-            for cmd in ["echo {1..300}", "git {,push}{1..300} x"] {
-                let got = m.decide(cmd, role);
-                if role == Role::Build {
-                    assert_eq!(got, Decision::Ask, "{cmd}");
-                } else {
-                    assert_ne!(got, Decision::Allow, "{role:?}: {cmd}");
-                }
+            let got = m.decide("echo {1..300}", role);
+            if role == Role::Build {
+                assert_eq!(got, Decision::Ask);
+            } else {
+                assert_ne!(got, Decision::Allow, "{role:?}");
             }
+        }
+    }
+
+    /// `git` with a verb the gate can't read, a name with no value, `$@`, a
+    /// substitution, or pieces of them glued to text, is refused in every
+    /// hat, as a program it can't read is: the verb says which rule
+    /// applies. So is a line that gives the positional parameters values
+    /// the gate can't read, by `set` or by calling a function that reads
+    /// them. The model is told to write the words out.
+    #[cfg(unix)]
+    #[test]
+    fn a_git_verb_the_gate_cannot_read_is_refused() {
+        let m = machine();
+        m.refused(&[
+            "git $u push",
+            "git ${u} reset --hard",
+            "v=push; git $u \"$v\"",
+            "git\t$u\tpush",
+            "git $u$v push",
+            "git $@ push",
+            "git $* push",
+            "git \"$@\" push",
+            "git $! push",
+            "git ${u[@]} push",
+            "git \"${u[@]}\" push",
+            "git $(true) push",
+            "git `true` push",
+            "git \"$@\"\"$@\" push",
+            "git $u\"$@\" reset --hard",
+            "git \"$@$u\" push",
+            "git $\"$@\" push",
+            "git {,}$u push",
+            "git $u{,} push",
+            "git {\"$@\",} push",
+            "git {$u,$v} push",
+            "git -c x.y=$'a\\'b' $u reset --hard",
+            "git \"$@\"push x",
+            "git ${u}push x",
+            "git \"$u\"push x",
+            "git $u\"push\" x",
+            "git pu${u}sh x",
+            "git \"${u}push\" x",
+            "git \"pu${u}sh\" x",
+            "git \"push$u\" x",
+            "git \"pu$@sh\" x",
+            "git \"push$(true)\" x",
+            "git \"re${u}set\" --hard",
+            "git $(echo push)",
+            "git \"$(echo push)\"",
+            "git `echo push`",
+            "git $(echo pu)sh",
+            "git {,$(echo push)}",
+            "git {,push}{1..300} x",
+            "git $(echo rm) -rf .",
+            "git $u",
+            "git $GIT_CMD",
+            "git \"$u\" push",
+            "git \"$*\" push",
+            "git \"$@\"\"\" push",
+            "git $u\"\" push",
+            "set -- push; git \"$@\"",
+            "set -- push; git $@",
+            "set -- reset --hard; git \"$@\"",
+            "set a b; git \"$@\"",
+            "set -- /; rm -rf \"$@\"",
+            "set -- x; echo \"$1\"",
+            "f() { git \"$@\"; }; f push",
+            "f() { git $1; }; f push",
+            "function f { git \"$@\"; }; f push",
+            "git $# push",
+            "git $0 push",
+            // Past the reading a quoted `$` is no different, and git knows
+            // no such verb.
+            "git '$u' push",
+            "git \\$u push",
+        ]);
+        // `$'x'` is the word `x`: a verb git doesn't know, read as written.
+        assert_eq!(m.decide("git $'x' $u push", Role::Build), Decision::Allow);
+        // An argument the gate can't read asks where a flag would change
+        // the verdict. Where none would, it passes, as any word the gate
+        // can't read does.
+        m.asks(&[
+            "git reset $(echo --hard)",
+            "git reset \"$(echo --hard)\"",
+            "git checkout $BRANCH",
+            "git stash $x",
+            "git branch $x",
+        ]);
+        for cmd in [
+            "git log $BRANCH",
+            "git log $(echo x)",
+            "git diff $(git merge-base main HEAD)",
+            "git commit -m \"$(cat msg)\"",
+            "set -e; git status",
+            "set -euo pipefail; git status",
+            "set -o pipefail; git status",
+            "set -x; git status",
+            "set +e; git status",
+            "f() { git status; }; f",
+            "f() { echo \"$1\"; }; f a",
+            "echo $#",
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), Decision::Allow, "{cmd}");
         }
     }
 
@@ -15827,6 +15952,11 @@ mod tests {
             ("${u}push", "push"),
             ("$u\"push\"", "\"push\""),
             ("pu$u$v\"sh\"", "pu\"sh\""),
+            ("\"${u}push\"", "\"push\""),
+            ("\"pu$@sh\"", "\"push\""),
+            ("\"x$@\"", "\"x\""),
+            ("\"push$(…)\"", "\"push\""),
+            ("\"$HOME/x$u\"", "\"$HOME/x\""),
             ("$u$HOME", "$HOME"),
             ("$10", "0"),
             ("$u\\ ", "\\ "),
