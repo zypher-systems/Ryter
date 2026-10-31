@@ -2,6 +2,20 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-31 — The tenth round of 0.43.0: a word is what is left of it, and a list is written out first
+
+**What the round showed.** Both reviews rejected `f214aee` on one finding: `may_vanish` knew the whole words that can leave nothing, `"$@"`, `$u`, `{,}`, but not two of them glued, so `git "$@""$@" push` and `git {,}$u push` ran `git push` with no question. One review also found `words_as_written` reading `$'a\'b'` as a single-quoted word that the `\'` closes, so the `$u` after it was never a word of its own. Neither is looser than 0.42.0. Both are the second judgement falling short of the shell.
+
+**Pieces, not words.** Listing the whole words that vanish was the mistake: the shell works on pieces. `left_of` reads a word piece by piece and keeps what the shell may keep. An expansion that may be nothing, a name with no value, `$@`, `$1`, `$(…)`, is nothing, glued to text or not, so `"$u"push` is `push` and `pu${u}sh` is `push`. Quoted text is text. A word of quotes and nothing else, `""` or `"$u"`, is an empty word and stays as written, but for `"$@"` and `"${a[@]}"`, which the shell drops even in quotes, and a quoted mix of those with other nothing drops too. `$#`, `${#a}` and `$0` are always a word. Checking the siblings before fixing the two named forms found that `git "$u"push x`, `git ${u}push x` and `git pu${u}sh x` all ran `git push x` with no question on `f214aee`; the piece rule closes them with the rest.
+
+**Lists.** The same check found `{,push}`. The gate read a `{a,b}` list as one word, so `git {,push} x` and `{,sudo} id` passed as unknown words while the shell ran `git push x` and `sudo id`; `git {push,} x` asked only because its text happened to be read as the verb. `written_out` writes a list out before the words are judged, with the rules `expand::braces` already applies to a `for` list, quotes kept: `{,x}` is a word of nothing and `x`, `{1..3}` is three words, a `{` that opens no list stays as written. A list that stands for more than 256 words, the `for` list's cap, is a part the gate can't read, and asks. The alternative, refusing a list in a verb, would have had to say where the verb is for every program the gate knows, and left `{,sudo}` as the program for a later round.
+
+**`$'…'`.** `bare` says, for each character, whether the shell reads it bare, with `$'…'` as the quote it is, and the word splitter and the list reader both read through it.
+
+**How it was checked.** Every command both reviews named and 216 forms around them, each held to the words bash makes of it with function stand-ins. Replay of 1,573 real commands: no verdict changed. The 229 review commands against 0.42.0: 106 tighter, 0 looser, and the same verdict as the ninth round's head on every one. The generators of the last rounds, rerun: 40,000 argv forms and 30,000 stopped-path forms none more lenient than the plain command, and all 1,584 lines where bash ran a hidden command refused. In the 1,573 real commands a list as a program or a verb appears 0 times, a glued `"$@"` 0 times and `$'…'` 0 times.
+
+**What it costs.** A list of more than 256 words, `echo {1..300}`, used to run and asks. `git $u\  push` used to run and asks: the shell's verb there is a space. `git $0 push` and `git $10 push` asked on the ninth round's head and run again, as on 0.42.0: `$0` is the shell's name and `$10` ends in a `0`, so neither leaves nothing.
+
 ### 2026-10-31 — The ninth round of 0.43.0: no exemption for `+=`, and a word is what the shell says it is
 
 **What the round showed.** Both reviews rejected `3123a5e` with the same two findings, and neither was a regression: on 0.42.0 each command passes too. Both were the rule falling short of itself, in two places the eighth round kept text matching.

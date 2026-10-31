@@ -2389,8 +2389,10 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                 // `git $u push` is `git push`. Only ever a second judgement,
                 // so it can add to the verdict and take nothing from it.
                 let judged = match without_vanishing_words(&s.text, &cx.vars) {
-                    Some(left) => judge(&s.text).and(judge(&left)),
-                    None => judge(&s.text),
+                    Ok(Some(left)) => judge(&s.text).and(judge(&left)),
+                    Ok(None) => judge(&s.text),
+                    // A list the gate can't write out is a part it can't read.
+                    Err(TooMany) => judge(&s.text).and(Decision::Ask),
                 };
                 let runs = !s.inside
                     && !led_by_keyword(&s.text)
@@ -6333,81 +6335,320 @@ fn works_on_a_name(word: &str) -> bool {
     })
 }
 
-/// `text` with each word that [`may_vanish`] taken out, if there is one.
-fn without_vanishing_words(text: &str, vars: &[(String, String)]) -> Option<String> {
+/// A `{a,b}` list that stands for more words than the gate writes out.
+struct TooMany;
+
+/// The line a part comes to once its `{a,b}` lists are written out and
+/// each word is what the shell may be left with of it ([`left_of`]), where
+/// that is not the line as written. `Err` where a list stands for more
+/// words than the gate reads: the part is one it can't read.
+fn without_vanishing_words(
+    text: &str,
+    vars: &[(String, String)],
+) -> Result<Option<String>, TooMany> {
     let text = text.replace("\\\n", "");
     let said = words_as_written(&text);
-    let left: Vec<&str> = said
-        .iter()
-        .filter(|w| !may_vanish(w, vars))
-        .copied()
-        .collect();
-    (left.len() < said.len() && !left.is_empty()).then(|| left.join(" "))
+    let mut listed = Vec::new();
+    for word in &said {
+        written_out(word, &mut listed)?;
+    }
+    let left: Vec<String> = listed.iter().filter_map(|w| left_of(w, vars)).collect();
+    let changed = left.iter().map(String::as_str).ne(said.iter().copied());
+    Ok((changed && !left.is_empty()).then(|| left.join(" ")))
+}
+
+/// For each char of `text`, whether the shell reads it bare: outside
+/// quotes, `$'…'` among them, and not after a backslash.
+fn bare(text: &str) -> Vec<bool> {
+    #[derive(PartialEq)]
+    enum In {
+        Nothing,
+        Single,
+        Double,
+        Ansi,
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = vec![false; chars.len()];
+    let mut quote = In::Nothing;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match quote {
+            In::Nothing => match c {
+                '\\' => {
+                    i += 2;
+                    continue;
+                }
+                '\'' => quote = In::Single,
+                '"' => quote = In::Double,
+                '$' if chars.get(i + 1) == Some(&'\'') => {
+                    quote = In::Ansi;
+                    i += 2;
+                    continue;
+                }
+                _ => out[i] = true,
+            },
+            In::Single if c == '\'' => quote = In::Nothing,
+            In::Double | In::Ansi if c == '\\' => {
+                i += 2;
+                continue;
+            }
+            In::Double if c == '"' => quote = In::Nothing,
+            In::Ansi if c == '\'' => quote = In::Nothing,
+            _ => {}
+        }
+        i += 1;
+    }
+    out
 }
 
 /// The words of `text` as written, quotes and all: a space, a tab or a new
-/// line ends one, unless it is quoted.
+/// line the shell reads bare ends one.
 fn words_as_written(text: &str) -> Vec<&str> {
-    let (mut out, mut start, mut quote) = (Vec::new(), None, None);
-    let mut chars = text.char_indices();
-    while let Some((at, c)) = chars.next() {
-        match (quote, c) {
-            (None, ' ' | '\t' | '\n') => {
-                out.extend(start.take().map(|from| &text[from..at]));
-                continue;
-            }
-            (None, '\'' | '"') => quote = Some(c),
-            (Some(q), _) if q == c => quote = None,
-            (q, '\\') if q != Some('\'') => {
-                chars.next();
-            }
-            _ => {}
+    let bare = bare(text);
+    let (mut out, mut start) = (Vec::new(), None);
+    for (i, (at, c)) in text.char_indices().enumerate() {
+        if bare[i] && matches!(c, ' ' | '\t' | '\n') {
+            out.extend(start.take().map(|from| &text[from..at]));
+        } else {
+            start.get_or_insert(at);
         }
-        start.get_or_insert(at);
     }
     out.extend(start.map(|from| &text[from..]));
     out
 }
 
-/// Whether `word`, as written, may leave no word at all: it holds nothing
-/// but names with no value, `$@`, `$(…)` and the like, or it is a `{,}`.
-/// Quotes keep an empty word, but for `"$@"`, which can be none.
-fn may_vanish(word: &str, vars: &[(String, String)]) -> bool {
+/// Push the words `word` stands for once the shell has written out its
+/// `{a,b}` lists and `{1..3}` runs, quotes kept: `{,x}` is a word of
+/// nothing, which [`left_of`] drops, and `x`. A `{` that opens no list,
+/// and `${…}`, are left as written. `Err` past the words a `for` list may
+/// stand for.
+fn written_out(word: &str, out: &mut Vec<String>) -> Result<(), TooMany> {
+    let chars: Vec<char> = word.chars().collect();
+    let bare = bare(word);
+    let text = |from: usize, to: usize| chars[from..to].iter().collect::<String>();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' && bare[i] {
+            if i > 0 && chars[i - 1] == '$' && bare[i - 1] {
+                // `${…}`: a name, whatever it holds.
+                let rest = text(i + 1, chars.len());
+                let Some(end) = closes(&rest) else { break };
+                i += rest[..end].chars().count() + 2;
+                continue;
+            }
+            if let Some((end, commas)) = list_at(&chars, &bare, i) {
+                let (pre, post) = (text(0, i), text(end + 1, chars.len()));
+                let alternatives = if commas.is_empty() {
+                    match expand::run_of(&text(i + 1, end)) {
+                        Some(run) if run.len() <= expand::MAX_LISTED => run,
+                        Some(_) => return Err(TooMany),
+                        None => {
+                            i += 1;
+                            continue;
+                        }
+                    }
+                } else {
+                    let cuts: Vec<usize> = [i].into_iter().chain(commas).chain([end]).collect();
+                    cuts.windows(2).map(|w| text(w[0] + 1, w[1])).collect()
+                };
+                for alt in alternatives {
+                    written_out(&format!("{pre}{alt}{post}"), out)?;
+                    if out.len() > expand::MAX_LISTED {
+                        return Err(TooMany);
+                    }
+                }
+                return Ok(());
+            }
+        }
+        i += 1;
+    }
+    out.push(word.to_string());
+    Ok(())
+}
+
+/// Where the bare `{` at `open` closes, and the bare commas at its own
+/// depth, with `${…}` passed over whole. `None` when it never closes.
+fn list_at(chars: &[char], bare: &[bool], open: usize) -> Option<(usize, Vec<usize>)> {
+    let (mut deep, mut commas) = (1, Vec::new());
+    let mut j = open + 1;
+    while j < chars.len() {
+        if bare[j] {
+            match chars[j] {
+                '{' if chars[j - 1] == '$' && bare[j - 1] => {
+                    let rest: String = chars[j + 1..].iter().collect();
+                    let end = closes(&rest)?;
+                    j += rest[..end].chars().count() + 1;
+                }
+                '{' => deep += 1,
+                '}' => {
+                    deep -= 1;
+                    if deep == 0 {
+                        return Some((j, commas));
+                    }
+                }
+                ',' if deep == 1 => commas.push(j),
+                _ => {}
+            }
+        }
+        j += 1;
+    }
+    None
+}
+
+/// What the shell may be left with of `word`, or `None` where it may be no
+/// word at all. An expansion that may be nothing, `$u` with no value, `$@`,
+/// `$1`, `$(…)` and the like, is taken as nothing, glued to text or not:
+/// `"$u"push` is `push`. A word of quotes and nothing else, `""` or `"$u"`,
+/// keeps an empty word and stays as written, but for `"$@"` and
+/// `"${a[@]}"`, which can be none. A word written as nothing is none.
+fn left_of(word: &str, vars: &[(String, String)]) -> Option<String> {
     let empty = |name: &str| !vars.iter().any(|(n, v)| n == name && !v.is_empty());
-    if let Some(quoted) = word.strip_prefix('"').and_then(|w| w.strip_suffix('"')) {
-        let array = quoted
-            .strip_prefix("${")
-            .and_then(|q| q.strip_suffix("[@]}"));
-        return matches!(quoted, "$@" | "${@}") || array.is_some_and(empty);
-    }
-    if word.contains(',') && word.chars().all(|c| matches!(c, '{' | ',' | '}')) {
-        return true;
-    }
-    let mut rest = word;
-    while !rest.is_empty() {
-        if let Some(past) = rest.strip_prefix(SUBST) {
-            rest = past;
+    let chars: Vec<char> = word.chars().collect();
+    let subst: Vec<char> = SUBST.chars().collect();
+    let (mut out, mut quotes) = (String::new(), false);
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i..].starts_with(&subst) {
+            i += subst.len();
             continue;
         }
-        let Some(past) = rest.strip_prefix('$') else {
-            return false;
-        };
-        let (said, past) = match past.strip_prefix('{') {
-            Some(inner) => match inner.split_once('}') {
-                Some(parts) => parts,
-                None => return false,
-            },
-            None if past.starts_with(['@', '*', '!']) => past.split_at(1),
-            None => past.split_at(past.len() - past.trim_start_matches(of_a_name).len()),
-        };
-        let name = said.split('[').next().unwrap_or(said);
-        let named = !name.is_empty() && name.chars().all(of_a_name);
-        if !(matches!(name, "@" | "*" | "!") || named && empty(name)) {
-            return false;
+        let next = chars.get(i + 1).copied();
+        let (c, dollar) = (chars[i], chars[i] == '$');
+        if c == '"' || dollar && next == Some('"') {
+            let from = i + 1 + usize::from(dollar);
+            let Some((close, held)) = quoted(&chars, from, &empty) else {
+                // A quote that never closes: text to the end.
+                out.extend(&chars[i..]);
+                break;
+            };
+            match held {
+                InQuotes::Text => out.extend(&chars[i..=close]),
+                InQuotes::Empty => quotes = true,
+                InQuotes::Gone => {}
+            }
+            i = close + 1;
+            continue;
         }
-        rest = past;
+        if c == '\'' || dollar && next == Some('\'') {
+            let from = i + 1 + usize::from(dollar);
+            let mut close = from;
+            while close < chars.len() && chars[close] != '\'' {
+                close += if dollar && chars[close] == '\\' { 2 } else { 1 };
+            }
+            if close >= chars.len() {
+                out.extend(&chars[i..]);
+                break;
+            }
+            if close == from {
+                quotes = true;
+            } else {
+                out.extend(&chars[i..=close]);
+            }
+            i = close + 1;
+            continue;
+        }
+        if dollar {
+            if let Some((past, _)) = nothing_of(&chars, i + 1, &empty) {
+                i = past;
+                continue;
+            }
+        }
+        if c == '\\' {
+            out.extend(&chars[i..(i + 2).min(chars.len())]);
+            i += 2;
+            continue;
+        }
+        out.push(c);
+        i += 1;
     }
-    !word.is_empty()
+    if out.is_empty() {
+        return quotes.then(|| word.to_string());
+    }
+    Some(out)
+}
+
+/// What a `"…"` holds, for the word it is part of.
+enum InQuotes {
+    /// Text: the quotes and all stay as written.
+    Text,
+    /// Nothing but expansions that may be nothing: an empty word on its
+    /// own, and nothing glued to text.
+    Empty,
+    /// `$@` or an array's `[@]` among those: no word at all.
+    Gone,
+}
+
+/// Where the `"` that closes the one before `from` is, and what the quotes
+/// hold. `None` where they never close.
+fn quoted(chars: &[char], from: usize, empty: &dyn Fn(&str) -> bool) -> Option<(usize, InQuotes)> {
+    let mut close = from;
+    while close < chars.len() && chars[close] != '"' {
+        close += if chars[close] == '\\' { 2 } else { 1 };
+    }
+    if close >= chars.len() {
+        return None;
+    }
+    let subst: Vec<char> = SUBST.chars().collect();
+    let (mut k, mut at_sign) = (from, false);
+    while k < close {
+        if chars[k..close].starts_with(&subst) {
+            k += subst.len();
+            continue;
+        }
+        if chars[k] != '$' {
+            return Some((close, InQuotes::Text));
+        }
+        match nothing_of(chars, k + 1, empty) {
+            Some((past, at)) if past <= close => {
+                at_sign |= at;
+                k = past;
+            }
+            _ => return Some((close, InQuotes::Text)),
+        }
+    }
+    let held = if at_sign {
+        InQuotes::Gone
+    } else {
+        InQuotes::Empty
+    };
+    Some((close, held))
+}
+
+/// Past the `$…` whose `$` stands before `at`, where it may expand to
+/// nothing: a name with no value, `$@`, `$*`, `$!`, a positional parameter,
+/// or `${…}` on one of those; and whether it is `$@` or an array's `[@]`,
+/// which leave no word even in quotes. `None` where it is text or always
+/// something, `$#` and `$0` among them.
+fn nothing_of(chars: &[char], at: usize, empty: &dyn Fn(&str) -> bool) -> Option<(usize, bool)> {
+    let c = *chars.get(at)?;
+    if c == '{' {
+        let rest: String = chars[at + 1..].iter().collect();
+        let end = closes(&rest)?;
+        let inner = &rest[..end];
+        let name = &inner[..inner.len() - inner.trim_start_matches(of_a_name).len()];
+        let (nothing, at_sign) = match inner.chars().next()? {
+            '@' => (true, true),
+            '*' | '!' => (true, false),
+            '#' => (false, false),
+            _ if name.is_empty() => (false, false),
+            _ if name.starts_with(|c: char| c.is_ascii_digit()) => (name != "0", false),
+            _ => (
+                empty(name),
+                inner[name.len()..].starts_with("[@]") && empty(name),
+            ),
+        };
+        return nothing.then(|| (at + rest[..end].chars().count() + 2, at_sign));
+    }
+    match c {
+        '@' => Some((at + 1, true)),
+        '*' | '!' | '1'..='9' => Some((at + 1, false)),
+        _ if c.is_ascii_digit() || !of_a_name(c) => None,
+        _ => {
+            let name: String = chars[at..].iter().take_while(|c| of_a_name(**c)).collect();
+            empty(&name).then(|| (at + name.chars().count(), false))
+        }
+    }
 }
 
 /// Whether a name takes its value from one the line set before it: `B=$A`,
@@ -15408,12 +15649,77 @@ mod tests {
             ("git $(true) push", Decision::Ask),
             ("git `true` push", Decision::Ask),
             ("git {,} push", Decision::Ask),
+            // Glued together however, and in the shell's own quotes.
+            ("git \"$@\"\"$@\" push", Decision::Ask),
+            ("git $u\"$@\" reset --hard", Decision::Ask),
+            ("git \"$@\"$u reset --hard", Decision::Ask),
+            ("git \"$@$@\" push", Decision::Ask),
+            ("git \"$@$u\" push", Decision::Ask),
+            ("git $\"$@\" push", Decision::Ask),
+            ("git \"${u[@]}\"${v[@]} push", Decision::Ask),
+            ("git \"$@\"$(true) push", Decision::Ask),
+            ("git `true`\"$@\" push", Decision::Ask),
+            ("git $1 push", Decision::Ask),
+            ("git ${*} push", Decision::Ask),
+            ("git {,}$u push", Decision::Ask),
+            ("git $u{,} push", Decision::Ask),
+            ("git {,,}$u push", Decision::Ask),
+            ("git {\"$@\",} push", Decision::Ask),
+            ("git {$u,$v} push", Decision::Ask),
+            ("git {,{,}} push", Decision::Ask),
+            // `$'…'` is a quote of its own, and its `\'` closes nothing.
+            ("git -c x.y=$'a\\'b' $u reset --hard", Decision::Ask),
+            ("git -c x.y=$'a\\'b' $u push", Decision::Ask),
+            // Nothing glued to text leaves the text.
+            ("git \"$@\"push x", Decision::Ask),
+            ("git ${u}push x", Decision::Ask),
+            ("git \"$u\"push x", Decision::Ask),
+            ("git $u\"push\" x", Decision::Ask),
+            ("git pu${u}sh x", Decision::Ask),
+            ("git $u''push x", Decision::Ask),
+            ("f=; git ${f}push x", Decision::Ask),
+            // A list is written out first, as a `for` list is.
+            ("git {,push} x", Decision::Ask),
+            ("git {,\\push} x", Decision::Ask),
+            ("git {p..p}ush x", Decision::Ask),
+            ("git {pu,}sh x", Decision::Ask),
+            ("git {{,push},} x", Decision::Ask),
+            ("git {,\"$@\"push} x", Decision::Ask),
+            ("git {,x}push x", Decision::Ask),
             // Quotes keep a word, and text is a word.
             ("git \"$u\" push", Decision::Allow),
             ("git $u\"\" push", Decision::Allow),
             ("git '$u' push", Decision::Allow),
             ("git \"${u[*]}\" push", Decision::Allow),
             ("git \\$u push", Decision::Allow),
+            ("git \"$@\"\"\" push", Decision::Allow),
+            ("git \"$*\" push", Decision::Allow),
+            ("git \"$*\"$u push", Decision::Allow),
+            ("git \"$1\" push", Decision::Allow),
+            ("git $u$'' push", Decision::Allow),
+            ("git \"$@\"x push", Decision::Allow),
+            ("git \"x$@\" push", Decision::Allow),
+            ("git $u\\$v push", Decision::Allow),
+            // Always a word: a count, a number, the shell's own name.
+            ("git $# push", Decision::Allow),
+            ("git ${#u} push", Decision::Allow),
+            ("git $0 push", Decision::Allow),
+            ("git $10 push", Decision::Allow),
+            ("git $'x' $u push", Decision::Allow),
+            ("f=x; git $f push", Decision::Allow),
+            // A list's other words are words: `x` is the verb here.
+            ("git {x,push} y", Decision::Allow),
+            ("git {a,{,push}} x", Decision::Allow),
+            ("git {a,}$u push", Decision::Allow),
+            ("git {$u} push", Decision::Allow),
+            ("git x{,} push", Decision::Allow),
+            ("git \"{,push}\" y", Decision::Allow),
+            ("git '{,push}' y", Decision::Allow),
+            ("git \\{,push} y", Decision::Allow),
+            ("git {a\\,push} y", Decision::Allow),
+            ("echo {1..3}", Decision::Allow),
+            ("mkdir -p a/{b,c}/{d,e}", Decision::Allow),
+            ("cp x{,.bak}", Decision::Allow),
             ("$g rm -rf /", Decision::Deny),
             ("${g} rm -rf /", Decision::Deny),
             ("cat $f", Decision::Allow),
@@ -15421,6 +15727,116 @@ mod tests {
         ] {
             assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
         }
+    }
+
+    /// A `{a,b}` list is written out before the words are judged, as the
+    /// shell writes it out before the command runs: `{,x}` is `x`, and
+    /// `{,x}` as the program is `x` as the program. A list that stands for
+    /// more words than the gate reads is a part it can't read.
+    #[cfg(unix)]
+    #[test]
+    fn a_list_is_written_out_before_the_words_are_judged() {
+        let m = machine();
+        m.refused(&[
+            "{,sudo}{,} id",
+            "{,rm} -rf /",
+            "rm -rf ${u}/",
+            "${u}sudo id",
+        ]);
+        for role in HATS {
+            let want = if role == Role::Build {
+                Decision::AskRoot
+            } else {
+                Decision::Deny
+            };
+            assert_eq!(m.decide("{,sudo} id", role), want, "{role:?}");
+            for cmd in ["echo {1..300}", "git {,push}{1..300} x"] {
+                let got = m.decide(cmd, role);
+                if role == Role::Build {
+                    assert_eq!(got, Decision::Ask, "{cmd}");
+                } else {
+                    assert_ne!(got, Decision::Allow, "{role:?}: {cmd}");
+                }
+            }
+        }
+    }
+
+    /// The words as written, lists written out, and what is left of each.
+    #[test]
+    fn a_word_is_read_as_the_shell_parts_it() {
+        assert_eq!(words_as_written("git\t$u\tpush"), ["git", "$u", "push"]);
+        assert_eq!(
+            words_as_written("git -c x.y=$'a\\'b' $u push"),
+            ["git", "-c", "x.y=$'a\\'b'", "$u", "push"]
+        );
+        assert_eq!(
+            words_as_written("echo \"a b\" 'c d' e"),
+            ["echo", "\"a b\"", "'c d'", "e"]
+        );
+        let listed = |w: &str| {
+            let mut out = Vec::new();
+            written_out(w, &mut out).ok().map(|_| out)
+        };
+        assert_eq!(listed("{,push}").unwrap(), ["", "push"]);
+        assert_eq!(listed("{a,b}c").unwrap(), ["ac", "bc"]);
+        assert_eq!(listed("{1..3}").unwrap(), ["1", "2", "3"]);
+        assert_eq!(listed("{'a,b',c}").unwrap(), ["'a,b'", "c"]);
+        assert_eq!(listed("{a,{,push}}").unwrap(), ["a", "", "push"]);
+        assert_eq!(listed("${u}{,x}").unwrap(), ["${u}", "${u}x"]);
+        assert_eq!(listed("${u:-a,b}").unwrap(), ["${u:-a,b}"]);
+        assert_eq!(listed("{x}").unwrap(), ["{x}"]);
+        assert_eq!(listed("a{").unwrap(), ["a{"]);
+        assert_eq!(listed("\"{a,b}\"").unwrap(), ["\"{a,b}\""]);
+        assert!(listed("{1..300}").is_none());
+        let home = [("HOME".to_string(), "/h".to_string())];
+        let left = |w: &str| left_of(w, &home);
+        for gone in [
+            "",
+            "$u",
+            "${u}",
+            "$u$v",
+            "$@",
+            "\"$@\"",
+            "\"${@}\"",
+            "\"$@$u\"",
+            "$(…)",
+            "\"${u[@]}\"$v",
+            "$1",
+        ] {
+            assert_eq!(left(gone), None, "{gone:?}");
+        }
+        for kept in [
+            "\"$u\"",
+            "\"\"",
+            "''",
+            "$''",
+            "\"$@\"\"\"",
+            "\"$*\"",
+            "\"$!\"",
+            "$u\"$v\"",
+            "$'x'",
+            "$#",
+            "$HOME",
+            "\\$u",
+            "$0",
+        ] {
+            assert_eq!(left(kept).as_deref(), Some(kept), "{kept:?}");
+        }
+        for (word, stripped) in [
+            ("\"$u\"push", "push"),
+            ("${u}push", "push"),
+            ("$u\"push\"", "\"push\""),
+            ("pu$u$v\"sh\"", "pu\"sh\""),
+            ("$u$HOME", "$HOME"),
+            ("$10", "0"),
+            ("$u\\ ", "\\ "),
+            ("\"$@\"x\"$@\"", "x"),
+        ] {
+            assert_eq!(left(word).as_deref(), Some(stripped), "{word:?}");
+        }
+        let set = [("f".to_string(), "x".to_string())];
+        assert_eq!(left_of("$f", &set).as_deref(), Some("$f"));
+        assert_eq!(left_of("${f}y", &set).as_deref(), Some("${f}y"));
     }
 
     /// Outside double quotes the shell expands what a name gives, and a

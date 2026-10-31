@@ -38,7 +38,7 @@ pub(super) const UNREAD: &str = "$*";
 const MAX_MATCHES: usize = 2000;
 const MAX_LOOKED_AT: usize = 50_000;
 /// The most words a `{a,b}` list is expanded to.
-const MAX_LISTED: usize = 256;
+pub(super) const MAX_LISTED: usize = 256;
 
 /// `c` as it is kept when the shell would not act on it.
 pub(super) fn quoted(c: char) -> char {
@@ -157,7 +157,7 @@ pub(super) fn braces(word: &str, out: &mut Vec<String>) -> bool {
 
 /// The words a run stands for: `a..e`, `1..10`, `01..10..3`. `None` when
 /// it isn't one, and the shell leaves it as written.
-fn run_of(inner: &str) -> Option<Vec<String>> {
+pub(super) fn run_of(inner: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = inner.split("..").collect();
     let (from, to) = match parts.as_slice() {
         [from, to] | [from, to, _] => (*from, *to),
