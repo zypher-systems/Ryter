@@ -2252,7 +2252,7 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
     // rules for it are a language of their own, and each reading of it the
     // gate tried let a command through that it would have stopped written
     // plainly. Refused, the model writes the value out.
-    if segs.iter().any(|s| works_on_names(s, cmd)) || copies_a_name(&sets_of) {
+    if segs.iter().any(works_on_names) || copies_a_name(&sets_of) {
         return Judged::deny();
     }
     // A name is known by one value where only plain parts sure to run set
@@ -2385,10 +2385,10 @@ fn judge_bash(cmd: &str, ctx: &ToolContext) -> Judged {
                     Some(rest) if !s.inside => decide_as_root(text, rest, &cx),
                     _ => decide_segment(text, &cx),
                 };
-                // A name with no value may be unset, and then leaves no word:
+                // A word the shell may be left with nothing of is no word:
                 // `git $u push` is `git push`. Only ever a second judgement,
                 // so it can add to the verdict and take nothing from it.
-                let judged = match without_unset_names(&s.text, &cx.vars) {
+                let judged = match without_vanishing_words(&s.text, &cx.vars) {
                     Some(left) => judge(&s.text).and(judge(&left)),
                     None => judge(&s.text),
                 };
@@ -4452,11 +4452,12 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
     }
     let parts = split(cmd);
     let sets_of: Vec<Vec<Given>> = parts.iter().map(sets).collect();
-    if parts.iter().any(|s| works_on_names(s, cmd)) || copies_a_name(&sets_of) {
+    if parts.iter().any(works_on_names) || copies_a_name(&sets_of) {
         return Some(
             "This command makes something else of a variable (`${f%.txt}`, `${f:-x}`, \
              `f+=x`, `B=$A`), which can't be checked before it runs, so it is refused. \
-             Write the value out, as a plain name or a loop over plain names.",
+             Write the value out, as a plain name or a loop over plain names. A count \
+             is `((n++))`.",
         );
     }
     // A refusal that is about a file named, not about what the command
@@ -6332,20 +6333,81 @@ fn works_on_a_name(word: &str) -> bool {
     })
 }
 
-/// `text` with each word that is only a name the gate has no value for taken
-/// out, if there is one.
-fn without_unset_names(text: &str, vars: &[(String, String)]) -> Option<String> {
-    let unset = |word: &&str| {
-        let name = word.strip_prefix('$').unwrap_or("");
-        let name = name
-            .strip_prefix('{')
-            .and_then(|n| n.strip_suffix('}'))
-            .unwrap_or(name);
-        !name.is_empty() && name.chars().all(of_a_name) && !vars.iter().any(|(n, _)| n == name)
-    };
-    let said: Vec<&str> = text.split(' ').collect();
-    let left: Vec<&str> = said.iter().filter(|w| !unset(w)).copied().collect();
+/// `text` with each word that [`may_vanish`] taken out, if there is one.
+fn without_vanishing_words(text: &str, vars: &[(String, String)]) -> Option<String> {
+    let text = text.replace("\\\n", "");
+    let said = words_as_written(&text);
+    let left: Vec<&str> = said
+        .iter()
+        .filter(|w| !may_vanish(w, vars))
+        .copied()
+        .collect();
     (left.len() < said.len() && !left.is_empty()).then(|| left.join(" "))
+}
+
+/// The words of `text` as written, quotes and all: a space, a tab or a new
+/// line ends one, unless it is quoted.
+fn words_as_written(text: &str) -> Vec<&str> {
+    let (mut out, mut start, mut quote) = (Vec::new(), None, None);
+    let mut chars = text.char_indices();
+    while let Some((at, c)) = chars.next() {
+        match (quote, c) {
+            (None, ' ' | '\t' | '\n') => {
+                out.extend(start.take().map(|from| &text[from..at]));
+                continue;
+            }
+            (None, '\'' | '"') => quote = Some(c),
+            (Some(q), _) if q == c => quote = None,
+            (q, '\\') if q != Some('\'') => {
+                chars.next();
+            }
+            _ => {}
+        }
+        start.get_or_insert(at);
+    }
+    out.extend(start.map(|from| &text[from..]));
+    out
+}
+
+/// Whether `word`, as written, may leave no word at all: it holds nothing
+/// but names with no value, `$@`, `$(…)` and the like, or it is a `{,}`.
+/// Quotes keep an empty word, but for `"$@"`, which can be none.
+fn may_vanish(word: &str, vars: &[(String, String)]) -> bool {
+    let empty = |name: &str| !vars.iter().any(|(n, v)| n == name && !v.is_empty());
+    if let Some(quoted) = word.strip_prefix('"').and_then(|w| w.strip_suffix('"')) {
+        let array = quoted
+            .strip_prefix("${")
+            .and_then(|q| q.strip_suffix("[@]}"));
+        return matches!(quoted, "$@" | "${@}") || array.is_some_and(empty);
+    }
+    if word.contains(',') && word.chars().all(|c| matches!(c, '{' | ',' | '}')) {
+        return true;
+    }
+    let mut rest = word;
+    while !rest.is_empty() {
+        if let Some(past) = rest.strip_prefix(SUBST) {
+            rest = past;
+            continue;
+        }
+        let Some(past) = rest.strip_prefix('$') else {
+            return false;
+        };
+        let (said, past) = match past.strip_prefix('{') {
+            Some(inner) => match inner.split_once('}') {
+                Some(parts) => parts,
+                None => return false,
+            },
+            None if past.starts_with(['@', '*', '!']) => past.split_at(1),
+            None => past.split_at(past.len() - past.trim_start_matches(of_a_name).len()),
+        };
+        let name = said.split('[').next().unwrap_or(said);
+        let named = !name.is_empty() && name.chars().all(of_a_name);
+        if !(matches!(name, "@" | "*" | "!") || named && empty(name)) {
+            return false;
+        }
+        rest = past;
+    }
+    !word.is_empty()
 }
 
 /// Whether a name takes its value from one the line set before it: `B=$A`,
@@ -6367,15 +6429,10 @@ fn copies_a_name(sets_of: &[Vec<Given>]) -> bool {
     false
 }
 
-/// Whether this part of `cmd` is one the gate refuses to work out: a word
-/// that [`works_on_a_name`], or `+=` on a name. Inside `((…))` that is
-/// arithmetic, which [`split`] hands over as a part like any other.
-fn works_on_names(s: &Seg, cmd: &str) -> bool {
-    let sums = cmd.match_indices(&s.text).any(|(at, text)| {
-        let (before, after) = (cmd[..at].trim_end(), cmd[at + text.len()..].trim_start());
-        before.ends_with("((") || after.starts_with("))")
-    });
-    lex(&s.text).iter().any(|w| works_on_a_name(w)) || (!sums && sets(s).iter().any(|set| set.adds))
+/// Whether this part of a command is one the gate refuses to work out: a
+/// word that [`works_on_a_name`], or `+=` on a name, in `((…))` as anywhere.
+fn works_on_names(s: &Seg) -> bool {
+    lex(&s.text).iter().any(|w| works_on_a_name(w)) || sets(s).iter().any(|set| set.adds)
 }
 
 /// Where `word` reads `name` in braces. One nested in another of the same
@@ -15211,6 +15268,25 @@ mod tests {
             "f=; rm -rf ${f:-/etc/passwd}",
             "echo ${f:=.env}; cat $f",
             "f=${y:-/etc}; rm -rf $f",
+            // `+=` is refused wherever it stands, and what looks like
+            // arithmetic in a comment or a quote buys nothing.
+            "((i+=1)); echo $i",
+            "for ((i=0; i<3; i+=1)); do echo $i; done",
+            "echo $((i+=1))",
+            "f=.s; ((f+=sh/id_ed25519)); cat $f",
+            "f=.s; f+=sh/id_ed25519; cat $f # ((f+=sh/id_ed25519))",
+            "f=.s; f+=sh/id_ed25519; echo '((f+=sh/id_ed25519))'; cat $f",
+            "echo 'f+=sh/id_ed25519))'; f=.s; f+=sh/id_ed25519; cat $f",
+            "# f+=sh/id_ed25519))\nf=.s; f+=sh/id_ed25519; cat $f",
+            "echo 'f+=c))'; f=/et; f+=c; rm -rf $f",
+            "echo '((f+=c'; f=/et; f+=c; rm -rf $f",
+            "((f+=c)); f=/et; f+=c; rm -rf $f",
+            "echo $((f+=c)); f=/et; f+=c; rm -rf $f",
+            "f=/et; f+=c; rm -rf $f # ((f+=c))",
+            "((xf+=c)); f=/et; f+=c; rm -rf $f",
+            "echo 'xf+=udo))'; f=s; f+=udo; $f id",
+            "echo $((f+=udo)); f=s; f+=udo; $f id",
+            "# f+=udo))\nf=s; f+=udo; $f id",
             // A word that comes to nothing, however many.
             "f=echo; ${f#echo} cat .env",
             "f=echo; ${f:4} cat .env",
@@ -15272,8 +15348,8 @@ mod tests {
             ("echo \\${f%.txt}", Decision::Allow),
             ("grep -n '${f:-x}' README.md", Decision::Allow),
             ("awk '{a+=$1} END {print a}' README.md", Decision::Allow),
-            ("((i+=1)); echo $i", Decision::Allow),
-            ("for ((i=0; i<3; i+=1)); do echo $i; done", Decision::Allow),
+            ("((i++)); echo $i", Decision::Allow),
+            ("i=0; i=$((i+1)); echo $i", Decision::Allow),
             // A name from outside the line stays unread.
             ("P=$HOME/x; echo $P", Decision::Allow),
             ("f=$y; echo $f", Decision::Allow),
@@ -15314,6 +15390,30 @@ mod tests {
             ("git $u push", Decision::Ask),
             ("git ${u} reset --hard", Decision::Ask),
             ("v=push; git $u \"$v\"", Decision::Ask),
+            // However the words are parted.
+            ("git\t${u}\treset --hard", Decision::Ask),
+            ("git\t$u\tpush", Decision::Ask),
+            ("git\t$u\trm -rf .", Decision::Ask),
+            ("git \\\n$u \\\npush", Decision::Ask),
+            ("if true; then git\t$u\tpush; fi", Decision::Ask),
+            // And whatever else may leave none.
+            ("git $u$v push", Decision::Ask),
+            ("git ${u}${v} push", Decision::Ask),
+            ("git $@ push", Decision::Ask),
+            ("git $* push", Decision::Ask),
+            ("git \"$@\" push", Decision::Ask),
+            ("git $! push", Decision::Ask),
+            ("git ${u[@]} push", Decision::Ask),
+            ("git \"${u[@]}\" push", Decision::Ask),
+            ("git $(true) push", Decision::Ask),
+            ("git `true` push", Decision::Ask),
+            ("git {,} push", Decision::Ask),
+            // Quotes keep a word, and text is a word.
+            ("git \"$u\" push", Decision::Allow),
+            ("git $u\"\" push", Decision::Allow),
+            ("git '$u' push", Decision::Allow),
+            ("git \"${u[*]}\" push", Decision::Allow),
+            ("git \\$u push", Decision::Allow),
             ("$g rm -rf /", Decision::Deny),
             ("${g} rm -rf /", Decision::Deny),
             ("cat $f", Decision::Allow),

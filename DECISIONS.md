@@ -2,6 +2,18 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-31 — The ninth round of 0.43.0: no exemption for `+=`, and a word is what the shell says it is
+
+**What the round showed.** Both reviews rejected `3123a5e` with the same two findings, and neither was a regression: on 0.42.0 each command passes too. Both were the rule falling short of itself, in two places the eighth round kept text matching.
+
+**Arithmetic.** `works_on_names` let `+=` through if the part's text stood next to `((` or `))` anywhere in the command, a comment and a quote included, so `f=.s; f+=sh/id_ed25519; cat $f # ((f+=sh/id_ed25519))` passed. The review asked for the context to be carried from parsing. That means reading `((…))` as bash does, down to telling it from nested subshells, for a form that none of the 1,573 real commands uses: 29 hold `((`, none with `+=`. So the exemption went instead. `+=` on a name is refused wherever it stands; `((i++))`, `i=$((i+1))` and a spaced `(( i += 1 ))`, which is no assignment word, still run, and the hint says how to count. That leaves no parser for a review to find the next gap in.
+
+**Vanishing words.** `without_unset_names` split on spaces, so a tab hid the word. Fixing that alone would have left the rest of the class, all Allow on this head: `git $u$v push`, `git $@ push`, `git "$@" push`, `git ${u[@]} push`, `git $(true) push`, `` git `true` push ``, `git {,} push`, and a word across a line continuation. `words_as_written` takes the words apart with quotes kept, and `may_vanish` says what can leave no word. `git "$u" push` keeps an empty word, so it stays free, as does `git "${u[*]}" push`. It is still only a second judgement, so it can add to a verdict and take nothing from it.
+
+**How it was checked.** Replay of 1,573 real commands: no verdict changed. The wider set of 75,891 lines against the last head: 6 tighter, 0 looser. The 229 review commands against 0.42.0: 106 tighter, 0 looser. 40,000 argv forms and 30,000 stopped-path forms, none more lenient than the plain command, and every line where bash ran a hidden command refused with `rm -rf /` in its place.
+
+**What it costs:** `((n+=1))` used to run and is refused, and `git $(x) push` used to pass and asks.
+
 ### 2026-10-31 — The gate stops imitating bash: what makes something else of a name is refused
 
 **Supersedes the fourth to seventh rounds' operators, readings and worked-out values below, which stay as the record of why.**
