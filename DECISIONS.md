@@ -2,6 +2,22 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-30 — The third round of 0.43.0: a list's every word counts, and the order of the tree's moves decides whose they are
+
+**The gate.** Both reviews rejected `73efaa0`. `f[0]=x` sets `$f`, and neither `sets` nor `steps` read it. A list with one word the gate left to the shell gave no values at all, so the literals beside it were lost, and an unread `$f` can pass: `for f in /etc/passwd *.txt` ran `sed -i` where `for f in notes.txt /etc/passwd` asked. Checking the same mechanism turned up three of the same kind no review had named: a pattern or a list on its own (`/etc/pass*`, `/etc/{passwd,hosts}`), `"${A}"` in double quotes, and `${A[0]}`. The last two passed `A=/etc/passwd` unread, on main as well.
+
+Each word of a list now stands for itself. A pattern or a `{a,b}` list is kept as a live value (`expand::LIVE`) and read where the name is used, as if written there, which judges it from the folder that part runs in: `cd /etc; for f in pass*` is as `sed -i pass*` there. An unread word adds the unread verdict and takes nothing from its neighbours. An element is the name, with the doubt that it may be another element, so its value adds to the name's and replaces nothing.
+
+An operator on a value (`${f%.md}`, `${f/a/.env}`) is judged both ways. Reading it as the value alone was tried and turned `${f/a/.env}` on `a` from a question into a run, the same mistake as round 2, caught here by comparing the new gate's verdicts with the old one's on a list of forms. `${f}`, `${f[0]}`, `${f[@]}` and `${f[*]}` are the value, since they are.
+
+Replay of 1,573 real commands against `73efaa0`: no verdict changed.
+
+**The audit.** A list of paths the hooks had touched could not say what came first, so a hook's write took the path away from the user for the rest of the turn, and their later edit was put back. `HookWrites` now keeps the tree before and after each firing, oldest first, and `yours_between` walks them: what moved outside those spans is the user's, in either order. `yours` holds, for each path, the tree with the user's version, so a path the audit or a hook wrote over goes back to that tree rather than staying as they left it. This also covers the audit's own command writing over an edit, and a command that put the file back to the checkpoint's contents, which had left nothing to see. The early return for a tree that matches the checkpoint went for that reason.
+
+Leaving the audit by the user's yes closed it inside the call, and `PostToolUse` fires after the call, so that hook wrote after the rollback. The close and the change of hat now wait for the call to end (`leaving_audit`). The reply text says the hat has changed before it has, and the model reads it after both.
+
+**Left, and said:** an edit made during a hook's run reads as the hook's, as one made during an audit command does. `f=([0]=x)` is judged by the value but the name gets none of it, like every list assigned to a name, so it stands on the segment's own verdict.
+
 ### 2026-10-30 — What the 0.43.0 reviews found: doubt about a name adds to what is judged, and hooks are watched where they run
 
 Two rounds of review on PR #107, seven defects in all, every one in work new to the release, and one of them in my own first fix.

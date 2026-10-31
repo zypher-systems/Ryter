@@ -3061,6 +3061,14 @@ fn decide_as_root(seg: &str, rest: &str, ctx: &ToolContext) -> Decision {
 /// `docker exec` or `compose run` runs, so the paths it names are the
 /// container's, not this machine's.
 fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decision {
+    // `A=([0]=/)`: an element of a list is judged as what it holds, as `/`
+    // in `A=(/)` is.
+    let seg = seg
+        .trim_start()
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once("]="))
+        .filter(|(at, _)| !at.contains(char::is_whitespace))
+        .map_or(seg, |(_, value)| value);
     let words = command_words(seg, ctx);
     // A function gives a name to commands, and the name is then a command:
     // `function cat { … }; cat` ran whatever was in the braces as `cat`,
@@ -3137,10 +3145,16 @@ fn decide_segment_in(seg: &str, ctx: &ToolContext, in_container: bool) -> Decisi
     }
 }
 
-/// `NAME=value` (or `NAME+=value`), as a word that sets a variable.
+/// `NAME=value` (or `NAME+=value`), as a word that sets a variable. An
+/// element, `NAME[0]=value`, is one too, and the name is `NAME`: element 0
+/// is what `$NAME` reads.
 fn assigned(word: &str) -> Option<(&str, &str)> {
     let (name, value) = word.split_once('=')?;
     let name = name.strip_suffix('+').unwrap_or(name);
+    let name = name
+        .strip_suffix(']')
+        .and_then(|n| n.split_once('['))
+        .map_or(name, |(n, _)| n);
     let mut chars = name.chars();
     let first = chars.next()?;
     ((first.is_ascii_alphabetic() || first == '_')
@@ -5733,12 +5747,10 @@ fn words(seg: &str) -> Vec<String> {
     lex(seg).iter().map(|w| expand::plain(w)).collect()
 }
 
-/// `for NAME in v1 v2 …` (or `select`): the name, and the values when
-/// every one is text the shell hands over as written. A value the shell
-/// reads itself (a variable, a substitution, a pattern, a brace list, a
-/// tilde), `for f; do` (the arguments) and `for ((…))` give no values.
-/// `None` for words that are not a loop head.
-fn loop_head(said: &[String]) -> Option<(String, Option<Vec<String>>)> {
+/// `for NAME in v1 v2 …` (or `select`): the name, and the words of its
+/// list. `for f; do` (the arguments) and `for ((…))` list none. `None` for
+/// words that are not a loop head.
+fn loop_head(said: &[String]) -> Option<(String, Vec<String>)> {
     if !matches!(said.first().map(String::as_str), Some("for" | "select")) {
         return None;
     }
@@ -5747,18 +5759,33 @@ fn loop_head(said: &[String]) -> Option<(String, Option<Vec<String>>)> {
         return None;
     }
     if said.get(2).map(String::as_str) != Some("in") {
-        return Some((name.clone(), None));
+        return Some((name.clone(), Vec::new()));
     }
-    let values: Vec<String> = said[3..]
+    let list = said[3..]
         .iter()
         .filter(|w| !matches!(w.as_str(), "do" | ";"))
         .cloned()
         .collect();
-    let plain = !values.is_empty()
-        && values
-            .iter()
-            .all(|v| !v.contains(['$', '`', '*', '?', '[', '{', '~']));
-    Some((name.clone(), plain.then_some(values)))
+    Some((name.clone(), list))
+}
+
+/// What one word of a `for` list (as [`lex`] leaves it) gives the name:
+/// its text, or `None` where only the shell can read it. A pattern or a
+/// `{a,b}` list is kept to be expanded where it is used, and a pattern may
+/// also match what the line makes or moves, which is `None` as well.
+fn listed(word: &str) -> Vec<Option<String>> {
+    if word.contains(['$', '`']) {
+        return vec![None];
+    }
+    if !word.contains(['*', '?', '[', '{']) {
+        return vec![Some(expand::plain(word))];
+    }
+    let live = Some(format!("{}{word}", expand::LIVE));
+    if expand::has_glob(word) {
+        vec![live, None]
+    } else {
+        vec![live]
+    }
 }
 
 /// Variables the shell sets by itself, with nothing on the line naming
@@ -5805,7 +5832,9 @@ fn what_names_hold(
         for ((s, set), sure) in segs.iter().zip(sets_of).zip(sure) {
             let mut of_it = set.iter().filter(|(n, _)| n == name).peekable();
             if of_it.peek().is_some() {
-                doubted |= !sure;
+                // An element may not be the one `$name` reads.
+                let element = steps(&s.text, name) && s.text.contains(&format!("{name}["));
+                doubted |= !sure || element;
                 for (_, value) in of_it {
                     match value {
                         Some(v) if !values.contains(v) => values.push(v.clone()),
@@ -5847,14 +5876,17 @@ fn sets(s: &Seg) -> Vec<(String, Option<String>)> {
             })
             .collect();
     }
-    if let Some((name, values)) = loop_head(&said) {
-        return match values {
-            Some(values) => values
-                .into_iter()
-                .map(|v| (name.clone(), Some(v)))
-                .collect(),
-            None => vec![(name, None)],
-        };
+    let mut lexed = lex(&s.text);
+    strip_keywords(&mut lexed);
+    if let Some((name, list)) = loop_head(&lexed) {
+        if list.is_empty() {
+            return vec![(name, None)];
+        }
+        return list
+            .iter()
+            .flat_map(|w| listed(w))
+            .map(|v| (name.clone(), v))
+            .collect();
     }
     // `export NAME=value`, `declare`, `typeset`, `local` and `readonly` set
     // the variable as `NAME=value` does, whatever other flags they carry:
@@ -5922,7 +5954,10 @@ fn can_set(text: &str, name: &str) -> bool {
             let mut given = after_v.chain(joined);
             (
                 given.clone().any(in_a_variable),
-                given.any(|w| w.strip_prefix("-v").unwrap_or(w) == name),
+                given.any(|w| {
+                    let target = w.strip_prefix("-v").unwrap_or(w);
+                    target.split('[').next() == Some(name)
+                }),
             )
         }
         Some(
@@ -5963,8 +5998,8 @@ fn of_a_name(c: char) -> bool {
 }
 
 /// Whether `text` holds `name` as what an assignment, a default or a step
-/// changes: `name=`, `name+=`, `name++`, `--name`, `${name:=v}`. `name==` and
-/// a `$name` read it.
+/// changes: `name=`, `name+=`, `name++`, `--name`, `${name:=v}`, or any of
+/// those on an element, `name[0]=`. `name==` and a `$name` read it.
 fn steps(text: &str, name: &str) -> bool {
     const OPS: &[&str] = &[
         "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "++", "--",
@@ -5974,6 +6009,7 @@ fn steps(text: &str, name: &str) -> bool {
         if before.ends_with(of_a_name) || after.starts_with(of_a_name) || before.ends_with('$') {
             return false;
         }
+        let after = past_subscript(after);
         if before.ends_with("${") {
             return after.starts_with('=') || after.starts_with(":=");
         }
@@ -5985,19 +6021,65 @@ fn steps(text: &str, name: &str) -> bool {
     })
 }
 
+/// What follows the `[…]` that `text` opens with, if it opens with one.
+fn past_subscript(text: &str) -> &str {
+    let mut deep = 0;
+    for (at, c) in text.char_indices() {
+        match c {
+            '[' => deep += 1,
+            ']' if deep > 1 => deep -= 1,
+            ']' if deep == 1 => return &text[at + 1..],
+            _ if deep == 0 => return text,
+            _ => {}
+        }
+    }
+    text
+}
+
 /// Whether `text` names the variable `name`: `$name` not followed by more
-/// of a name, or `${name}`.
+/// of a name, or `${name…}`.
 fn names_var(text: &str, name: &str) -> bool {
-    if text.contains(&format!("${{{name}}}")) {
+    let ends = |rest: &str| !rest.starts_with(of_a_name);
+    if text
+        .match_indices(&format!("${{{name}"))
+        .any(|(at, open)| ends(&text[at + open.len()..]))
+    {
         return true;
     }
     let plain = format!("${name}");
-    text.match_indices(&plain).any(|(at, _)| {
-        text[at + plain.len()..]
-            .chars()
-            .next()
-            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
-    })
+    text.match_indices(&plain)
+        .any(|(at, _)| ends(&text[at + plain.len()..]))
+}
+
+/// Where `word` reads `name` in braces, and whether the value is all that
+/// comes of it: `${name}`, or `${name[0]}` and the like, which an unset
+/// array leaves the same. What an operator makes of a value only the shell
+/// works out (`${f%.x}` on `.env.x`, `${f/a/.env}`). In double quotes the
+/// `{` comes marked.
+fn in_braces(word: &str, name: &str) -> Vec<(std::ops::Range<usize>, bool)> {
+    let mut found = Vec::new();
+    for open in [
+        format!("${{{name}"),
+        format!("${}{name}", expand::quoted('{')),
+    ] {
+        for (at, _) in word.match_indices(&open) {
+            let rest = &word[at + open.len()..];
+            let mut deep = 1;
+            let end = rest.char_indices().find_map(|(i, c)| {
+                deep += i32::from(c == '{' || c == expand::quoted('{')) - i32::from(c == '}');
+                (deep == 0).then_some(i)
+            });
+            if let Some(end) = end.filter(|_| !rest.starts_with(of_a_name)) {
+                let whole = matches!(
+                    expand::plain(&rest[..end]).as_str(),
+                    "" | "[0]" | "[@]" | "[*]"
+                );
+                found.push((at..at + open.len() + end + 1, whole));
+            }
+        }
+    }
+    found.sort_by_key(|(at, _)| at.start);
+    found
 }
 
 /// `word` with the variables an earlier part of the command set put in:
@@ -6014,8 +6096,13 @@ fn known_variables(word: &str, vars: &[(String, String)]) -> String {
     for (name, value) in by_length {
         // Put in as the shell would leave it inside quotes: no pattern in
         // the value is expanded again.
-        let value: String = value.chars().map(expand::quoted).collect();
-        out = out.replace(&format!("${{{name}}}"), &value);
+        let value: String = match value.strip_prefix(expand::LIVE) {
+            Some(live) => live.to_string(),
+            None => value.chars().map(expand::quoted).collect(),
+        };
+        for (at, _) in in_braces(&out, name).into_iter().rev() {
+            out.replace_range(at, &value);
+        }
         let plain = format!("${name}");
         let mut rest = out.as_str();
         let mut done = String::new();
@@ -6069,6 +6156,15 @@ fn read(seg: &str, ctx: &ToolContext, every_pattern: bool) -> Vec<String> {
                 .map(str::to_string)
                 .collect();
             each.push(known);
+            // Past an operator the value is a guess, and the word as
+            // written stands beside it, for what only the shell reads.
+            if ctx
+                .vars
+                .iter()
+                .any(|(n, _)| in_braces(w, n).iter().any(|(_, whole)| !whole))
+            {
+                each.push(w.clone());
+            }
             each
         })
         .flat_map(|w| {
@@ -14186,15 +14282,11 @@ mod tests {
                 "a".into(),
                 "b".into()
             ]),
-            Some(("f".into(), Some(vec!["a".into(), "b".into()])))
-        );
-        assert_eq!(
-            loop_head(&["for".into(), "f".into(), "in".into(), "*.md".into()]),
-            Some(("f".into(), None))
+            Some(("f".into(), vec!["a".into(), "b".into()]))
         );
         assert_eq!(
             loop_head(&["for".into(), "f".into()]),
-            Some(("f".into(), None))
+            Some(("f".into(), Vec::new()))
         );
         assert_eq!(loop_head(&["echo".into(), "for".into()]), None);
         assert!(names_var("sed -i x $f.html", "f") && names_var("x${f}y", "f"));
@@ -14459,6 +14551,235 @@ mod tests {
             ("F=x; grep \"see /etc/hosts for $F\" a.txt", Decision::Allow),
             // A change to how the shell splits leaves every name unread.
             ("for f in a b; do cat $f/x; IFS=:; done", Decision::Deny),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
+    /// `f[0]=x` is `f=x` to `$f`, and it neither left the name's values
+    /// open to doubt nor gave it one: `cat $f/id_ed25519` was judged as
+    /// `index/…` while the shell read `.ssh/…`, and `A[0]=/etc/passwd`
+    /// passed where `A=/etc/passwd` asks. 0.43.0's third round. Another
+    /// element leaves `$f` as it was, so the value set on one adds to what
+    /// is judged and replaces nothing.
+    #[cfg(unix)]
+    #[test]
+    fn an_element_of_a_name_is_the_name() {
+        let m = machine();
+        for (cmd, verdict) in [
+            (
+                "for f in index; do f[0]=.ssh; cat $f/id_ed25519; done",
+                Decision::Deny,
+            ),
+            (
+                "for f in index; do f[0]=.ssh; cat \"$f/id_ed25519\"; done",
+                Decision::Deny,
+            ),
+            (
+                "for f in index; do f[g[0]]=.ssh; cat $f/id_ed25519; done",
+                Decision::Deny,
+            ),
+            (
+                "for f in index; do declare f[0]=.ssh; cat $f/id_ed25519; done",
+                Decision::Deny,
+            ),
+            (
+                "for f in notes.txt; do f[0]=/; rm -rf $f; done",
+                Decision::Deny,
+            ),
+            (
+                "for f in notes.txt; do f[$i]=/; rm -rf $f; done",
+                Decision::Deny,
+            ),
+            ("f[0]=/; rm -rf $f", Decision::Deny),
+            ("A[0]=.env; cat $A", Decision::Deny),
+            ("A=([0]=.env); cat $A", Decision::Deny),
+            ("A=(.env); cat $A", Decision::Deny),
+            ("A[0]=/etc/passwd; sed -i -e 's/a/b/' $A", Decision::Ask),
+            // Set on an element, the value before stands as well.
+            (
+                "A=/etc/passwd; A[1]=x; sed -i -e 's/a/b/' $A",
+                Decision::Ask,
+            ),
+            // What only the shell reads is doubt about the name.
+            (
+                "for f in index; do printf -v f[0] .ssh; cat $f/id_ed25519; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in index; do printf -vf[0] .ssh; cat \"$f/id_ed25519\"; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in index; do printf -v 'f[0]' .ssh; cat $f/id_ed25519; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in index; do read 'f[0]'; cat $f/id_ed25519; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in index; do unset 'f[0]'; cat $f/id_ed25519; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in index; do : ${f[0]:=.ssh}; cat $f/id_ed25519; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in index; do f[0]+=x; cat $f/id_ed25519; done",
+                Decision::Ask,
+            ),
+            // A name that rewrites the command does it by an element too.
+            ("HOME[0]=/x; cat ~/y", Decision::Deny),
+            ("IFS[0]=x; cat a", Decision::Deny),
+            // Reading an element, or a word that looks like one, changes
+            // nothing.
+            (
+                "for f in a b; do echo f[0]; cat $f/x; done",
+                Decision::Allow,
+            ),
+            ("for f in a b; do cat $f[0]; done", Decision::Allow),
+            ("for f in a b; do grep 'f[0-9]=' $f; done", Decision::Allow),
+            ("A=(a b); cat ${A[@]}", Decision::Allow),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
+    /// One word the gate had to leave to the shell dropped every other
+    /// value of the list: `for f in /etc/passwd *.txt` read as a name with
+    /// no values, and an unread `$f` can pass. 0.43.0's third round. Each
+    /// word now stands for itself, a pattern or a `{a,b}` list is expanded
+    /// where the value is used, as if written there, and an unread word
+    /// adds the verdict of an unread name.
+    #[cfg(unix)]
+    #[test]
+    fn every_word_of_a_list_is_judged() {
+        let m = machine();
+        for (cmd, verdict) in [
+            (
+                "for f in /etc/passwd *.txt; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in *.txt /etc/passwd; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passwd \"*.txt\"; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passwd $X; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in \"$X/x\" /etc/passwd; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passwd $(ls); do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "select f in /etc/passwd *.txt; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            ("for f in / *.txt; do rm -rf $f; done", Decision::Deny),
+            ("for f in / \"*.txt\"; do rm -rf $f; done", Decision::Deny),
+            ("for f in / $X; do rm -rf $f; done", Decision::Deny),
+            ("for f in / {a,b}; do rm -rf $f; done", Decision::Deny),
+            // The word is a pattern or a list, and what it comes to counts.
+            (
+                "for f in /etc/pass*; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passw?; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/{passwd,hosts}; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in {/etc/passwd,x}; do sed -i -e 's/a/b/' $f; done",
+                Decision::Ask,
+            ),
+            ("for f in /*; do rm -rf $f; done", Decision::Deny),
+            // From the folder it is used in, not the project.
+            (
+                "cd /etc; for f in pass*; do sed -i -e 's/a/b/' $f; done",
+                Decision::AskOutside,
+            ),
+            // In the project, a list stays as light as its words.
+            (
+                "for f in *.md; do sed -i -e 's/a/b/' $f; done",
+                Decision::Allow,
+            ),
+            (
+                "for f in src/*.py README.md; do cat $f; done",
+                Decision::Allow,
+            ),
+            ("for f in {a,b}.txt; do touch $f; done", Decision::Allow),
+            ("for f in a b $(ls); do cat $f; done", Decision::Allow),
+            ("for x in {1..3}; do echo $x; done", Decision::Allow),
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
+        }
+    }
+
+    /// `"${f}"` in double quotes, `${f[0]}` and `${f[@]}` are `$f`, and the
+    /// gate read none of them as it: `A=/etc/passwd; sed -i … "${A}"` ran.
+    /// With an operator the shell makes something else of the value, so
+    /// the value and the unread word are judged both: taken for the value
+    /// alone, `${f/a/.env}` on `a` would pass.
+    #[cfg(unix)]
+    #[test]
+    fn a_value_is_read_however_the_braces_are_written() {
+        let m = machine();
+        for (cmd, verdict) in [
+            ("A=.env; cat \"${A}\"", Decision::Deny),
+            ("A=.env; cat ${A}", Decision::Deny),
+            ("A=.env; cat ${A[0]}", Decision::Deny),
+            ("A=.env; cat \"${A[@]}\"", Decision::Deny),
+            ("A=.env; cat ${A[*]}", Decision::Deny),
+            ("A=.env; cat ${A%x}", Decision::Deny),
+            ("A=.env; cat \"${A:-x}\"", Decision::Deny),
+            ("A=/etc/passwd; sed -i -e 's/a/b/' \"${A}\"", Decision::Ask),
+            (
+                "for f in /etc/passwd; do sed -i -e 's/a/b/' \"${f}\"; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passwd; do sed -i -e 's/a/b/' ${f[0]}; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passwd; do sed -i -e 's/a/b/' \"${f[@]}\"; done",
+                Decision::Ask,
+            ),
+            (
+                "for f in /etc/passwd; do sed -i -e 's/a/b/' ${f%x}; done",
+                Decision::Ask,
+            ),
+            // What an operator makes of a value in the project is not the
+            // value: these read `.env`, and still count as an unread word.
+            ("for f in a; do cat ${f/a/.env}; done", Decision::Ask),
+            ("for f in a; do cat \"${f:+.env}\"; done", Decision::Deny),
+            ("for f in .env.x; do cat ${f%.x}; done", Decision::Deny),
+            ("for f in a.x; do cat ${f%.x}; done", Decision::Ask),
+            (
+                "for f in a.md b.md; do cat \"${f%.md}.txt\"; done",
+                Decision::Ask,
+            ),
+            // Other names, and a length, are not this one.
+            (
+                "A=/etc/passwd; echo ${#A}; sed -i -e 's/a/b/' ${AB}",
+                Decision::Allow,
+            ),
+            ("A=x; cat ${A}.txt", Decision::Allow),
         ] {
             assert_eq!(m.decide(cmd, Role::Build), verdict, "{cmd}");
         }

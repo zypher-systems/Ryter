@@ -21,6 +21,11 @@ const QUOTED: [(char, char); 4] = [
     ('{', '\u{E003}'),
 ];
 
+/// At the head of a value the shell expands when it hands it out: a pattern
+/// or a list in a `for` head. Such a value is read as written where it is
+/// used, from the folder the command is in, not as text.
+pub(super) const LIVE: char = '\u{E004}';
+
 /// Added to a word the gate could not expand: it holds a `$`, so every
 /// check reads it as a word only the shell can read.
 pub(super) const UNREAD: &str = "$*";
@@ -55,7 +60,8 @@ pub(super) fn plain(word: &str) -> String {
 /// True when `text` holds one of the private characters already: a command
 /// written with them can't be told from one the gate marked.
 pub(super) fn has_private(text: &str) -> bool {
-    text.chars().any(|c| QUOTED.iter().any(|(_, k)| *k == c))
+    text.chars()
+        .any(|c| c == LIVE || QUOTED.iter().any(|(_, k)| *k == c))
 }
 
 /// Where a relative pattern starts, and where `~` is.
@@ -65,7 +71,7 @@ pub(super) struct Places<'a> {
     pub home: Option<&'a Path>,
 }
 
-fn has_glob(word: &str) -> bool {
+pub(super) fn has_glob(word: &str) -> bool {
     word.contains(['*', '?', '['])
 }
 

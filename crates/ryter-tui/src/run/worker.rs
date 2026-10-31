@@ -1175,6 +1175,7 @@ fn build_agent(b: BuildAgent<'_>) -> Agent {
         product: None,
         audit_pending: None,
         audit_live: None,
+        leaving_audit: None,
         last_audit_verdict: None,
         turn: 0,
         last_input_tokens,

@@ -1,6 +1,5 @@
 //! PreToolUse / PostToolUse / SessionStart hooks (command or HTTP).
 
-use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -72,23 +71,38 @@ pub struct Hook {
     pub matcher: Option<String>,
 }
 
-/// The project's paths the hooks changed while an audit ran, its rollback
-/// being the one to want them. A hook is a command of the audit's whichever
-/// tool it fires on, and a watch on the whole tool would take in a question
-/// waiting on the user too, so the tree is looked at around the hooks.
+/// The tree before and after a firing of the hooks that changed it.
+pub type Firing = (String, String);
+
+/// When the hooks changed the project while an audit ran, oldest first: the
+/// tree before and after each firing that changed it. The audit's rollback
+/// wants what they wrote, and needs the order: what moved between two
+/// firings is the user's, on the same file or not. A hook is a command of
+/// the audit's whichever tool it fires on, and a watch on the whole tool
+/// would take in a question waiting on the user too, so the tree is looked
+/// at around the hooks.
 #[derive(Debug, Clone, Default)]
-pub struct HookWrites(Arc<Mutex<Option<BTreeSet<String>>>>);
+pub struct HookWrites(Arc<Mutex<Option<Vec<Firing>>>>);
 
 impl HookWrites {
     /// Start noting what hooks change.
     pub fn start(&self) {
         if let Ok(mut on) = self.0.lock() {
-            *on = Some(BTreeSet::new());
+            *on = Some(Vec::new());
         }
     }
 
-    /// Stop, and hand over what they changed.
-    pub fn stop(&self) -> BTreeSet<String> {
+    /// Hand over what is noted so far, and carry on.
+    pub fn take(&self) -> Vec<Firing> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|mut on| on.as_mut().map(std::mem::take))
+            .unwrap_or_default()
+    }
+
+    /// Stop, and hand over what is noted.
+    pub fn stop(&self) -> Vec<Firing> {
         self.0
             .lock()
             .ok()
@@ -100,10 +114,10 @@ impl HookWrites {
         self.0.lock().is_ok_and(|on| on.is_some())
     }
 
-    fn add(&self, paths: Vec<String>) {
+    fn add(&self, before: String, after: String) {
         if let Ok(mut on) = self.0.lock() {
             if let Some(noted) = on.as_mut() {
-                noted.extend(paths);
+                noted.push((before, after));
             }
         }
     }
@@ -123,7 +137,7 @@ impl Eq for HookWrites {}
 pub struct HookSet {
     /// In config order.
     pub hooks: Vec<Hook>,
-    /// What they changed in the project, while that is being noted.
+    /// When they changed the project, while that is being noted.
     pub writes: HookWrites,
 }
 
@@ -250,9 +264,9 @@ impl HookSet {
                 break;
             }
         }
-        if let (Some(before), Some(after)) = (&before, before.as_ref().and_then(|_| tree())) {
-            if let Ok(paths) = crate::git::paths_between(cwd, before, &after) {
-                self.writes.add(paths);
+        if let Some(before) = before {
+            if let Some(after) = tree().filter(|after| *after != before) {
+                self.writes.add(before, after);
             }
         }
         decision
