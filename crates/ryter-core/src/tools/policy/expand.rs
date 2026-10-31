@@ -24,11 +24,6 @@ const QUOTED: [(char, char); 6] = [
     ('`', '\u{E009}'),
 ];
 
-/// Three more, kept so only inside `${…}`: quoted there, a `}` doesn't close
-/// the braces, a `/` doesn't end a pattern and a `&` is not what matched.
-const QUOTED_IN_BRACES: [(char, char); 3] =
-    [('}', '\u{E005}'), ('/', '\u{E006}'), ('&', '\u{E007}')];
-
 /// At the head of a value the shell expands when it hands it out: a pattern
 /// or a list in a `for` head. Such a value is read as written where it is
 /// used, from the folder the command is in, not as text.
@@ -53,18 +48,9 @@ pub(super) fn quoted(c: char) -> char {
         .map_or(c, |(_, kept)| *kept)
 }
 
-/// `c` as it is kept when quoted inside `${…}`.
-pub(super) fn quoted_in_braces(c: char) -> char {
-    QUOTED_IN_BRACES
-        .iter()
-        .find(|(real, _)| *real == c)
-        .map_or_else(|| quoted(c), |(_, kept)| *kept)
-}
-
 fn real(c: char) -> char {
     QUOTED
         .iter()
-        .chain(&QUOTED_IN_BRACES)
         .find(|(_, kept)| *kept == c)
         .map_or(c, |(real, _)| *real)
 }
@@ -74,23 +60,11 @@ pub(super) fn plain(word: &str) -> String {
     word.chars().map(real).collect()
 }
 
-/// `word` with what only [`QUOTED_IN_BRACES`] kept put back: past the
-/// braces that mark says nothing, and a path needs its slashes.
-pub(super) fn past_the_braces(word: &str) -> String {
-    let back = |c: char| {
-        QUOTED_IN_BRACES
-            .iter()
-            .find(|(_, kept)| *kept == c)
-            .map_or(c, |(real, _)| *real)
-    };
-    word.chars().map(back).collect()
-}
-
 /// True when `text` holds one of the private characters already: a command
 /// written with them can't be told from one the gate marked.
 pub(super) fn has_private(text: &str) -> bool {
     text.chars()
-        .any(|c| c == LIVE || QUOTED.iter().chain(&QUOTED_IN_BRACES).any(|(_, k)| *k == c))
+        .any(|c| c == LIVE || QUOTED.iter().any(|(_, k)| *k == c))
 }
 
 /// Where a relative pattern starts, and where `~` is.
@@ -387,16 +361,6 @@ fn squeeze(part: &str) -> Vec<char> {
 /// character: which ones is not worked out, and matching too much only
 /// means more is judged.
 pub(super) fn matches(pattern: &[char], name: &[char]) -> bool {
-    fits(pattern, name, false)
-}
-
-/// [`matches`], with a set (`[a-z]`) worked out, for a pattern whose match
-/// makes a word instead of finding one.
-pub(super) fn exactly(pattern: &[char], name: &[char]) -> bool {
-    fits(pattern, name, true)
-}
-
-fn fits(pattern: &[char], name: &[char], sets: bool) -> bool {
     let (mut p, mut n) = (0, 0);
     // The last `*`, what follows it, and how much of the name it has taken:
     // a miss goes back there and gives it one more, so a word with many
@@ -413,10 +377,7 @@ fn fits(pattern: &[char], name: &[char], sets: bool) -> bool {
             None => None,
             Some('?') => (n < name.len()).then_some(p + 1),
             Some('[') => match set_end(&pattern[p..]) {
-                Some(end) => name
-                    .get(n)
-                    .filter(|c| !sets || in_set(&pattern[p + 1..p + end], **c))
-                    .map(|_| p + end + 1),
+                Some(end) => name.get(n).map(|_| p + end + 1),
                 None => (name.get(n) == Some(&'[')).then_some(p + 1),
             },
             Some(&c) => (name.get(n) == Some(&real(c))).then_some(p + 1),
@@ -436,27 +397,6 @@ fn fits(pattern: &[char], name: &[char], sets: bool) -> bool {
             },
         }
     }
-}
-
-/// Whether `c` is one of `set`, the text between the brackets.
-fn in_set(set: &[char], c: char) -> bool {
-    let (negated, set) = match set.split_first() {
-        Some(('!' | '^', rest)) => (true, rest),
-        _ => (false, set),
-    };
-    let mut found = false;
-    let mut i = 0;
-    while i < set.len() {
-        let from = real(set[i]);
-        if set.get(i + 1) == Some(&'-') && i + 2 < set.len() {
-            found |= (from..=real(set[i + 2])).contains(&c);
-            i += 3;
-        } else {
-            found |= from == c;
-            i += 1;
-        }
-    }
-    found != negated
 }
 
 /// Where the set that opens `pattern` closes. A `]` straight after the

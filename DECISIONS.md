@@ -2,6 +2,24 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-10-31 — The gate stops imitating bash: what makes something else of a name is refused
+
+**Supersedes the fourth to seventh rounds' operators, readings and worked-out values below, which stay as the record of why.**
+
+Eight rounds of review rejected 0.43.0, and the last five were one mechanism. `operated` and what grew around it worked out what bash makes of a value, and each round's fix was a new way to be wrong: the top finding of the fifth, sixth and eighth rounds was a regression from the fix before it, Deny or Ask on the old head and Allow on the new. Nothing about that was going to end. The gate fails open on a word it can't read, so any reading that gets it wrong is worse than none, and bash's expansions are a language: every rule added is another place to differ from it.
+
+**The evidence that settled it.** Every command the reviews named, 229, through 0.42.0 and the head of the eighth round: 79 tighter, and 7 looser than what users already have, among them `A=xsudo; P=x; B=${A#$P}; $B id`, Deny on 0.42.0 and Allow on the head. 0.42.0 refused it because a program it can't read is refused, and working the word out took that away. And in 1,573 real commands the operators appear 0 times, a copy of a name the line set 0 times, and a real `+=` 0 times. About 2,200 lines, tests included, had gone to forms no session uses.
+
+**The decision.** The gate reads what is written plainly and refuses what makes something else of a name: `works_on_a_name` for any `${…}` past the name itself, `+=`, and `copies_a_name`. Refused, not asked, because every review held a question to be weaker than the plain command's refusal, and with yolo it is no stop at all: a refusal has nothing to get wrong. The model is told to write the value out, and one retry is the cost. `((i+=1))` is arithmetic and stays free.
+
+**Kept,** because each is about reading what is written, not imitating what it becomes, and each has its own test: `strip_comments`, `split` and `lex` knowing `${…}`, `$(…)` and backticks, which found a command hidden in every release; a word that comes to nothing being no word; a pattern in a value outside quotes; the `for` loop values and `Held`. A part is also judged with its bare unset names taken out, so `git $u push` asks as `git push` does: that is a second judgement and can only add.
+
+**Removed:** `operated`, `reckoned`, `replaced`, `defaults_taken`, `built`, `values_worked_out`, `readings`, `vanishing_mixes`, `ToolContext.reading`, and the two asks they brought. That is about 680 lines of code fewer than the head it replaces, and about 900 with the tests.
+
+**How it was checked.** All 229 review commands against 0.42.0: 106 tighter, 0 looser. The generators from the last rounds, each shown to fail on rejected code: 30,000 argv forms and 15,000 forms reaching a stopped path, none more lenient than the plain command, and every line where bash ran a hidden command refused with `rm -rf /` in its place. Replay of 1,573 real commands: no verdict changed.
+
+**What it costs, and said:** a command that used to run can be refused: `for f in *.md; do mv "$f" "${f%.md}.txt"; done` asked before and is refused now, `echo "${HOME%/}"` passed and is refused, and so is `PORT=${PORT:-8000} npm start`. If real use shows these, the place to loosen is a named form with its own replay, not a return to working them out. A bare `$f` the line can't show still passes, as before: the user's decision, and the sandbox is what holds it.
+
 ### 2026-10-31 — The seventh round of 0.43.0: no word hangs on another, and a value read from a name is that name's
 
 **What the round showed.** One review approved `7cf075c` and one rejected it, rightly, so both must see the new head. Two limits, each drawn in the sixth round. Past three words that may vanish the rest shared a bit, so a fourth word could not be kept while the third was gone, and `${a:+x/y} ${b:+x/y} ${c:+x/y} ${d:-su}` was a question where `su` is refused. And `f+=$x` gave no value even where the line had just given `x` one, so `f=.s; x=sh/id_ed25519; f+=$x; cat $f` passed.
