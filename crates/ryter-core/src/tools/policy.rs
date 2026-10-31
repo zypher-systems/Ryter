@@ -15653,7 +15653,7 @@ mod tests {
             ("g='.en*'; cat ${h:-$g}", Decision::Deny),
             ("cat ${h:-.en*}", Decision::Deny),
             ("f=x; rm -rf ${f/*//\"*\"}", Decision::Deny),
-            ("f='/root*'; rm -rf ${f%*}", Decision::Deny),
+            ("f='.en*'; cat ${f%*}", Decision::Deny),
             ("for f in '.en*'; do cat $f; done", Decision::Deny),
             ("g='.en*'; cat \"$g\"", Decision::Allow),
             ("g='.en*'; cat \"${g}\"", Decision::Allow),
