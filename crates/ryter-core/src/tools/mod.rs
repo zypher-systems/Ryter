@@ -157,6 +157,9 @@ pub struct ToolContext {
     /// Variables an earlier part of the same shell command set to a plain
     /// value (`B=http://localhost:8001`), so `$B` later can be read.
     pub vars: Vec<(String, String)>,
+    /// Which reading of a word the shell may make two of leads, within one
+    /// command's judgement. 0 outside one.
+    pub reading: usize,
     /// The audit hat with no checkpoint to fall back on (a folder that is
     /// not a git repository): held to read-only commands for the turn.
     pub read_only: bool,
@@ -1175,6 +1178,7 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            reading: 0,
             // The audit hat with no checkpoint behind it (see policy's
             // `ctx_for`).
             read_only: role == Role::Audit,

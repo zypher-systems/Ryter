@@ -4910,6 +4910,7 @@ mod tests {
             web: false,
             cwd: Default::default(),
             vars: Default::default(),
+            reading: 0,
             read_only: false,
             created: Vec::new(),
             kept: Vec::new(),

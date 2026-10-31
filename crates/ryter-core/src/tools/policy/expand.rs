@@ -13,13 +13,21 @@ use std::path::{Path, PathBuf};
 
 /// A glob character the shell would not act on, because it was quoted or
 /// escaped, is kept as a character from a private range, so `'*.rs'` and
-/// `*.rs` stay different words. [`plain`] puts the real ones back.
-const QUOTED: [(char, char); 4] = [
+/// `*.rs` stay different words, and a `$` or a backtick that reads nothing
+/// the same way, so `'$x'` is text. [`plain`] puts the real ones back.
+const QUOTED: [(char, char); 6] = [
     ('*', '\u{E000}'),
     ('?', '\u{E001}'),
     ('[', '\u{E002}'),
     ('{', '\u{E003}'),
+    ('$', '\u{E008}'),
+    ('`', '\u{E009}'),
 ];
+
+/// Three more, kept so only inside `${…}`: quoted there, a `}` doesn't close
+/// the braces, a `/` doesn't end a pattern and a `&` is not what matched.
+const QUOTED_IN_BRACES: [(char, char); 3] =
+    [('}', '\u{E005}'), ('/', '\u{E006}'), ('&', '\u{E007}')];
 
 /// At the head of a value the shell expands when it hands it out: a pattern
 /// or a list in a `for` head. Such a value is read as written where it is
@@ -45,9 +53,18 @@ pub(super) fn quoted(c: char) -> char {
         .map_or(c, |(_, kept)| *kept)
 }
 
+/// `c` as it is kept when quoted inside `${…}`.
+pub(super) fn quoted_in_braces(c: char) -> char {
+    QUOTED_IN_BRACES
+        .iter()
+        .find(|(real, _)| *real == c)
+        .map_or_else(|| quoted(c), |(_, kept)| *kept)
+}
+
 fn real(c: char) -> char {
     QUOTED
         .iter()
+        .chain(&QUOTED_IN_BRACES)
         .find(|(_, kept)| *kept == c)
         .map_or(c, |(real, _)| *real)
 }
@@ -57,11 +74,23 @@ pub(super) fn plain(word: &str) -> String {
     word.chars().map(real).collect()
 }
 
+/// `word` with what only [`QUOTED_IN_BRACES`] kept put back: past the
+/// braces that mark says nothing, and a path needs its slashes.
+pub(super) fn past_the_braces(word: &str) -> String {
+    let back = |c: char| {
+        QUOTED_IN_BRACES
+            .iter()
+            .find(|(_, kept)| *kept == c)
+            .map_or(c, |(real, _)| *real)
+    };
+    word.chars().map(back).collect()
+}
+
 /// True when `text` holds one of the private characters already: a command
 /// written with them can't be told from one the gate marked.
 pub(super) fn has_private(text: &str) -> bool {
     text.chars()
-        .any(|c| c == LIVE || QUOTED.iter().any(|(_, k)| *k == c))
+        .any(|c| c == LIVE || QUOTED.iter().chain(&QUOTED_IN_BRACES).any(|(_, k)| *k == c))
 }
 
 /// Where a relative pattern starts, and where `~` is.
