@@ -4465,16 +4465,30 @@ pub fn bash_hint(args: &Value, ctx: &ToolContext) -> Option<&'static str> {
              refused. Write the words out where they are used.",
         );
     }
-    let verb_unread = parts.iter().any(|s| {
+    let (mut verb_unread, mut setting_unread) = (false, false);
+    for s in &parts {
         let w = read(&s.text, ctx, false);
         let p = parse(&w);
-        p.prog == Some("git") && reads_more(git_verb(&w[p.args.saturating_sub(1).min(w.len())..]))
-    });
+        if p.prog != Some("git") {
+            continue;
+        }
+        let w = &w[p.args.saturating_sub(1).min(w.len())..];
+        verb_unread |= reads_more(git_verb(w));
+        setting_unread |= git_setting_unread(w);
+    }
     if verb_unread {
         return Some(
             "`git` gets its verb here from a variable or a substitution, which the gate \
              can't read, so the command is refused. Write the verb out: `git status`, \
              `git push`.",
+        );
+    }
+    if setting_unread {
+        return Some(
+            "`git` is given an option the gate can't read: a setting from a variable or a \
+             substitution, or an alias whose body is in an environment variable \
+             (`--config-env=alias.x=NAME`). A setting can name a program to run, so the \
+             command is refused. Write the setting out: `git -c color.ui=never log`.",
         );
     }
     let sets_of: Vec<Vec<Given>> = parts.iter().map(sets).collect();
@@ -4849,6 +4863,38 @@ fn git_verb(words: &[String]) -> &str {
     git_verb_at(words).map_or("", |i| words[i].as_str())
 }
 
+/// Whether an option before the verb is one the gate can't read: a `-c` or
+/// `--config-env` given a setting it can't read, an option word with an
+/// expansion in it, or an alias whose body is in an environment variable.
+fn git_setting_unread(words: &[String]) -> bool {
+    let verb = git_verb_at(words).unwrap_or(words.len());
+    let mut i = 1;
+    while i < verb {
+        let w = words[i].as_str();
+        if reads_more(w) {
+            return true;
+        }
+        let (flag, attached) = match w.split_once('=') {
+            Some((f, v)) if w.starts_with("--") => (f, Some(v)),
+            _ => (w, None),
+        };
+        if matches!(flag, "-c" | "--config-env") {
+            let value = attached.or_else(|| words.get(i + 1).map(String::as_str));
+            if value.is_some_and(reads_more) {
+                return true;
+            }
+            if flag == "--config-env"
+                && value.is_some_and(|v| v.to_ascii_lowercase().starts_with("alias."))
+            {
+                return true;
+            }
+            i += usize::from(attached.is_none());
+        }
+        i += 1;
+    }
+    false
+}
+
 /// Where [`git_verb`] stands in `words`.
 fn git_verb_at(words: &[String]) -> Option<usize> {
     const VALUED: &[&str] = &[
@@ -4886,6 +4932,12 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
         if !w.starts_with('-') {
             break;
         }
+        // An option the gate can't read, `-c$(x)` or `--git-dir=$d`, is one
+        // it can't judge: `-c$(echo ' alias.st=!id')` is `-c alias.st=!id`
+        // to the shell. Refused, as a verb it can't read is.
+        if reads_more(w) {
+            return Decision::Deny;
+        }
         let (flag, attached) = match w.split_once('=') {
             Some((f, v)) if w.starts_with("--") => (f, Some(v.to_string())),
             _ => (w, None),
@@ -4900,8 +4952,20 @@ fn decide_git(words: &[String], ctx: &ToolContext) -> Decision {
             "--exec-path" if attached.is_some() => return Decision::Deny,
             "-c" | "--config-env" => {
                 let kv = value(&mut i).unwrap_or_default();
+                // A setting the gate can't read, `-c $(x)` or `-c $v`, can
+                // name a program as `core.sshCommand=` does: refused, as a
+                // verb it can't read is.
+                if reads_more(&kv) {
+                    return Decision::Deny;
+                }
                 let (k, v) = kv.split_once('=').unwrap_or((&kv, ""));
                 if git_config_runs(k, v) {
+                    return Decision::Deny;
+                }
+                // `--config-env=alias.x=NAME` takes the alias from the
+                // variable NAME, whose value the gate is not looking at: a
+                // `!` there runs a program. Refused on sight.
+                if flag == "--config-env" && k.to_ascii_lowercase().starts_with("alias.") {
                     return Decision::Deny;
                 }
             }
@@ -6708,10 +6772,15 @@ fn gives_positionals(segs: &[Seg]) -> bool {
     segs.iter().any(|s| {
         let mut w = lex(&s.text);
         strip_keywords(&mut w);
-        if w.first().map(String::as_str) != Some("set") {
+        // Past `builtin`, `command`, `time` and `FOO=1`: the same `set`.
+        let p = parse(&w);
+        if p.prog != Some("set") {
             return false;
         }
-        let mut rest = w[1..].iter().map(String::as_str).peekable();
+        let mut rest = w[p.args.min(w.len())..]
+            .iter()
+            .map(String::as_str)
+            .peekable();
         while let Some(a) = rest.next() {
             match a {
                 "--" => return rest.peek().is_some(),
@@ -15694,6 +15763,10 @@ mod tests {
             ("f() { git \"$@\"; }; f push", "Write the verb out"),
             ("git $(echo push)", "Write the verb out"),
             ("git ${u}push x", "Write the verb out"),
+            ("git -c $(echo core.pager=id) log", "Write the setting out"),
+            ("git -c$(echo ' alias.st=!id') st", "Write the setting out"),
+            ("git --config-env=alias.st=EVIL st", "Write the setting out"),
+            ("builtin set -- a; echo $1", "Write the words out"),
         ] {
             let hint = bash_hint(&json!({ "command": cmd }), &cx);
             assert!(hint.is_some_and(|h| h.contains(says)), "{cmd}: {hint:?}");
@@ -15858,6 +15931,50 @@ mod tests {
         ]);
         // `$'x'` is the word `x`: a verb git doesn't know, read as written.
         assert_eq!(m.decide("git $'x' $u push", Role::Build), Decision::Allow);
+        // A `-c` setting the gate can't read can name a program: refused,
+        // as the verb is. One written out is read as written.
+        m.refused(&[
+            "git -c $(echo core.sshCommand=id) status",
+            "git -c $(echo alias.st=!id) st",
+            "git -c $(echo core.pager=id) log",
+            "git -c $v status",
+            "git --config-env=$v status",
+            "git -c core.sshCommand=$(echo id) status",
+            "git -c alias.st=!id st",
+            // Glued to the option the substitution is one word the gate can't
+            // read; bash splits what it prints.
+            "git -c$(echo ' alias.st=!id') st",
+            "git -c$(echo ' core.pager=id') log",
+            "git -c$v log",
+            "git --git-dir=$(echo x) status",
+            // The alias body is in the variable, which the gate is not reading.
+            "EVIL='!id' git --config-env=alias.st=EVIL st",
+            "EVIL='!id' git --config-env alias.st=EVIL st",
+            "EVIL='!id'; git --config-env=alias.st=EVIL st",
+            "git --config-env=alias.st=EVIL st",
+        ]);
+        assert_eq!(
+            m.decide("git -c color.ui=never log", Role::Build),
+            Decision::Allow
+        );
+        assert_eq!(
+            m.decide("git --config-env=color.ui=X status", Role::Build),
+            Decision::Allow
+        );
+        // `set` behind a wrapper or an assignment prefix is the same `set`.
+        m.refused(&[
+            "builtin set -- --global user.name x; git config \"$@\"",
+            "command set -- --global user.name x; git config \"$@\"",
+            "time set -- --global user.name x; git config \"$@\"",
+            "FOO=1 set -- --global user.name x; git config \"$@\"",
+            "builtin set -- a; echo $1",
+        ]);
+        for cmd in [
+            "builtin set -e; git status",
+            "FOO=1 set -o pipefail; git status",
+        ] {
+            assert_eq!(m.decide(cmd, Role::Build), Decision::Allow, "{cmd}");
+        }
         // An argument the gate can't read asks where a flag would change
         // the verdict. Where none would, it passes, as any word the gate
         // can't read does.
