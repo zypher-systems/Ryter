@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-01 — Review 108, round 1: the file is the session, and an option the gate can't read is refused
+
+**What the reviews showed.** Both rejected `490a016`. The store's check was a length, taken after this instance's own append, so an append made the file "known" with rows another Ryter had written unseen in it, and the next compaction dropped them; and a rewrite of the same number of bytes passed as this instance's own file. One review also found two more gate forms: `-c` glued to a substitution (`-c$(echo ' alias.st=!id')`) read as an unknown option while bash splits what the substitution prints into `-c alias.st=!id`; and `--config-env=alias.st=NAME`, whose alias body is the variable's value, which the gate never looks at.
+
+**The file is the session.** `Seen` is the transcript file's length and a hash of its bytes, taken under the lock after this instance reads or writes it. Every write checks it first. An append that finds the file changed takes the change in before growing it: with this instance's own rows still in front, the rows after them join memory; otherwise memory follows the file. A rewrite that finds the file changed keeps a tail appended behind it, after the new messages, and refuses when the file is not this instance's own in front, with memory following the file so the next compaction is made from what is there. Nothing another Ryter wrote is dropped on either path, and two instances appending both see each other's rows at their next write. Two Ryters interleaving one conversation is still not a thing that works. Reading the whole file at each append is the cost; a transcript is small next to a model call.
+
+**Options.** An option word before git's verb that holds an expansion is refused, as a verb the gate can't read is: the shell may make several words of it. `--config-env` with an `alias.*` key is refused on sight: the body is the variable's, and `!` there runs a program. Other keys through `--config-env` are judged by the key, as before: `core.pager=` is refused whatever the value, `color.ui=` runs.
+
 ### 2026-11-01 — A session's files are its account's alone, and a rewrite keeps what another Ryter appended
 
 **What was reported.** A review of dev after 0.43.0 reproduced two faults in the session store through its API. Two Ryters with the same session open could lose conversation history: appends took the directory lock for one write at a time, but a compaction rewrote the transcript from the compacting instance's memory, so rows the other instance had appended since were gone. And the session folder and its three logs were made with the process's default mode, 0755 and 0644 under the usual umask, where only `meta.json` and the lock file were private; another account on the machine could read a transcript wherever the folders above let it in.

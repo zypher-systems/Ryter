@@ -207,10 +207,37 @@ pub struct Session {
     pub changed_turns: u64,
     /// Recovery notices from opening this session, including backup paths.
     pub recovery_notices: Vec<String>,
-    /// The transcript file's length when this instance last read or wrote
-    /// it, under the lock. A rewrite checks it first: another Ryter with the
-    /// same session open appends behind this one's back.
-    known_len: u64,
+    /// The transcript file as this instance last saw it, under the lock.
+    /// Every write checks it first: another Ryter with the same session
+    /// open writes behind this one's back, and the file is the session.
+    seen: Seen,
+}
+
+/// A transcript file's length and a hash of its bytes: whether it is as an
+/// instance last left it. The length alone misses a rewrite of the same
+/// size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Seen {
+    len: u64,
+    hash: u64,
+}
+
+impl Seen {
+    fn of(bytes: &[u8]) -> Self {
+        // FNV-1a, 64 bits: this is a change detector, not a signature.
+        let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+        Self {
+            len: bytes.len() as u64,
+            hash,
+        }
+    }
+
+    /// The file as it is now. A file not there yet is empty.
+    fn read(path: &Path) -> Result<Self> {
+        Ok(Self::of(&read_file(path)?))
+    }
 }
 
 /// The file the conversation is kept in.
@@ -250,7 +277,7 @@ impl Session {
             transcript: Vec::new(),
             changed_turns: 0,
             recovery_notices: Vec::new(),
-            known_len: 0,
+            seen: Seen::default(),
         };
         s.write_meta()?;
         for log in ["events.jsonl", TRANSCRIPT_FILE, "spend.jsonl"] {
@@ -286,7 +313,7 @@ impl Session {
             transcript: main.rows,
             changed_turns: 0,
             recovery_notices: Vec::new(),
-            known_len: 0,
+            seen: Seen::default(),
         };
         session.reconcile_spend(&spend.rows);
         if repairs.iter().any(|(_, offset)| offset.is_some()) {
@@ -307,7 +334,7 @@ impl Session {
                 ));
             }
         }
-        session.known_len = file_len(&main_path)?;
+        session.seen = Seen::read(&main_path)?;
         // Files an earlier Ryter made with the process's default mode.
         keep_private(dir);
         Ok(session)
@@ -476,12 +503,39 @@ impl Session {
         Ok(())
     }
 
-    /// Append a message to the conversation.
+    /// Append a message to the conversation. What another Ryter with the
+    /// same session open wrote since this one last looked is taken in
+    /// first, so memory is the file's before the file grows.
     pub fn push_message(&mut self, msg: Message) -> Result<()> {
-        self.known_len = append_jsonl(&self.dir.join(TRANSCRIPT_FILE), &msg)?;
+        let _lock = lock_logs(&self.dir)?;
+        let path = self.dir.join(TRANSCRIPT_FILE);
+        self.take_in(&path)?;
+        append_locked(&path, &msg)?;
+        self.seen = Seen::read(&path)?;
         self.transcript.push(msg);
         self.touch()?;
         Ok(())
+    }
+
+    /// Under the lock: where the transcript file is not as this instance
+    /// last saw it, another Ryter wrote it. With this instance's own rows
+    /// still in front, the rows after them are taken into memory; anything
+    /// else was rewritten elsewhere, and memory follows the file, since the
+    /// file is the session. Returns whether the file had changed.
+    fn take_in(&mut self, path: &Path) -> Result<bool> {
+        let now = Seen::read(path)?;
+        if now == self.seen {
+            return Ok(false);
+        }
+        let on_disk = inspect_jsonl::<Message>(path, false)?.rows;
+        let ours = self.transcript.len();
+        if on_disk.len() >= ours && on_disk[..ours] == self.transcript[..] {
+            self.transcript.extend(on_disk[ours..].iter().cloned());
+        } else {
+            self.transcript = on_disk;
+        }
+        self.seen = now;
+        Ok(true)
     }
 
     /// Answer every tool call the transcript left unanswered, so providers
@@ -500,15 +554,19 @@ impl Session {
     /// Rewrite the transcript file, after compaction. Events log is
     /// unchanged. Another Ryter with the same session open may have appended
     /// since this one last looked: those rows are kept, after the new
-    /// messages. A file that is otherwise not as this instance left it was
-    /// rewritten elsewhere, and is left alone.
+    /// messages, which were made from memory without them. A file that is
+    /// otherwise not as this instance left it was rewritten elsewhere: it is
+    /// left alone, memory follows it, and the rewrite asked for is refused,
+    /// since it was made from a transcript that is no longer the file's.
     pub fn replace_transcript(&mut self, mut messages: Vec<Message>) -> Result<()> {
         let _lock = lock_logs(&self.dir)?;
         let path = self.dir.join(TRANSCRIPT_FILE);
-        if file_len(&path)? != self.known_len {
-            let on_disk = inspect_jsonl::<Message>(&path, false)?.rows;
+        if Seen::read(&path)? != self.seen {
             let ours = self.transcript.len();
-            if on_disk.len() < ours || on_disk[..ours] != self.transcript[..] {
+            let on_disk = inspect_jsonl::<Message>(&path, false)?.rows;
+            let own_in_front = on_disk.len() >= ours && on_disk[..ours] == self.transcript[..];
+            if !own_in_front {
+                self.take_in(&path)?;
                 return Err(Error::Io(format!(
                     "{} was rewritten by another Ryter with this session open; nothing of it was changed here",
                     path.display()
@@ -525,7 +583,7 @@ impl Session {
             }
             Ok(())
         })?;
-        self.known_len = file_len(&path)?;
+        self.seen = Seen::read(&path)?;
         self.transcript = messages;
         self.touch()?;
         Ok(())
@@ -822,10 +880,16 @@ fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
     (out, added)
 }
 
-/// Append one record, and return the file's length after it, taken under
-/// the same lock.
-pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<u64> {
+/// Append one record, under the directory lock.
+pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let _lock = lock_logs(path.parent().unwrap_or_else(|| Path::new(".")))?;
+    append_locked(path, value)
+}
+
+/// Append one record to a log whose directory lock the caller holds. The
+/// lock is not taken again: a second `flock` on another descriptor of the
+/// same file would wait on the first.
+fn append_locked<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let mut options = OpenOptions::new();
     options.create(true).read(true).append(true);
     #[cfg(unix)]
@@ -852,13 +916,16 @@ pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<u64> 
         .map_err(|e| Error::Io(e.to_string()))?;
     f.flush().map_err(|e| Error::Io(e.to_string()))?;
     f.sync_all().map_err(|e| Error::Io(e.to_string()))?;
-    Ok(f.metadata().map_err(|e| Error::Io(e.to_string()))?.len())
+    Ok(())
 }
 
-fn file_len(path: &Path) -> Result<u64> {
-    Ok(fs::metadata(path)
-        .map_err(|e| Error::Io(e.to_string()))?
-        .len())
+/// The file's bytes; a file not there yet is empty.
+fn read_file(path: &Path) -> Result<Vec<u8>> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(Error::Io(e.to_string())),
+    }
 }
 
 /// A session's folder and the folders down to it, readable by this account
@@ -1113,6 +1180,56 @@ mod tests {
             said(&Session::open(&a.dir).unwrap().transcript),
             ["summary3"]
         );
+    }
+
+    /// Both Ryters append: an append takes in what the other wrote first,
+    /// so a compaction's input has it, and a stale instance's append after
+    /// the other's compaction follows the file instead of hiding it. A
+    /// rewrite of the same length is still another Ryter's.
+    #[test]
+    fn an_append_takes_in_what_another_instance_wrote() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut a = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        a.push_message(message("user", "one")).unwrap();
+        let mut b = Session::open(&a.dir).unwrap();
+        b.push_message(message("user", "from-b")).unwrap();
+        a.push_message(message("user", "from-a")).unwrap();
+        assert_eq!(said(&a.transcript), ["one", "from-b", "from-a"]);
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["one", "from-b", "from-a"]
+        );
+        // A compacts what it now holds, B's row among it.
+        a.replace_transcript(vec![message("assistant", "summary")])
+            .unwrap();
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["summary"]
+        );
+        // B, stale, appends: its memory follows the file, and the file keeps
+        // the compaction.
+        b.push_message(message("user", "late")).unwrap();
+        assert_eq!(said(&b.transcript), ["summary", "late"]);
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["summary", "late"]
+        );
+        // The same number of bytes is not the same file.
+        let mut a = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        a.push_message(message("user", "hello")).unwrap();
+        let mut b = Session::open(&a.dir).unwrap();
+        b.replace_transcript(vec![message("user", "world")])
+            .unwrap();
+        let err = a
+            .replace_transcript(vec![message("user", "nope!")])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("rewritten by another Ryter"),
+            "{err}"
+        );
+        assert_eq!(said(&Session::open(&a.dir).unwrap().transcript), ["world"]);
+        assert_eq!(said(&a.transcript), ["world"], "memory follows the file");
     }
 
     /// A session's folder and logs are this account's alone, whatever the
