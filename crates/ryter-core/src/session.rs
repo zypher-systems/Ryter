@@ -207,6 +207,10 @@ pub struct Session {
     pub changed_turns: u64,
     /// Recovery notices from opening this session, including backup paths.
     pub recovery_notices: Vec<String>,
+    /// The transcript file's length when this instance last read or wrote
+    /// it, under the lock. A rewrite checks it first: another Ryter with the
+    /// same session open appends behind this one's back.
+    known_len: u64,
 }
 
 /// The file the conversation is kept in.
@@ -217,7 +221,7 @@ impl Session {
     pub fn create(home: &Path, cwd: &Path, connection: String, model: String) -> Result<Self> {
         let id = SessionId::generate();
         let dir = home.join("sessions").join(cwd_slug(cwd)).join(id.as_str());
-        fs::create_dir_all(dir.join("notes")).map_err(|e| Error::Io(e.to_string()))?;
+        create_dir_private(&dir.join("notes"))?;
         let now = now_stamp();
         let meta = Meta {
             schema: crate::schema::SCHEMA,
@@ -246,11 +250,12 @@ impl Session {
             transcript: Vec::new(),
             changed_turns: 0,
             recovery_notices: Vec::new(),
+            known_len: 0,
         };
         s.write_meta()?;
-        File::create(s.dir.join("events.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
-        File::create(s.dir.join("transcript.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
-        File::create(s.dir.join("spend.jsonl")).map_err(|e| Error::Io(e.to_string()))?;
+        for log in ["events.jsonl", TRANSCRIPT_FILE, "spend.jsonl"] {
+            create_private(&s.dir.join(log))?;
+        }
         crate::trace::log(
             home,
             &format!("session {} model={}", s.meta.id, s.meta.model),
@@ -281,6 +286,7 @@ impl Session {
             transcript: main.rows,
             changed_turns: 0,
             recovery_notices: Vec::new(),
+            known_len: 0,
         };
         session.reconcile_spend(&spend.rows);
         if repairs.iter().any(|(_, offset)| offset.is_some()) {
@@ -301,6 +307,9 @@ impl Session {
                 ));
             }
         }
+        session.known_len = file_len(&main_path)?;
+        // Files an earlier Ryter made with the process's default mode.
+        keep_private(dir);
         Ok(session)
     }
 
@@ -469,7 +478,7 @@ impl Session {
 
     /// Append a message to the conversation.
     pub fn push_message(&mut self, msg: Message) -> Result<()> {
-        append_jsonl(&self.dir.join(TRANSCRIPT_FILE), &msg)?;
+        self.known_len = append_jsonl(&self.dir.join(TRANSCRIPT_FILE), &msg)?;
         self.transcript.push(msg);
         self.touch()?;
         Ok(())
@@ -489,10 +498,24 @@ impl Session {
     }
 
     /// Rewrite the transcript file, after compaction. Events log is
-    /// unchanged.
-    pub fn replace_transcript(&mut self, messages: Vec<Message>) -> Result<()> {
+    /// unchanged. Another Ryter with the same session open may have appended
+    /// since this one last looked: those rows are kept, after the new
+    /// messages. A file that is otherwise not as this instance left it was
+    /// rewritten elsewhere, and is left alone.
+    pub fn replace_transcript(&mut self, mut messages: Vec<Message>) -> Result<()> {
         let _lock = lock_logs(&self.dir)?;
         let path = self.dir.join(TRANSCRIPT_FILE);
+        if file_len(&path)? != self.known_len {
+            let on_disk = inspect_jsonl::<Message>(&path, false)?.rows;
+            let ours = self.transcript.len();
+            if on_disk.len() < ours || on_disk[..ours] != self.transcript[..] {
+                return Err(Error::Io(format!(
+                    "{} was rewritten by another Ryter with this session open; nothing of it was changed here",
+                    path.display()
+                )));
+            }
+            messages.extend(on_disk[ours..].iter().cloned());
+        }
         atomic_write(&path, |f| {
             for m in &messages {
                 let mut line = serde_json::to_string(m).map_err(|e| Error::Io(e.to_string()))?;
@@ -502,6 +525,7 @@ impl Session {
             }
             Ok(())
         })?;
+        self.known_len = file_len(&path)?;
         self.transcript = messages;
         self.touch()?;
         Ok(())
@@ -798,14 +822,18 @@ fn answer_unanswered(messages: &[Message]) -> (Vec<Message>, usize) {
     (out, added)
 }
 
-pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+/// Append one record, and return the file's length after it, taken under
+/// the same lock.
+pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<u64> {
     let _lock = lock_logs(path.parent().unwrap_or_else(|| Path::new(".")))?;
-    let mut f = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| Error::Io(e.to_string()))?;
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut f = options.open(path).map_err(|e| Error::Io(e.to_string()))?;
     // A complete final JSON value without a newline is valid. Separate it
     // from the next append instead of concatenating two JSON objects.
     if f.metadata().map_err(|e| Error::Io(e.to_string()))?.len() > 0 {
@@ -824,7 +852,42 @@ pub(crate) fn append_jsonl<T: Serialize>(path: &Path, value: &T) -> Result<()> {
         .map_err(|e| Error::Io(e.to_string()))?;
     f.flush().map_err(|e| Error::Io(e.to_string()))?;
     f.sync_all().map_err(|e| Error::Io(e.to_string()))?;
-    Ok(())
+    Ok(f.metadata().map_err(|e| Error::Io(e.to_string()))?.len())
+}
+
+fn file_len(path: &Path) -> Result<u64> {
+    Ok(fs::metadata(path)
+        .map_err(|e| Error::Io(e.to_string()))?
+        .len())
+}
+
+/// A session's folder and the folders down to it, readable by this account
+/// alone. The home folder above `sessions/` is left as the user has it.
+fn create_dir_private(dir: &Path) -> Result<()> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir).map_err(|e| Error::Io(e.to_string()))
+}
+
+/// Tighten a session folder and its logs that an earlier Ryter created with
+/// the process's default mode. Best effort: a mode that can't be changed is
+/// left, and the session still opens.
+fn keep_private(dir: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+        for log in ["events.jsonl", TRANSCRIPT_FILE, "spend.jsonl", "meta.json"] {
+            let _ = fs::set_permissions(dir.join(log), fs::Permissions::from_mode(0o600));
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 struct JsonLog<T> {
@@ -990,6 +1053,126 @@ pub fn cwd_slug(cwd: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn message(role: &str, content: &str) -> Message {
+        Message {
+            role: role.into(),
+            content: content.into(),
+            tool_call_id: None,
+            tool_calls: None,
+            messages_blocks: None,
+            reasoning_details: None,
+        }
+    }
+
+    /// Two Ryters with the same session open: a compaction in one keeps
+    /// what the other appended behind its back, and the other's rewrite,
+    /// from a transcript that is no longer the file's, is refused with the
+    /// file left as it was.
+    #[test]
+    fn a_rewrite_keeps_what_another_instance_appended() {
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut a = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        a.push_message(message("user", "one")).unwrap();
+        a.push_message(message("assistant", "two")).unwrap();
+        let mut b = Session::open(&a.dir).unwrap();
+        b.push_message(message("user", "three")).unwrap();
+        // A compacts to a summary: B's row survives, after it.
+        a.replace_transcript(vec![message("assistant", "summary")])
+            .unwrap();
+        assert_eq!(said(&a.transcript), ["summary", "three"]);
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["summary", "three"]
+        );
+        // B's transcript is not the file's any more: its rewrite is refused.
+        let err = b
+            .replace_transcript(vec![message("user", "x")])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("rewritten by another Ryter"),
+            "{err}"
+        );
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["summary", "three"]
+        );
+        // B may still append, and A's next compaction keeps that too.
+        b.push_message(message("user", "four")).unwrap();
+        a.replace_transcript(vec![message("assistant", "summary2")])
+            .unwrap();
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["summary2", "four"]
+        );
+        // Nothing appended: the rewrite is as written.
+        a.replace_transcript(vec![message("assistant", "summary3")])
+            .unwrap();
+        assert_eq!(
+            said(&Session::open(&a.dir).unwrap().transcript),
+            ["summary3"]
+        );
+    }
+
+    /// A session's folder and logs are this account's alone, whatever the
+    /// process's umask, and an older session's are tightened when opened.
+    #[cfg(unix)]
+    #[test]
+    fn session_files_are_private() {
+        use crate::role::Role;
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        let home = TempDir::new().unwrap();
+        let cwd = TempDir::new().unwrap();
+        let mut s = Session::create(home.path(), cwd.path(), "c".into(), "m".into()).unwrap();
+        s.push_message(message("user", "hi")).unwrap();
+        s.record_spend(spend_record(
+            "c".into(),
+            "m".into(),
+            Role::Build,
+            Usage::default(),
+            Some(0.01),
+        ))
+        .unwrap();
+        let logs = [
+            "events.jsonl",
+            "transcript.jsonl",
+            "spend.jsonl",
+            "meta.json",
+        ];
+        for dir in [
+            home.path().join("sessions"),
+            s.dir.parent().unwrap().to_path_buf(),
+            s.dir.clone(),
+        ] {
+            assert_eq!(mode(&dir) & 0o077, 0, "{}", dir.display());
+        }
+        for log in logs {
+            assert_eq!(mode(&s.dir.join(log)) & 0o077, 0, "{log}");
+        }
+        // A log that is missing is made private when first appended to.
+        fs::remove_file(s.dir.join("spend.jsonl")).unwrap();
+        s.record_spend(spend_record(
+            "c".into(),
+            "m".into(),
+            Role::Build,
+            Usage::default(),
+            Some(0.01),
+        ))
+        .unwrap();
+        assert_eq!(mode(&s.dir.join("spend.jsonl")) & 0o077, 0);
+        // An older session, created loose: opening it tightens it.
+        fs::set_permissions(&s.dir, fs::Permissions::from_mode(0o755)).unwrap();
+        for log in logs {
+            fs::set_permissions(s.dir.join(log), fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let _ = Session::open(&s.dir).unwrap();
+        assert_eq!(mode(&s.dir) & 0o077, 0);
+        for log in logs {
+            assert_eq!(mode(&s.dir.join(log)) & 0o077, 0, "{log}");
+        }
+    }
 
     /// `/sessions` and `ryter sessions` say what the rail says.
     #[test]

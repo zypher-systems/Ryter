@@ -25,6 +25,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 The last release is 0.43.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **On dev since 0.43.0, unreleased.** The two gate gaps the 0.43.0 reviews left: a `git -c` setting the gate can't read is refused as the verb is, and `set` with positionals is found past `builtin`, `command`, `time` and an assignment prefix (`DECISIONS.md` 2026-11-01).
+The session store: a compaction keeps what another Ryter with the same session open appended, and refuses to rewrite a transcript that was rewritten elsewhere; a session's folders and logs are made `0700`/`0600` by mode and an older session's are tightened on open (`DECISIONS.md` 2026-11-01).
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 

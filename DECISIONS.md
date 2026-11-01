@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-01 — A session's files are its account's alone, and a rewrite keeps what another Ryter appended
+
+**What was reported.** A review of dev after 0.43.0 reproduced two faults in the session store through its API. Two Ryters with the same session open could lose conversation history: appends took the directory lock for one write at a time, but a compaction rewrote the transcript from the compacting instance's memory, so rows the other instance had appended since were gone. And the session folder and its three logs were made with the process's default mode, 0755 and 0644 under the usual umask, where only `meta.json` and the lock file were private; another account on the machine could read a transcript wherever the folders above let it in.
+
+**Ownership or detection.** Exclusive ownership, a lock held for the session's life, would have made the second open fail. `Session::open` is also how the tests, `ryter sessions` and a resume look at a session, and opening one twice is tested as fine, so the store detects instead. Each instance keeps the transcript file's length as it last read or wrote it, taken under the same lock as the write (`append_jsonl` returns it). A rewrite checks that length first. Unchanged: written as given. Longer, and the file's first rows are this instance's own: the rows past them were appended by another Ryter and are kept, after the new messages, so nothing said is lost. Anything else, the file shorter or its prefix not this instance's, was rewritten elsewhere, and the rewrite is refused with the file left as it is: the compaction that asked for it fails with the reason, and the turn says so. Two Ryters interleaving one conversation is still not a thing that works; what this makes sure of is that neither loses what the other wrote.
+
+**Private by mode.** The session folder and the folders down to it are made `0700`, the logs `0600` at creation and at the first append that creates one, by mode, not umask. The home folder above `sessions/` is left as the user has it. An older session's folder and logs are tightened when it is opened, best effort, so a mode that can't be changed never stops a resume.
+
 ### 2026-11-01 — Two gaps the 0.43.0 reviews left: a `-c` setting the gate can't read, and `set` behind a wrapper
 
 **What was reported.** A review of dev after 0.43.0 reproduced the two gate gaps the ROADMAP had carried over: `git -c $(echo core.sshCommand=id) status` ran where the written form is refused, because the `-c` value was never read when it was a whole substitution; and `builtin set -- …`, `command set -- …`, `time set -- …` and `FOO=1 set -- …` planted positionals past the `set` refusal, which looked only at a segment's first word. Both were Allow on 0.42.0 as well and appear 0 times in 1,573 real commands.
