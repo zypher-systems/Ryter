@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-01 — Two gaps the 0.43.0 reviews left: a `-c` setting the gate can't read, and `set` behind a wrapper
+
+**What was reported.** A review of dev after 0.43.0 reproduced the two gate gaps the ROADMAP had carried over: `git -c $(echo core.sshCommand=id) status` ran where the written form is refused, because the `-c` value was never read when it was a whole substitution; and `builtin set -- …`, `command set -- …`, `time set -- …` and `FOO=1 set -- …` planted positionals past the `set` refusal, which looked only at a segment's first word. Both were Allow on 0.42.0 as well and appear 0 times in 1,573 real commands.
+
+**The fix.** The eleventh round's rule, that a word the gate's own rule turns on must be read or refused, applied to two more places. A `-c` or `--config-env` value that `reads_more` is refused before its key is looked at: a setting can name a program, as `core.sshCommand=` does, and one the gate can't read may. `set` is found with `parse`, past the wrappers and assignment prefixes every other check already steps over, so the same words after it are judged. The hint says to write the setting out, with `color.ui=never` as the example: `core.pager=` is refused written out too, since a pager runs a program.
+
+**What it costs.** `git -c $v status` and `git --config-env=$v status` are refused where they ran: 0 real uses. Nothing else moved: the replay of 1,573 real commands and the 229 review commands give the same verdicts as 0.43.0.
+
 ### 2026-10-31 — The eleventh round of 0.43.0: a verb the gate can't read is refused, and a quoted piece is read like a bare one
 
 **What the round showed.** Both reviews rejected `8f8a7f3`. Two findings were the tenth round's own: `quoted` kept a quoted piece whole as soon as it held text, so the expansion in `"pu${u}sh"` was never read as nothing; and the order rule for root commands, that nothing but a `cd` or another root command comes before one, keyed on the text as written, so a reading that comes to `sudo` was not held to it. Two were older, shown up by the new reading: a substitution or a name with no value standing where git's verb is was an unknown verb, and an unknown verb runs in the build hat; and `set -- a b` gives `$1` and `$@` values the gate never read.

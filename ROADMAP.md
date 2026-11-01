@@ -24,6 +24,8 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 The last release is 0.43.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
+**On dev since 0.43.0, unreleased.** The two gate gaps the 0.43.0 reviews left: a `git -c` setting the gate can't read is refused as the verb is, and `set` with positionals is found past `builtin`, `command`, `time` and an assignment prefix (`DECISIONS.md` 2026-11-01).
+
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
 1. **The audit's rollback keeps your edits (G01, G08; item 7).** Done on dev `7d4abe3`, 2026-10-29; released in 0.43.0; driven in the real TUI. The audit's tree is watched between its tool calls: a path that changed while no tool ran is yours and is left alone; what the audit changed is put back from a checkpoint named for the audit, and `/redo` brings it back until the next build turn. The notice, the card and `audit.md` say which is which, and the y/n card says the rollback covers the files git tracks. A test edits an unrelated file mid-audit and keeps it.
@@ -65,7 +67,6 @@ What gates 1.0 is the numbered list under Now. This section holds what is open b
 - `agent.rs`, `tools/policy.rs` and `config.rs` carry most of the safety and state code (G22): extract the state transitions (provider apply, hat change, admission, persistence) one at a time behind the existing tests, no rewrite while gate items are open.
 - More search providers behind `[search]`, if asked for: Brave Search (a key), or the model provider's own search (OpenRouter's plugin, Anthropic's and OpenAI's tools), which the gate cannot see and would need checking against zero data retention. Tavily and SearXNG are in.
 - A light-theme contrast pass; the kitty keyboard protocol for Shift+Enter where the terminal supports it; `/theme` previewing a custom theme's full syntax palette.
-- The gate, from the 0.43.0 reviews (pre-existing, 0 real uses): a `git -c` value that is a whole substitution is never read, so `git -c $(echo core.sshCommand=id) status` passes where the written form is refused (refuse an unread `-c` value as the verb is); `set -- …` behind `builtin`, `command`, `time` or an assignment prefix plants positionals the `set` refusal misses (find `set` with `parse`, not the first word).
 - Landlock ABI V4 for `AccessNet` (the sandbox is filesystem-only today).
 - Headless `ryter -p --pretty` reusing the TUI's Markdown renderer.
 - Confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
