@@ -22,10 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.43.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
-
-**On dev since 0.43.0, unreleased.** The two gate gaps the 0.43.0 reviews left: a `git -c` setting the gate can't read is refused as the verb is, and `set` with positionals is found past `builtin`, `command`, `time` and an assignment prefix (`DECISIONS.md` 2026-11-01).
-The session store: a compaction keeps what another Ryter with the same session open appended, and refuses to rewrite a transcript that was rewritten elsewhere; a session's folders and logs are made `0700`/`0600` by mode and an older session's are tightened on open (`DECISIONS.md` 2026-11-01).
+The last release is 0.43.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -68,6 +65,7 @@ What gates 1.0 is the numbered list under Now. This section holds what is open b
 - `agent.rs`, `tools/policy.rs` and `config.rs` carry most of the safety and state code (G22): extract the state transitions (provider apply, hat change, admission, persistence) one at a time behind the existing tests, no rewrite while gate items are open.
 - More search providers behind `[search]`, if asked for: Brave Search (a key), or the model provider's own search (OpenRouter's plugin, Anthropic's and OpenAI's tools), which the gate cannot see and would need checking against zero data retention. Tavily and SearXNG are in.
 - A light-theme contrast pass; the kitty keyboard protocol for Shift+Enter where the terminal supports it; `/theme` previewing a custom theme's full syntax palette.
+- The gate, from the 0.43.1 reviews: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.st GIT_CONFIG_VALUE_0='!id' git st` installs an alias from the environment as `--config-env` does; it asks in the build hat today. Refuse an `alias.*` key on sight there as well.
 - Landlock ABI V4 for `AccessNet` (the sandbox is filesystem-only today).
 - Headless `ryter -p --pretty` reusing the TUI's Markdown renderer.
 - Confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
@@ -86,6 +84,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.43.1 — The session store, and two gate gaps closed (2026-11-01)
+
+Released 2026-11-01 (PR #108, two rounds. Round 1: both rejected `490a016`: the store's freshness check was a length taken after this instance's own append, so rows another Ryter had appended unseen became known and the next compaction dropped them, and a rewrite of the same number of bytes passed as this instance's own; one review added `-c` glued to a substitution and an alias body supplied through `--config-env`. Round 2: both approved `9fa1c50`.) Cut from an outside review of dev the day after 0.43.0, which reproduced the two gate gaps that release's reviews had left and two session faults older than any release.
+
+- **The file is the session.** Each instance keeps the transcript's length and a hash of its bytes, taken under the lock; every write checks it first. An append takes in what another Ryter wrote since (own rows in front: the rest join memory; otherwise memory follows the file); a rewrite keeps a tail appended behind it and refuses when the file is not this instance's own in front. Two Ryters interleaving one conversation is still not a thing that works; neither loses the other's words. `DECISIONS.md` 2026-11-01.
+- **Session files are private.** Folders `0700` and logs `0600` by mode, at creation and at a creating append; an older session's tightened on open, best effort.
+- **The gate.** A `git` option before the verb that the gate can't read (`-c $(x)`, `-c$(x)`, `-c $v`, `--git-dir=$d`) is refused as a verb it can't read is; `--config-env` with an `alias.*` key is refused on sight; `set` with positionals is found past `builtin`, `command`, `time` and an assignment prefix. Replay of 1,573 real commands and the 229 review commands: no verdict changed from 0.43.0.
+- Open, from the reviews: git's `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` environment can install a `!` alias too; that path asks in the build hat today (an environment assignment before `git`), and a refusal on sight of an `alias.*` key there would match `--config-env`. Left from 0.43.0: a reader handed a whole substitution passes under the standing ruling; the card and the tool row drop a tab in a command's display. Next: the two feature patches, mixed-language command discovery (G11) and storage usage with a cleanup preview (G17).
 
 ### 0.43.0 — The gate reads what is written (2026-10-31)
 
