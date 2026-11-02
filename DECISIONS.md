@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — Review 109, round 4: the root's script is read as the shell reads it
+
+**What was reported.** One approval and one rejection on `b46cad9`. The allowlist was applied to whitespace-split text, so `pnpm -r "--filter=a" test` started with a quote and passed as no option at all, though the shell hands pnpm the same `--filter=a`. The approval's notes: a hand-off word after `--` still counted.
+
+**Shell words first.** The script goes through the same reading as a run file's commands (`steps`): quotes are taken off, each step's words are read up to `--`, and a step that can't be read, or a word the shell would expand (`$FILTER`), keeps the members. A raw prefix check for more spellings was the alternative and would only move the gap.
+
 ### 2026-11-02 — Review 109, round 3: a hand-off is whole only when every option is known to keep it whole
 
 **What was reported.** One approval and one rejection on `0848a91`: `pnpm -r --filter-prod a test` passed the selector list, so member `b` was dropped unsaid. `yarn workspaces foreach --from` was in the approving review's notes too.

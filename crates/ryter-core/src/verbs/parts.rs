@@ -575,12 +575,6 @@ fn node_runs_members(root: &Path, workspace: &str) -> bool {
     else {
         return false;
     };
-    let words: Vec<&str> = script
-        .split(|c: char| c.is_whitespace() || matches!(c, '&' | ';' | '|' | '(' | ')'))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let has = |w: &str| words.contains(&w);
-    let after = |a: &str, b: &str| words.windows(2).any(|p| p[0] == a && p[1] == b);
     // A hand-off that selects some members runs those, not all, and the
     // tools have more selectors than any list here (`--filter-prod`,
     // `--from`, `--since`). So it is read the other way round: every option
@@ -622,23 +616,42 @@ fn node_runs_members(root: &Path, workspace: &str) -> bool {
         "--targets",
         "--interlaced",
     ];
-    let whole = words
-        .iter()
-        .take_while(|w| **w != "--")
-        .filter(|w| w.starts_with('-'))
-        .all(|w| WHOLE.contains(&w.split('=').next().unwrap_or(w)));
-    if !whole {
-        return false;
+    // Read as the shell reads it: a quoted `"--filter=a"` is `--filter=a`.
+    // A step that can't be read, or a word the shell would expand, is a
+    // script that can't be said to run every member.
+    let read = steps(script);
+    let mut hands = false;
+    for step in &read {
+        if step.words.is_empty() || step.words.iter().any(|w| w.contains(['$', '`'])) {
+            return false;
+        }
+        // What follows `--` is each member's, and is not read.
+        let words: Vec<&str> = step
+            .words
+            .iter()
+            .map(String::as_str)
+            .take_while(|w| *w != "--")
+            .collect();
+        let whole = words
+            .iter()
+            .filter(|w| w.starts_with('-'))
+            .all(|w| WHOLE.contains(&w.split('=').next().unwrap_or(w)));
+        if !whole {
+            return false;
+        }
+        let has = |w: &str| words.contains(&w);
+        let after = |a: &str, b: &str| words.windows(2).any(|p| p[0] == a && p[1] == b);
+        hands |= has("--workspaces")
+            || has("-ws")
+            || (has("pnpm") && (has("-r") || has("--recursive")))
+            || after("workspaces", "foreach")
+            || after("workspaces", "run")
+            || after("lerna", "run")
+            || after("lerna", "exec")
+            || has("turbo")
+            || after("nx", "run-many");
     }
-    has("--workspaces")
-        || has("-ws")
-        || (has("pnpm") && (has("-r") || has("--recursive")))
-        || after("workspaces", "foreach")
-        || after("workspaces", "run")
-        || after("lerna", "run")
-        || after("lerna", "exec")
-        || has("turbo")
-        || after("nx", "run-many")
+    hands
 }
 
 /// Whether the Node workspace at `workspace` has the package in `dir` as
@@ -1447,9 +1460,14 @@ mod tests {
             "yarn workspaces foreach --from a run test",
             "lerna run test --since main",
             "pnpm -r --some-flag-not-known test",
+            "pnpm -r \"--filter=a\" test",
+            "pnpm -r '--filter-prod=a' test",
+            "pnpm -r $FILTER test",
+            "vitest run -- --workspaces && echo turbo",
         ] {
             let json =
-                format!(r#"{{"workspaces":["packages/*"],"scripts":{{"test":"{script}"}}}}"#);
+                serde_json::json!({"workspaces": ["packages/*"], "scripts": {"test": script}})
+                    .to_string();
             let root = project(&[
                 ("workspace/package.json", json.as_str()),
                 ("workspace/packages/a/package.json", TESTS),
@@ -1482,7 +1500,8 @@ mod tests {
             "nx run-many -t test",
         ] {
             let json =
-                format!(r#"{{"workspaces":["packages/*"],"scripts":{{"test":"{script}"}}}}"#);
+                serde_json::json!({"workspaces": ["packages/*"], "scripts": {"test": script}})
+                    .to_string();
             let root = project(&[
                 ("workspace/package.json", json.as_str()),
                 ("workspace/packages/a/package.json", TESTS),
