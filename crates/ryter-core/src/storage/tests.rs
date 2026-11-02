@@ -393,3 +393,36 @@ fn names_and_sizes() {
     assert_eq!(count(2, "recovery copy"), "2 recovery copies");
     assert_eq!(count(3, "checkpoint"), "3 checkpoints");
 }
+
+/// A symbolic ref under the prefix is not Ryter's: it is not listed, and a
+/// delete never goes through one to the branch it names.
+#[test]
+fn a_symbolic_ref_under_the_prefix_never_takes_its_branch() {
+    let f = fixture();
+    let sha = f.old_ref("old", 10, "a.txt");
+    git(&f.repo, &["branch", "kept", &sha]).unwrap();
+    git(&f.repo, &["update-ref", "-d", &format!("{PREFIX}old")]).unwrap();
+    git(
+        &f.repo,
+        &["symbolic-ref", &format!("{PREFIX}sym"), "refs/heads/kept"],
+    )
+    .unwrap();
+    let r = f.report();
+    assert!(r.refs().is_empty(), "{:?}", r.refs());
+    assert!(plan(&r, Cleanup::Unreachable, None).is_empty());
+    // Handed one anyway, the delete removes the name, not the branch.
+    let sym = Checkpoint {
+        name: format!("{PREFIX}sym"),
+        sha: sha.clone(),
+        made_ms: Some(0),
+        owner: None,
+        hold: Hold::Free,
+    };
+    delete_refs(&f.repo, &[&sym]).unwrap();
+    assert_eq!(
+        git(&f.repo, &["rev-parse", "--verify", "refs/heads/kept"])
+            .unwrap()
+            .trim(),
+        sha
+    );
+}

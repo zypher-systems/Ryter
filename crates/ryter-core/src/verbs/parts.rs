@@ -214,8 +214,13 @@ fn python(root: &Path, dir: &str) -> Option<Part> {
     } else {
         ""
     };
-    let pytest =
+    let configured =
         tool("pytest") || has("pytest.ini") || has("conftest.py") || has("tests/conftest.py");
+    // `unittest` finds `test*.py` beside the manifest and in packages under
+    // it, nowhere else: a `tests/` folder of Rust, or of Python with no
+    // `__init__.py`, gives it nothing, and it exits 5 for that.
+    let unittest = !configured && python_tests(&here, 0, true);
+    let pytest = configured || (!unittest && python_tests(&here, 0, false));
     let run = RunFile {
         test: vec![if pytest {
             format!("{prefix}pytest")
@@ -238,8 +243,46 @@ fn python(root: &Path, dir: &str) -> Option<Part> {
         manifest,
         ecosystem: Ecosystem::Python,
         run,
-        assumed_test: !pytest && !has("tests") && !has("test"),
+        assumed_test: !pytest && !unittest,
     })
+}
+
+/// Whether `dir` holds Python tests: for `unittest` (`packages`), a
+/// `test*.py` here or in a package folder under it; for pytest, also a
+/// `test_*.py` or `*_test.py` in any folder under it. Three folders down,
+/// the hidden ones and environments left out.
+fn python_tests(dir: &Path, depth: usize, packages: bool) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut folders = Vec::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Ok(kind) = e.file_type() else { continue };
+        if kind.is_file() && name.ends_with(".py") {
+            let stem = &name[..name.len() - 3];
+            let found = if packages {
+                stem.starts_with("test")
+            } else {
+                stem.starts_with("test_") || stem.ends_with("_test")
+            };
+            if found {
+                return true;
+            }
+        } else if kind.is_dir()
+            && !name.starts_with('.')
+            && !matches!(
+                name.as_str(),
+                "node_modules" | "venv" | "env" | "__pycache__" | "target" | "build" | "dist"
+            )
+        {
+            folders.push(e.path());
+        }
+    }
+    depth < MAX_DEPTH
+        && folders.into_iter().any(|f| {
+            (!packages || f.join("__init__.py").is_file()) && python_tests(&f, depth + 1, packages)
+        })
 }
 
 /// In the order GNU make reads them, by the exact name: on a
@@ -342,36 +385,134 @@ fn under<'a>(dir: &'a str, above: &str) -> Option<&'a str> {
 }
 
 /// Whether the Cargo workspace at `workspace` has the package in `dir` as
-/// a member, so that its `--workspace` commands already run it. Cargo
-/// refuses a package under a workspace that neither lists nor excludes
-/// it, so one that isn't excluded and isn't a workspace itself is a member.
+/// a member, so that its `--workspace` commands already run it. Read as
+/// cargo reads it: a folder `members` names (globs too), the workspace's own
+/// package, and every path dependency of a member inside the workspace,
+/// less what `exclude` names (a path and what is under it; cargo takes no
+/// glob there). A package inside that is none of these is not run by the
+/// workspace, and cargo refuses it on its own: it stays a part, so that its
+/// refusal is seen rather than the package being passed over.
 fn cargo_member(root: &Path, workspace: &str, dir: &str) -> bool {
-    let Some(inside) = under(dir, workspace) else {
+    if under(dir, workspace).is_none() {
         return false;
-    };
+    }
     let table = |folder: &str| {
         read(&root.join(folder), "Cargo.toml")
             .parse::<toml::Value>()
             .ok()
     };
-    let Some(top) = table(workspace) else {
-        return false;
-    };
-    let Some(table_of_workspace) = top.get("workspace") else {
-        return false;
-    };
     if table(dir).is_some_and(|t| t.get("workspace").is_some()) {
         return false;
     }
-    let excluded = table_of_workspace
-        .get("exclude")
-        .and_then(|e| e.as_array())
-        .is_some_and(|list| {
-            list.iter()
-                .filter_map(|e| e.as_str())
-                .any(|e| under(inside, e.trim_end_matches('/')).is_some() || inside == e)
-        });
-    !excluded
+    cargo_members(root, workspace).contains(dir)
+}
+
+/// The member folders of the Cargo workspace at `workspace`, from the top.
+fn cargo_members(root: &Path, workspace: &str) -> std::collections::BTreeSet<String> {
+    use std::collections::BTreeSet;
+    let mut out = BTreeSet::new();
+    let Some(top) = read(&root.join(workspace), "Cargo.toml")
+        .parse::<toml::Value>()
+        .ok()
+    else {
+        return out;
+    };
+    let Some(ws) = top.get("workspace") else {
+        return out;
+    };
+    let strings = |key: &str| -> Vec<String> {
+        ws.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.trim_start_matches("./").trim_end_matches('/').to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let excludes = strings("exclude");
+    let excluded = |inside: &str| {
+        excludes
+            .iter()
+            .any(|e| inside == e || under(inside, e).is_some())
+    };
+    let join = |base: &str, rel: &str| -> Option<String> {
+        let mut path: Vec<&str> = base.split('/').filter(|s| !s.is_empty()).collect();
+        for seg in rel.split('/') {
+            match seg {
+                "" | "." => {}
+                ".." => {
+                    path.pop()?;
+                }
+                s => path.push(s),
+            }
+        }
+        Some(path.join("/"))
+    };
+    let mut todo: Vec<String> = Vec::new();
+    if top.get("package").is_some() {
+        todo.push(workspace.to_string());
+    }
+    let base = root.join(workspace);
+    for glob in strings("members") {
+        let pattern = format!(
+            "{}/{}",
+            glob::Pattern::escape(&base.to_string_lossy()),
+            glob
+        );
+        for hit in glob::glob(&pattern).into_iter().flatten().flatten() {
+            if !hit.join("Cargo.toml").is_file() {
+                continue;
+            }
+            if let Some(rel) = hit.strip_prefix(root).ok().and_then(Path::to_str) {
+                todo.push(rel.to_string());
+            }
+        }
+    }
+    // Path dependencies, the workspace's own included, join as members.
+    let deps_of = |manifest: &toml::Value, from: &str, todo: &mut Vec<String>| {
+        let mut tables: Vec<&toml::Value> = Vec::new();
+        for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            tables.extend(manifest.get(key));
+            tables.extend(manifest.get("workspace").and_then(|w| w.get(key)));
+        }
+        if let Some(targets) = manifest.get("target").and_then(|t| t.as_table()) {
+            for t in targets.values() {
+                for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                    tables.extend(t.get(key));
+                }
+            }
+        }
+        for t in tables.into_iter().filter_map(|t| t.as_table()) {
+            for dep in t.values() {
+                if let Some(path) = dep.get("path").and_then(|p| p.as_str()) {
+                    todo.extend(join(from, path));
+                }
+            }
+        }
+    };
+    deps_of(&top, workspace, &mut todo);
+    while let Some(dir) = todo.pop() {
+        let Some(inside) = under(&dir, workspace) else {
+            continue;
+        };
+        if (!inside.is_empty() && excluded(inside)) || out.contains(&dir) {
+            continue;
+        }
+        let Some(manifest) = read(&root.join(&dir), "Cargo.toml")
+            .parse::<toml::Value>()
+            .ok()
+        else {
+            continue;
+        };
+        if dir != workspace && manifest.get("workspace").is_some() {
+            continue;
+        }
+        out.insert(dir.clone());
+        deps_of(&manifest, &dir, &mut todo);
+    }
+    out
 }
 
 /// The folders a Node workspace at `workspace` names, as written: from
@@ -410,6 +551,37 @@ fn node_workspaces(root: &Path, workspace: &str) -> Option<Vec<String>> {
             .map(str::to_string)
             .collect(),
     )
+}
+
+/// Whether the `test` script of the Node workspace at `workspace` hands the
+/// run to its members. `npm test` runs that script and nothing else: a root
+/// test that runs only the root leaves every member out, so a member is
+/// dropped only when the script says it runs them all.
+fn node_runs_members(root: &Path, workspace: &str) -> bool {
+    let json: serde_json::Value =
+        serde_json::from_str(&read(&root.join(workspace), "package.json")).unwrap_or_default();
+    let Some(script) = json
+        .get("scripts")
+        .and_then(|s| s.get("test"))
+        .and_then(|s| s.as_str())
+    else {
+        return false;
+    };
+    let words: Vec<&str> = script
+        .split(|c: char| c.is_whitespace() || matches!(c, '&' | ';' | '|' | '(' | ')'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let has = |w: &str| words.contains(&w);
+    let after = |a: &str, b: &str| words.windows(2).any(|p| p[0] == a && p[1] == b);
+    has("--workspaces")
+        || has("-ws")
+        || (has("pnpm") && (has("-r") || has("--recursive")))
+        || after("workspaces", "foreach")
+        || after("workspaces", "run")
+        || after("lerna", "run")
+        || after("lerna", "exec")
+        || has("turbo")
+        || after("nx", "run-many")
 }
 
 /// Whether the Node workspace at `workspace` has the package in `dir` as
@@ -470,14 +642,20 @@ pub fn parts(root: &Path) -> Vec<Part> {
                 if member { None } else { cargo(root, &dir) }
             }
             "package.json" => {
-                // Its root's tests run it: a workspace's root with no tests
-                // of its own leaves each member to bring its own.
+                // A member is its root's when the root has tests and either
+                // hands the run to the members or the member has no test of
+                // its own to leave out: its build and lint are the root's
+                // to run. A member with tests the root's script does not hand
+                // on is a part, or they would go unrun and unsaid.
+                let own = node(root, &dir);
+                let has_tests = own.as_ref().is_some_and(|p| !p.run.test.is_empty());
                 let member = found.iter().any(|p| {
                     p.ecosystem == Ecosystem::Node
                         && !p.run.test.is_empty()
                         && node_member(root, &p.dir, &dir)
+                        && (!has_tests || node_runs_members(root, &p.dir))
                 });
-                if member { None } else { node(root, &dir) }
+                if member { None } else { own }
             }
             "go.mod" => go(root, &dir),
             _ => python(root, &dir),
@@ -582,8 +760,17 @@ fn moved(folder: Option<&String>, word: Option<&super::Word>) -> Option<String> 
     if expands(&word.raw) {
         return None;
     }
+    joined(folder, &word.text)
+}
+
+/// `folder` and then the relative path `rel`; `None` when either can't be
+/// read, or `rel` climbs out of the project.
+fn joined(folder: Option<&String>, rel: &str) -> Option<String> {
+    if rel.contains(['$', '`']) {
+        return None;
+    }
     let mut path: Vec<&str> = folder?.split('/').filter(|s| !s.is_empty()).collect();
-    for segment in Path::new(&word.text).components() {
+    for segment in Path::new(rel).components() {
         match segment {
             std::path::Component::Normal(name) => path.push(name.to_str()?),
             std::path::Component::CurDir => {}
@@ -679,12 +866,58 @@ fn steps(cmd: &str) -> Vec<Step> {
     out
 }
 
-/// Whether a word names `dir`, as a path or as an option's value:
-/// `web`, `./web/tests`, `--manifest-path=web/Cargo.toml`.
-fn names_folder(word: &str, dir: &str) -> bool {
-    let value = word.rsplit('=').next().unwrap_or(word);
-    let value = value.strip_prefix("./").unwrap_or(value);
-    value == dir || under(value, dir).is_some()
+/// Where a step runs once its program's own folder option is read
+/// (`npm --prefix web`, `pnpm --dir web`, `yarn --cwd web`, `go -C web`,
+/// `make -C web`, `cargo --manifest-path web/Cargo.toml`), and whether it
+/// picks some of a workspace's packages (`-w`, `--filter`, `-r`), which
+/// can't be read as running any one part. A value that can't be read
+/// leaves the folder unknown.
+fn selected(step: &Step) -> (Option<String>, bool) {
+    let mut folder = step.folder.clone();
+    let mut picks = false;
+    let mut words = step.words.iter().skip(1).peekable();
+    while let Some(w) = words.next() {
+        let (flag, inline) = match w.split_once('=') {
+            Some((f, v)) if f.starts_with("--") => (f, Some(v.to_string())),
+            _ => (w.as_str(), None),
+        };
+        // `make -Cweb`.
+        let (flag, inline) = match flag
+            .strip_prefix("-C")
+            .filter(|v| !v.is_empty() && inline.is_none())
+        {
+            Some(v) if !flag.starts_with("--") => ("-C", Some(v.to_string())),
+            _ => (flag, inline),
+        };
+        match flag {
+            "--" => break,
+            "--prefix" | "--dir" | "-C" | "--cwd" | "--directory" | "--manifest-path" => {
+                let value = inline.or_else(|| words.next().cloned());
+                let value = match (flag, value) {
+                    ("--manifest-path", Some(v)) => Some(
+                        Path::new(&v)
+                            .parent()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_default(),
+                    ),
+                    (_, v) => v,
+                };
+                folder = value.and_then(|v| joined(folder.as_ref(), &v));
+            }
+            "-w"
+            | "--workspace"
+            | "--workspaces"
+            | "-ws"
+            | "--filter"
+            | "-F"
+            | "-r"
+            | "--recursive"
+            | "--include-workspace-root"
+            | "workspaces" => picks = true,
+            _ => {}
+        }
+    }
+    (folder, picks)
 }
 
 /// What a set of commands does for a part.
@@ -700,20 +933,24 @@ fn reach(cmds: &[&str], part: &Part) -> Reach {
     let mut unknown = None;
     for cmd in cmds {
         for step in steps(cmd) {
-            let in_it = step.folder.as_deref() == Some(part.dir.as_str());
-            let named =
-                !part.dir.is_empty() && step.words.iter().any(|w| names_folder(w, &part.dir));
+            // A word that names the part's folder is no sign the part runs:
+            // `--coverageDirectory=web/coverage` and
+            // `--testPathIgnorePatterns=web` name it too. Only the folder
+            // the step runs in says so.
+            let (folder, picks) = selected(&step);
+            let in_it = folder.as_deref() == Some(part.dir.as_str());
             let maybe = match step.ecosystem {
                 Some(e) if e == part.ecosystem => {
-                    if in_it || named {
+                    if in_it && !picks {
                         return Reach::Runs;
                     }
                     // pytest and jest walk the folders under them; cargo
-                    // and go stop at a package's own edge.
-                    let walks = matches!(e, Ecosystem::Node | Ecosystem::Python);
-                    step.folder
+                    // and go stop at a package's own edge. A pick of some
+                    // workspace packages might be this one.
+                    let walks = picks || matches!(e, Ecosystem::Node | Ecosystem::Python);
+                    folder
                         .as_deref()
-                        .is_none_or(|f| walks && under(&part.dir, f).is_some())
+                        .is_none_or(|f| walks && (f == part.dir || under(&part.dir, f).is_some()))
                 }
                 Some(Ecosystem::Make) | None => true,
                 Some(_) => false,
@@ -952,6 +1189,53 @@ mod tests {
         assert_eq!(run.test[2], "cd tools/own && cargo test");
     }
 
+    /// A workspace runs what cargo makes its members, and nothing else: a
+    /// package inside that `members` does not name stays a part, and cargo's
+    /// own refusal of it is what the user sees. `exclude` takes no glob.
+    #[test]
+    fn a_cargo_workspace_runs_only_its_members() {
+        let root = project(&[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"tools/own\", \"globex/*\"]\n",
+            ),
+            ("crates/a/Cargo.toml", CRATE),
+            ("extra/pkg/Cargo.toml", CRATE),
+            ("globex/pkg/Cargo.toml", CRATE),
+            ("tools/own/Cargo.toml", CRATE),
+            ("web/package.json", TESTS),
+        ]);
+        assert_eq!(
+            names(root.path()),
+            [
+                "Cargo.toml",
+                "web/package.json",
+                "extra/pkg/Cargo.toml",
+                "globex/pkg/Cargo.toml",
+                "tools/own/Cargo.toml"
+            ]
+        );
+    }
+
+    /// A path dependency inside the workspace is a member, and so are its
+    /// own path dependencies.
+    #[test]
+    fn a_path_dependency_inside_a_workspace_is_a_member() {
+        let root = project(&[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"top\"\n[workspace]\n[dependencies]\nutil = { path = \"libs/util\" }\n",
+            ),
+            (
+                "libs/util/Cargo.toml",
+                "[package]\nname = \"util\"\n[dev-dependencies]\nmore = { path = \"../more\" }\n",
+            ),
+            ("libs/more/Cargo.toml", CRATE),
+            ("stray/x/Cargo.toml", CRATE),
+        ]);
+        assert_eq!(names(root.path()), ["Cargo.toml", "stray/x/Cargo.toml"]);
+    }
+
     #[test]
     fn a_package_beside_a_plain_crate_is_a_part_of_its_own() {
         let root = project(&[("Cargo.toml", CRATE), ("sub/Cargo.toml", CRATE)]);
@@ -981,6 +1265,65 @@ mod tests {
         );
     }
 
+    /// `npm test` runs the root's script and nothing else: a root test that
+    /// does not hand the run to the members leaves them to bring their own.
+    #[test]
+    fn a_workspace_root_test_that_runs_only_the_root_keeps_its_members() {
+        let root = project(&[
+            (
+                "workspace/package.json",
+                r#"{"workspaces":["packages/*"],"scripts":{"test":"node -e \"process.exit(0)\""}}"#,
+            ),
+            (
+                "workspace/packages/a/package.json",
+                r#"{"scripts":{"test":"node -e \"process.exit(1)\""}}"#,
+            ),
+        ]);
+        let (run, _) = detect(root.path()).unwrap();
+        assert_eq!(
+            run.test,
+            [
+                "cd workspace && npm test",
+                "cd workspace/packages/a && npm test"
+            ]
+        );
+        // A member with no tests of its own is the root's: its build is
+        // the root's to run, and nothing of it goes untested.
+        let root = project(&[
+            (
+                "workspace/package.json",
+                r#"{"workspaces":["packages/*"],"scripts":{"test":"vitest run"}}"#,
+            ),
+            (
+                "workspace/packages/a/package.json",
+                r#"{"scripts":{"build":"tsc"}}"#,
+            ),
+        ]);
+        assert_eq!(names(root.path()), ["workspace/package.json"]);
+        // Each hand-off is read as one.
+        for script in [
+            "npm test --workspaces",
+            "npm run test -ws",
+            "pnpm -r test",
+            "yarn workspaces foreach run test",
+            "lerna run test",
+            "turbo run test",
+            "nx run-many -t test",
+        ] {
+            let json =
+                format!(r#"{{"workspaces":["packages/*"],"scripts":{{"test":"{script}"}}}}"#);
+            let root = project(&[
+                ("workspace/package.json", json.as_str()),
+                ("workspace/packages/a/package.json", TESTS),
+            ]);
+            assert_eq!(
+                detect(root.path()).unwrap().0.test,
+                ["cd workspace && npm test"],
+                "{script}"
+            );
+        }
+    }
+
     #[test]
     fn a_workspace_with_no_tests_of_its_own_leaves_them_to_its_members() {
         let root = project(&[
@@ -1003,7 +1346,7 @@ mod tests {
     #[test]
     fn pnpms_own_file_names_a_workspace() {
         let root = project(&[
-            ("package.json", TESTS),
+            ("package.json", r#"{"scripts":{"test":"pnpm -r test"}}"#),
             (
                 "pnpm-workspace.yaml",
                 "# the packages\npackages:\n  - 'apps/*' # the apps\n  - \"libs/**\"\nother:\n  - no\n",
@@ -1090,16 +1433,34 @@ mod tests {
             detect(alone.path()).unwrap().0.test,
             ["python3 -m unittest"]
         );
-        // With tests of its own, it stands beside the others.
+        // With tests unittest collects, in a package, it stands beside the
+        // others.
         let tested = project(&[
             ("package.json", TESTS),
             ("pyproject.toml", linted),
+            ("tests/__init__.py", ""),
             ("tests/test_x.py", ""),
         ]);
         assert_eq!(
             detect(tested.path()).unwrap().0.test,
             ["npm test", "python3 -m unittest"]
         );
+        // In a plain folder, unittest finds nothing and exits 5: pytest
+        // collects them.
+        let plain = project(&[
+            ("package.json", TESTS),
+            ("pyproject.toml", linted),
+            ("tests/test_x.py", ""),
+        ]);
+        assert_eq!(detect(plain.path()).unwrap().0.test, ["npm test", "pytest"]);
+        // A `tests/` folder of another language's is no sign of Python
+        // tests.
+        let rust = project(&[
+            ("Cargo.toml", CRATE),
+            ("tests/works.rs", ""),
+            ("pyproject.toml", linted),
+        ]);
+        assert_eq!(detect(rust.path()).unwrap().0.test, ["cargo test"]);
     }
 
     #[test]
@@ -1203,7 +1564,8 @@ mod tests {
             "cd web && CI=1 npm test 2>&1",
             "npm --prefix web test",
             "pnpm --dir=web test",
-            "npx jest ./web/tests",
+            "pnpm -C web test",
+            "yarn --cwd web test",
             "export CI=1 && cd web && npm test",
             "cd web/src && cd .. && npm test",
         ] {
@@ -1218,6 +1580,55 @@ mod tests {
         ] {
             assert_eq!(reach(&[cmd], web), Reach::Misses, "{cmd}");
         }
+        // Naming the folder is not running it: the top's jest over
+        // `web/tests` uses the top's settings, not web's suite.
+        assert_eq!(
+            reach(&["npx jest ./web/tests"], web),
+            Reach::Unknown("npx jest ./web/tests".into())
+        );
+    }
+
+    /// The folder a command runs in is what it reaches: an option's value
+    /// that names a folder is not, and a folder option moves the run.
+    #[test]
+    fn a_folder_option_moves_the_run_and_a_named_folder_does_not() {
+        let jest = r#"{"scripts":{"test":"jest"}}"#;
+        let root = project(&[
+            ("package.json", jest),
+            ("web/package.json", jest),
+            ("other/package.json", jest),
+        ]);
+        let found = parts(root.path());
+        let at = |dir: &str| found.iter().find(|p| p.dir == dir).unwrap();
+        let [top, web, other] = [at(""), at("web"), at("other")];
+        for cmd in [
+            "npm test -- --coverageDirectory=web/coverage",
+            "npm test -- --testPathIgnorePatterns=web",
+        ] {
+            assert_eq!(reach(&[cmd], top), Reach::Runs, "{cmd}");
+            assert_eq!(reach(&[cmd], web), Reach::Unknown(cmd.into()), "{cmd}");
+        }
+        let cmd = "npm --prefix web test";
+        assert_eq!(reach(&[cmd], top), Reach::Misses);
+        assert_eq!(reach(&[cmd], web), Reach::Runs);
+        assert_eq!(reach(&[cmd], other), Reach::Misses);
+        let run = RunFile {
+            test: vec![cmd.into()],
+            ..RunFile::default()
+        };
+        let note = suite_note(&run, &found).unwrap();
+        assert_eq!(
+            note,
+            "[not in this suite: package.json and other/package.json; those have not been tested]"
+        );
+        // `--prefix` is from the folder the step is in.
+        let cmd = "cd other && npm --prefix web test";
+        assert_eq!(reach(&[cmd], web), Reach::Misses);
+        assert_eq!(reach(&[cmd], other), Reach::Misses);
+        // A pick of some workspace packages can't be read as any one.
+        let cmd = "npm test -w web";
+        assert_eq!(reach(&[cmd], top), Reach::Unknown(cmd.into()));
+        assert_eq!(reach(&[cmd], web), Reach::Unknown(cmd.into()));
     }
 
     #[test]
@@ -1349,6 +1760,11 @@ mod tests {
         assert_eq!(
             narrowed(cmd, Some("adds"), &["src/lib.rs"], root.path()),
             "cannot: none of those files is in web"
+        );
+        // A file written with its `./` is in the folder all the same.
+        assert_eq!(
+            narrowed(cmd, None, &["./web/src/a.test.ts"], root.path()),
+            "cd web && npm test -- src/a.test.ts"
         );
         // Written with its `./`, it is the same folder.
         assert_eq!(

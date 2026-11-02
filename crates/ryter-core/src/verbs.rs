@@ -228,6 +228,11 @@ fn narrow_in_folder(part: &InFolder, filter: Option<&str>, files: &[String], roo
     for f in files {
         match locate(f, root) {
             Ok(rel) => {
+                // `./web/a.ts` is in `web` as much as `web/a.ts` is.
+                let rel: PathBuf = rel
+                    .components()
+                    .filter(|c| !matches!(c, Component::CurDir))
+                    .collect();
                 if let Ok(inner) = rel.strip_prefix(&part.dir) {
                     here.push(inner.display().to_string());
                 }

@@ -340,7 +340,9 @@ fn fire(h: &Hook, payload: &Value, cwd: &Path, can_deny: bool) -> HookDecision {
 /// "Text file busy": another thread of this process forked while the writer
 /// still held the file open, and the child keeps that descriptor until its
 /// own exec. The shell then exits 126 having run nothing, which read as an
-/// allow, so a deny hook was skipped. It is tried again, a few times.
+/// allow, so a deny hook was skipped. It is tried again, a few times, when
+/// the file that was busy is the hook's own program. The shell's message is
+/// read in English; a translated one is not retried.
 fn run_command(command: &str, input: &str, cwd: &Path) -> Result<(i32, String), String> {
     let mut tries = 0;
     loop {
@@ -378,7 +380,13 @@ fn run_once(command: &str, input: &str, cwd: &Path) -> Result<(i32, String, bool
         Ok(Ok(out)) => {
             let code = out.status.code().unwrap_or(1);
             let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-            let busy = code == 126 && stderr.contains("Text file busy");
+            // Only when the busy file is the hook's own program: a hook of
+            // several commands may have run some before one failed to start.
+            let program = command.split_whitespace().next().unwrap_or_default();
+            let busy = code == 126
+                && stderr.contains("Text file busy")
+                && !program.is_empty()
+                && stderr.contains(&format!("{program}: "));
             let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
             if text.trim().is_empty() {
                 text = stderr;

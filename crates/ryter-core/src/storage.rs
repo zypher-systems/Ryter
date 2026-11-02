@@ -705,7 +705,19 @@ pub fn apply(home: &Path, plan: &Plan, now_ms: u64) -> Result<Done> {
     }
     if !plan.checkpoints.is_empty() {
         // Read again with the sessions gone: what is free now is what goes.
-        let after = report(home, &plan.root, now_ms)?;
+        // Sessions may already be removed, so a failed read is said in
+        // what was done, not returned in place of it.
+        let after = match report(home, &plan.root, now_ms) {
+            Ok(after) => after,
+            Err(e) => {
+                done.skipped.push(format!(
+                    "{} (the repository could not be read again: {e})",
+                    count(plan.checkpoints.len(), "checkpoint")
+                ));
+                crate::trace::log(home, &format!("storage cleanup: {}", done.summary()));
+                return Ok(done);
+            }
+        };
         let free: BTreeMap<&str, &str> = after
             .refs()
             .iter()
@@ -885,7 +897,7 @@ fn list_refs(root: &Path) -> Result<Vec<Checkpoint>> {
         root,
         &[
             "for-each-ref",
-            "--format=%(refname)%00%(objectname)%00%(committerdate:unix)",
+            "--format=%(refname)%00%(objectname)%00%(committerdate:unix)%00%(symref)",
             PREFIX,
         ],
     )?;
@@ -899,6 +911,12 @@ fn list_refs(root: &Path) -> Result<Vec<Checkpoint>> {
                 .next()
                 .and_then(|t| t.trim().parse::<u64>().ok())
                 .map(|s| s * 1000);
+            // Ryter writes direct refs only. A symbolic one under the prefix
+            // is someone else's, and its old value is the branch it points
+            // at: deleting through it would delete that branch.
+            if f.next().is_some_and(|target| !target.is_empty()) {
+                return None;
+            }
             let short = name.strip_prefix(PREFIX)?;
             Some(Checkpoint {
                 owner: owner_of(short),
@@ -959,16 +977,24 @@ fn delete_refs(root: &Path, refs: &[&Checkpoint]) -> Result<usize> {
     if refs.is_empty() {
         return Ok(0);
     }
+    // `no-deref` holds for the one command after it: each delete removes
+    // the ref named and never what it might point at.
     let mut input = String::new();
     for c in refs {
-        input.push_str(&format!("delete {} {}\n", c.name, c.sha));
+        if !c.name.starts_with(PREFIX) {
+            continue;
+        }
+        input.push_str(&format!("option no-deref\ndelete {} {}\n", c.name, c.sha));
+    }
+    if input.is_empty() {
+        return Ok(0);
     }
     if git_stdin(root, &["update-ref", "--stdin"], &input).is_ok() {
-        return Ok(refs.len());
+        return Ok(input.matches("delete ").count());
     }
     let mut n = 0;
-    for c in refs {
-        if crate::git::git(root, &["update-ref", "-d", &c.name, &c.sha]).is_ok() {
+    for c in refs.iter().filter(|c| c.name.starts_with(PREFIX)) {
+        if crate::git::git(root, &["update-ref", "--no-deref", "-d", &c.name, &c.sha]).is_ok() {
             n += 1;
         }
     }
