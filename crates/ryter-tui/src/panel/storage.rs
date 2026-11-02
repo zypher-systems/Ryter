@@ -193,14 +193,14 @@ impl Storage {
                 c.path.strip_prefix(&self.home).unwrap_or(&c.path).display()
             ));
         }
-        if p.sessions.is_empty() {
-            for c in &p.checkpoints {
-                items.push(format!(
-                    "{}  {}",
-                    c.made_ms.map(|t| storage::ago(now, t)).unwrap_or_default(),
-                    c.name.trim_start_matches("refs/ryter/undo/")
-                ));
-            }
+        // The checkpoints after the sessions they go with, so the list
+        // names everything the yes removes.
+        for c in &p.checkpoints {
+            items.push(format!(
+                "{}  {}",
+                c.made_ms.map(|t| storage::ago(now, t)).unwrap_or_default(),
+                c.name.trim_start_matches("refs/ryter/undo/")
+            ));
         }
         // The sentences and the question are whole whatever the height; the
         // list gives up rows to them.
@@ -276,13 +276,7 @@ impl Panel for Storage {
             // As tall as the preview needs at an 80-column panel, up to
             // the list's cap: no empty band above the legend.
             (Mode::Preview, Some(p)) => {
-                let items = p.sessions.len()
-                    + p.copies.len()
-                    + if p.sessions.is_empty() {
-                        p.checkpoints.len()
-                    } else {
-                        0
-                    };
+                let items = p.sessions.len() + p.copies.len() + p.checkpoints.len();
                 let listed = if items == 0 {
                     0
                 } else {

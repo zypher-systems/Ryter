@@ -471,11 +471,13 @@ fn cargo_members(root: &Path, workspace: &str) -> std::collections::BTreeSet<Str
         }
     }
     // Path dependencies, the workspace's own included, join as members.
+    // `[workspace.dependencies]` makes nothing a member by itself: a path
+    // there joins when a member inherits it (`dep = { workspace = true }`).
+    let shared = ws.get("dependencies").and_then(|d| d.as_table());
     let deps_of = |manifest: &toml::Value, from: &str, todo: &mut Vec<String>| {
         let mut tables: Vec<&toml::Value> = Vec::new();
         for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
             tables.extend(manifest.get(key));
-            tables.extend(manifest.get("workspace").and_then(|w| w.get(key)));
         }
         if let Some(targets) = manifest.get("target").and_then(|t| t.as_table()) {
             for t in targets.values() {
@@ -485,9 +487,15 @@ fn cargo_members(root: &Path, workspace: &str) -> std::collections::BTreeSet<Str
             }
         }
         for t in tables.into_iter().filter_map(|t| t.as_table()) {
-            for dep in t.values() {
+            for (name, dep) in t {
                 if let Some(path) = dep.get("path").and_then(|p| p.as_str()) {
                     todo.extend(join(from, path));
+                } else if dep.get("workspace").and_then(|w| w.as_bool()) == Some(true) {
+                    let path = shared
+                        .and_then(|s| s.get(name))
+                        .and_then(|d| d.get("path"))
+                        .and_then(|p| p.as_str());
+                    todo.extend(path.and_then(|p| join(workspace, p)));
                 }
             }
         }
@@ -573,6 +581,30 @@ fn node_runs_members(root: &Path, workspace: &str) -> bool {
         .collect();
     let has = |w: &str| words.contains(&w);
     let after = |a: &str, b: &str| words.windows(2).any(|p| p[0] == a && p[1] == b);
+    // A hand-off that selects some members runs those, not all: which ones
+    // is the tool's to work out, so every member with tests stays a part.
+    let selects = words.iter().any(|w| {
+        let flag = w.split('=').next().unwrap_or(w);
+        matches!(
+            flag,
+            "--filter"
+                | "-F"
+                | "--scope"
+                | "--ignore"
+                | "--since"
+                | "--projects"
+                | "-p"
+                | "--exclude"
+                | "--affected"
+                | "-w"
+                | "--workspace"
+                | "--include"
+                | "affected"
+        )
+    });
+    if selects {
+        return false;
+    }
     has("--workspaces")
         || has("-ws")
         || (has("pnpm") && (has("-r") || has("--recursive")))
@@ -904,16 +936,31 @@ fn selected(step: &Step) -> (Option<String>, bool) {
                 };
                 folder = value.and_then(|v| joined(folder.as_ref(), &v));
             }
-            "-w"
-            | "--workspace"
-            | "--workspaces"
-            | "-ws"
-            | "--filter"
-            | "-F"
-            | "-r"
-            | "--recursive"
-            | "--include-workspace-root"
-            | "workspaces" => picks = true,
+            // The same letters mean other things to each tool: cargo's
+            // `--workspace` is the whole workspace, its `-r` is `--release`
+            // and its `-F` is `--features`.
+            f if step.ecosystem == Some(Ecosystem::Node)
+                && matches!(
+                    f,
+                    "-w" | "--workspace"
+                        | "--workspaces"
+                        | "-ws"
+                        | "--filter"
+                        | "-F"
+                        | "-r"
+                        | "--recursive"
+                        | "--include-workspace-root"
+                        | "workspaces"
+                ) =>
+            {
+                picks = true
+            }
+            f if step.ecosystem == Some(Ecosystem::Cargo)
+                && (matches!(f, "-p" | "--package" | "--exclude")
+                    || (f.starts_with("-p") && !f.starts_with("--"))) =>
+            {
+                picks = true
+            }
             _ => {}
         }
     }
@@ -1217,6 +1264,69 @@ mod tests {
         );
     }
 
+    /// The command discovery writes for a workspace runs it, beside other
+    /// parts: `--workspace` is all of it. `-p` picks one package, and
+    /// cargo's `-r` and `-F` are `--release` and `--features`.
+    #[test]
+    fn cargo_test_workspace_runs_the_workspace() {
+        let root = project(&[
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"tools/own\"]\n",
+            ),
+            ("crates/a/Cargo.toml", CRATE),
+            ("extra/pkg/Cargo.toml", CRATE),
+            ("tools/own/Cargo.toml", CRATE),
+            ("web/package.json", TESTS),
+        ]);
+        let found = parts(root.path());
+        let (run, _) = detect(root.path()).unwrap();
+        assert_eq!(run.test[0], "cargo test --workspace");
+        assert_eq!(suite_note(&run, &found), None);
+        assert!(
+            reaches(&run, &found).leaves.is_empty(),
+            "{:?}",
+            reaches(&run, &found)
+        );
+        let top = &found[0];
+        for cmd in [
+            "cargo check --workspace",
+            "cargo build -r",
+            "cargo test -F x",
+        ] {
+            assert_eq!(reach(&[cmd], top), Reach::Runs, "{cmd}");
+        }
+        for cmd in [
+            "cargo test -p a",
+            "cargo test --package=a",
+            "cargo test -pa",
+        ] {
+            assert_eq!(reach(&[cmd], top), Reach::Unknown(cmd.into()), "{cmd}");
+        }
+    }
+
+    /// `[workspace.dependencies]` makes no member: a path there joins only
+    /// when a member inherits it.
+    #[test]
+    fn a_shared_dependency_is_a_member_only_once_inherited() {
+        let ws = "[workspace]\nmembers = [\"crates/*\"]\n[workspace.dependencies]\nextra = { path = \"extra/pkg\" }\n";
+        let unused = project(&[
+            ("Cargo.toml", ws),
+            ("crates/a/Cargo.toml", CRATE),
+            ("extra/pkg/Cargo.toml", CRATE),
+        ]);
+        assert_eq!(names(unused.path()), ["Cargo.toml", "extra/pkg/Cargo.toml"]);
+        let used = project(&[
+            ("Cargo.toml", ws),
+            (
+                "crates/a/Cargo.toml",
+                "[package]\nname = \"a\"\n[dependencies]\nextra = { workspace = true }\n",
+            ),
+            ("extra/pkg/Cargo.toml", CRATE),
+        ]);
+        assert_eq!(names(used.path()), ["Cargo.toml"]);
+    }
+
     /// A path dependency inside the workspace is a member, and so are its
     /// own path dependencies.
     #[test]
@@ -1300,6 +1410,32 @@ mod tests {
             ),
         ]);
         assert_eq!(names(root.path()), ["workspace/package.json"]);
+        // A hand-off that selects some members runs those: which is the
+        // tool's to say, so every member with tests stays.
+        for script in [
+            "pnpm -r --filter a test",
+            "turbo run test --filter=a",
+            "lerna run test --scope a",
+            "nx affected -t test",
+            "npm test -w packages/a",
+        ] {
+            let json =
+                format!(r#"{{"workspaces":["packages/*"],"scripts":{{"test":"{script}"}}}}"#);
+            let root = project(&[
+                ("workspace/package.json", json.as_str()),
+                ("workspace/packages/a/package.json", TESTS),
+                ("workspace/packages/b/package.json", TESTS),
+            ]);
+            assert_eq!(
+                detect(root.path()).unwrap().0.test,
+                [
+                    "cd workspace && npm test",
+                    "cd workspace/packages/a && npm test",
+                    "cd workspace/packages/b && npm test"
+                ],
+                "{script}"
+            );
+        }
         // Each hand-off is read as one.
         for script in [
             "npm test --workspaces",

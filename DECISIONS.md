@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — Review 109, round 2: each tool's flags are its own, and a shared dependency is a member only once used
+
+**What was reported.** Two rejections on `8dfe68b`, three findings, all in round 1's new reading. `--workspace` was in one list of package picks for every tool, so `cargo test --workspace`, the command discovery writes, was reported as unread beside any other part; cargo's `-r` (`--release`) and `-F` (`--features`) would have been picks too. Every path in `[workspace.dependencies]` was taken as a member, though cargo makes one only when a member inherits it (checked with `cargo metadata`). A root script that hands off with a selector (`pnpm -r --filter a`, `turbo --filter`, `lerna --scope`, `nx affected`) was read as running every member.
+
+**Picks by tool.** Node's are `-w`, `--workspace(s)`, `-ws`, `--filter`, `-F`, `-r`, `--recursive`; cargo's are `-p`, `--package` and `--exclude`. A shared dependency is followed from a member's `dep = { workspace = true }`. A hand-off with any selector keeps every member with tests: which ones it runs is the tool's to work out, and a member left a part can at worst run twice. The 35 real checkouts read the same as after round 1.
+
 ### 2026-11-02 — Review 109, round 1: a part is run only where its folder is, and a symbolic ref is never followed
 
 **What was reported.** Two rejections on `dc71527`, eight findings, all in the new code. Storage: a symbolic ref under `refs/ryter/undo/` aimed at an old commit was deleted through, taking the branch it named (`update-ref` follows a symref and the old value matched the branch); a reread that failed after sessions were removed returned an error in place of what was done. Verbs: a Node workspace root's `test` hid members it does not run; Cargo membership was "not excluded", so a package `members` does not name was dropped though `--workspace` never runs it (cargo refuses it, exit 101); `python3 -m unittest` was proposed beside a Rust `tests/` folder and a plain `tests/test_x.py`, both of which it does not collect (exit 5); any word naming a folder, an option's value included, counted as running it, and `--prefix` was not read; `./web/a.ts` was not in `web` for narrowing.
