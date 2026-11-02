@@ -8,6 +8,10 @@
 //! the runner's filter to that command; it never swaps the runner for
 //! another program. A command Ryter can't narrow is said so, not run whole.
 
+mod parts;
+
+pub use parts::{Part, Reaches, detect, parts, reaches, suite_note};
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::iter::Peekable;
 use std::path::{Component, Path, PathBuf};
@@ -91,6 +95,9 @@ pub fn narrow(cmd: &str, filter: Option<&str>, files: &[String], root: &Path) ->
             unmatched: Vec::new(),
         });
     }
+    if let Some(part) = in_folder(cmd, root) {
+        return narrow_in_folder(&part, filter, files, root);
+    }
     if is_compound(cmd) {
         return Scope::Cannot(
             "it is several commands in one, which Ryter can't narrow; the run file can \
@@ -149,6 +156,102 @@ pub fn narrow(cmd: &str, filter: Option<&str>, files: &[String], root: &Path) ->
             unmatched,
         }),
         Some(cmd) => Scope::Narrowed(Narrowed { cmd, unmatched }),
+    }
+}
+
+/// `cd web && npm test`: a command for one folder of the project.
+struct InFolder<'a> {
+    /// `cd web`, as written.
+    cd: &'a str,
+    dir: PathBuf,
+    /// `npm test`.
+    rest: &'a str,
+}
+
+/// `cmd` as a `cd` into a folder of the project and what runs there. Only
+/// a plain relative path to a folder that is there: anything else is a
+/// compound command as before.
+fn in_folder<'a>(cmd: &'a str, root: &Path) -> Option<InFolder<'a>> {
+    let cmd = cmd.trim();
+    let at = first_and(cmd)?;
+    let (cd, rest) = (cmd[..at].trim_end(), cmd[at + 2..].trim_start());
+    if is_compound(cd) || rest.is_empty() {
+        return None;
+    }
+    let words = shell_words(cd)?;
+    let [program, folder] = words.as_slice() else {
+        return None;
+    };
+    if program.text != "cd" || program.raw != "cd" || expands(&folder.raw) {
+        return None;
+    }
+    let path = Path::new(&folder.text);
+    let plain = path
+        .components()
+        .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+    let dir: PathBuf = path
+        .components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .collect();
+    (plain && !dir.as_os_str().is_empty() && root.join(&dir).is_dir()).then_some(InFolder {
+        cd,
+        dir,
+        rest,
+    })
+}
+
+/// Where the first `&&` outside quotes starts.
+fn first_and(cmd: &str) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut prev = ' ';
+    for (i, c) in cmd.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None => match c {
+                '\'' | '"' => quote = Some(c),
+                '&' if prev == '&' => return Some(i - 1),
+                _ => {}
+            },
+        }
+        prev = c;
+    }
+    None
+}
+
+/// Narrow what runs in a folder there: its runner, its `package.json` and
+/// its files are read from that folder. A file in another part of the
+/// project isn't this command's to run.
+fn narrow_in_folder(part: &InFolder, filter: Option<&str>, files: &[String], root: &Path) -> Scope {
+    let mut unmatched = Vec::new();
+    let mut here = Vec::new();
+    for f in files {
+        match locate(f, root) {
+            Ok(rel) => {
+                if let Ok(inner) = rel.strip_prefix(&part.dir) {
+                    here.push(inner.display().to_string());
+                }
+            }
+            Err(why) => unmatched.push(why),
+        }
+    }
+    // Files were named and none is here: a run of whatever the filter
+    // matches in this folder is not what was asked.
+    if here.is_empty() && !files.is_empty() {
+        return Scope::Cannot(match unmatched.as_slice() {
+            [] => format!("none of those files is in {}", part.dir.display()),
+            _ => unmatched.join("; "),
+        });
+    }
+    match narrow(part.rest, filter, &here, &root.join(&part.dir)) {
+        Scope::Narrowed(n) => {
+            unmatched.extend(n.unmatched);
+            Scope::Narrowed(Narrowed {
+                cmd: format!("{} && {}", part.cd, n.cmd),
+                unmatched,
+            })
+        }
+        cannot => cannot,
     }
 }
 
@@ -1077,11 +1180,20 @@ fn cargo(
 }
 
 /// The name of the Cargo package `rel` (under `root`) belongs to: the
-/// nearest `Cargo.toml` above it with a `[package]`.
+/// nearest `Cargo.toml` above it with a `[package]`. Another manifest
+/// nearer the file ends the search: a frontend in a crate's folder is not
+/// the crate's to test.
 fn cargo_package(rel: &Path, root: &Path) -> Option<String> {
     let mut dir = root.join(rel).parent()?.to_path_buf();
     loop {
         let manifest = dir.join("Cargo.toml");
+        if !manifest.is_file()
+            && ["package.json", "go.mod", "pyproject.toml"]
+                .iter()
+                .any(|other| dir.join(other).is_file())
+        {
+            return None;
+        }
         if manifest.is_file() {
             if let Ok(text) = std::fs::read_to_string(&manifest) {
                 if let Ok(value) = text.parse::<toml::Value>() {
@@ -1468,169 +1580,6 @@ fn is_script_test(rel: &Path) -> bool {
         })
 }
 
-/// What a project's manifest says its verbs are: a run file with the
-/// commands it implies, and the file it was read from. `None` when nothing
-/// at the root says how the project builds or tests. The product's own
-/// `start`, `ready` and `stop` are never guessed: a server is the model's
-/// to read and propose.
-pub fn detect(root: &Path) -> Option<(crate::run::RunFile, &'static str)> {
-    use crate::run::RunFile;
-    let has = |name: &str| root.join(name).exists();
-    let read = |name: &str| std::fs::read_to_string(root.join(name)).unwrap_or_default();
-    if has("Cargo.toml") {
-        let manifest = read("Cargo.toml");
-        let workspace = manifest
-            .parse::<toml::Value>()
-            .ok()
-            .is_some_and(|v| v.get("workspace").is_some());
-        let scope = if workspace { " --workspace" } else { "" };
-        let run = RunFile {
-            build: Some(format!("cargo build{scope}")),
-            test: vec![format!("cargo test{scope}")],
-            check: Some(format!("cargo check{scope}")),
-            lint: Some(format!("cargo clippy{scope} --all-targets")),
-            format: Some(if workspace {
-                "cargo fmt --all".to_string()
-            } else {
-                "cargo fmt".to_string()
-            }),
-            ..RunFile::default()
-        };
-        return Some((run, "Cargo.toml"));
-    }
-    if has("package.json") {
-        let json: serde_json::Value = serde_json::from_str(&read("package.json")).ok()?;
-        let scripts = json.get("scripts").and_then(|s| s.as_object());
-        let script = |name: &str| scripts.is_some_and(|s| s.contains_key(name));
-        let runner = if has("pnpm-lock.yaml") {
-            "pnpm"
-        } else if has("yarn.lock") {
-            "yarn"
-        } else if has("bun.lockb") || has("bun.lock") {
-            "bun"
-        } else {
-            "npm"
-        };
-        let run_script = |name: &str| {
-            if name == "test" && runner != "bun" {
-                format!("{runner} test")
-            } else {
-                format!("{runner} run {name}")
-            }
-        };
-        let first = |names: &[&str]| names.iter().find(|n| script(n)).map(|n| run_script(n));
-        let run = RunFile {
-            build: first(&["build"]),
-            test: first(&["test"]).into_iter().collect(),
-            check: first(&["typecheck", "check"]).or_else(|| {
-                has("tsconfig.json").then(|| format!("{} tsc --noEmit", exec_of(runner)))
-            }),
-            lint: first(&["lint"]),
-            format: first(&["format", "fmt"]),
-            ..RunFile::default()
-        };
-        return (!run.is_empty()).then_some((run, "package.json"));
-    }
-    if has("go.mod") {
-        let run = RunFile {
-            build: Some("go build ./...".into()),
-            test: vec!["go test ./...".into()],
-            check: Some("go vet ./...".into()),
-            format: Some("gofmt -l -w .".into()),
-            ..RunFile::default()
-        };
-        return Some((run, "go.mod"));
-    }
-    if has("pyproject.toml") || has("setup.py") || has("pytest.ini") || has("setup.cfg") {
-        let pyproject = read("pyproject.toml");
-        let table = pyproject.parse::<toml::Value>().ok();
-        let tool = |name: &str| {
-            table
-                .as_ref()
-                .and_then(|t| t.get("tool"))
-                .and_then(|t| t.get(name))
-                .is_some()
-        };
-        let prefix = if has("uv.lock") {
-            "uv run "
-        } else if has("poetry.lock") {
-            "poetry run "
-        } else {
-            ""
-        };
-        let pytest =
-            tool("pytest") || has("pytest.ini") || has("conftest.py") || has("tests/conftest.py");
-        let run = RunFile {
-            test: vec![if pytest {
-                format!("{prefix}pytest")
-            } else {
-                format!("{prefix}python3 -m unittest")
-            }],
-            check: if tool("pyright") || has("pyrightconfig.json") {
-                Some(format!("{prefix}pyright"))
-            } else if tool("mypy") || has("mypy.ini") {
-                Some(format!("{prefix}mypy ."))
-            } else {
-                None
-            },
-            lint: (tool("ruff") || has("ruff.toml")).then(|| format!("{prefix}ruff check .")),
-            format: (tool("ruff") || has("ruff.toml")).then(|| format!("{prefix}ruff format .")),
-            ..RunFile::default()
-        };
-        let source = if has("pyproject.toml") {
-            "pyproject.toml"
-        } else if has("setup.py") {
-            "setup.py"
-        } else if has("pytest.ini") {
-            "pytest.ini"
-        } else {
-            "setup.cfg"
-        };
-        return Some((run, source));
-    }
-    // In the order GNU make reads them, by the exact name: on a
-    // case-insensitive filesystem `exists("makefile")` is true of `Makefile`.
-    let entries: Vec<String> = std::fs::read_dir(root)
-        .map(|d| {
-            d.flatten()
-                .filter_map(|e| e.file_name().to_str().map(str::to_string))
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(name) = ["GNUmakefile", "makefile", "Makefile"]
-        .into_iter()
-        .find(|n| entries.iter().any(|e| e == n))
-    {
-        let makefile = read(name);
-        let target = |name: &str| {
-            makefile
-                .lines()
-                .any(|l| l.starts_with(&format!("{name}:")) && !l.starts_with(&format!("{name}:=")))
-                .then(|| format!("make {name}"))
-        };
-        let run = RunFile {
-            build: target("build"),
-            test: target("test").into_iter().collect(),
-            check: target("check"),
-            lint: target("lint"),
-            format: target("format").or_else(|| target("fmt")),
-            ..RunFile::default()
-        };
-        return (!run.is_empty()).then_some((run, name));
-    }
-    None
-}
-
-/// How a package manager runs a program from the project's dependencies.
-fn exec_of(runner: &str) -> &'static str {
-    match runner {
-        "pnpm" => "pnpm exec",
-        "yarn" => "yarn",
-        "bun" => "bunx",
-        _ => "npx",
-    }
-}
-
 /// The project's files as they stand, by path: a digest of each one's
 /// content. Taken before and after `format` runs, to say which files it
 /// changed; a formatter that rewrites a file as it was changed nothing.
@@ -1683,6 +1632,12 @@ pub fn changed(before: &Snapshot, after: &Snapshot) -> Vec<String> {
 /// The project's files, the ignore files honoured and the build and
 /// dependency folders skipped.
 fn walk(root: &Path) -> ignore::Walk {
+    walker(root, &[]).build()
+}
+
+/// A walk over the project, skipping `skip` as well. The top is walked
+/// whatever it is called.
+fn walker(root: &Path, skip: &'static [&'static str]) -> ignore::WalkBuilder {
     let mut walker = ignore::WalkBuilder::new(root);
     walker
         .hidden(true)
@@ -1690,13 +1645,14 @@ fn walk(root: &Path) -> ignore::Walk {
         .git_ignore(true)
         .git_exclude(true)
         .require_git(false)
-        .filter_entry(|e| {
-            !(e.file_type().is_some_and(|t| t.is_dir())
-                && e.file_name()
-                    .to_str()
-                    .is_some_and(|n| crate::map::SKIP_DIRS.contains(&n)))
+        .filter_entry(move |e| {
+            e.depth() == 0
+                || !(e.file_type().is_some_and(|t| t.is_dir())
+                    && e.file_name()
+                        .to_str()
+                        .is_some_and(|n| crate::map::SKIP_DIRS.contains(&n) || skip.contains(&n)))
         });
-    walker.build()
+    walker
 }
 
 /// Every test file in the project (Python and script), relative to `root`:
@@ -2701,14 +2657,14 @@ mod tests {
         files(lower.path(), &[("GNUmakefile", "test:\n\t./t\n")]);
         let (run, from) = detect(lower.path()).unwrap();
         assert_eq!(
-            (from, run.test),
+            (from.as_str(), run.test),
             ("GNUmakefile", vec!["make test".to_string()])
         );
         // With both, the one make reads.
         files(lower.path(), &[("Makefile", "check:\n\t./c\n")]);
         let (run, from) = detect(lower.path()).unwrap();
         assert_eq!(
-            (from, run.test, run.check),
+            (from.as_str(), run.test, run.check),
             ("GNUmakefile", vec!["make test".to_string()], None)
         );
     }

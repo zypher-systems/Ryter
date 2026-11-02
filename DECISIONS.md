@@ -2,6 +2,24 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — A project is its parts, and a run file is read against them
+
+**What was reported.** The gap report's G11, carried since the 0.41.0 notes: `detect` returned at the first manifest, so a root `Cargo.toml` hid `package.json`, and a project with nothing at its root got nothing. The `test` that came back looked whole and covered half the project.
+
+**One run file, no new shape.** `build`, `check`, `lint` and `format` stay one string each, and `test` stays a list. Several parts share a line (`cargo build && (cd web && npm run build)`), which the file could already hold and the gate already allows. Lists in those fields would have read more cleanly in a report, at the price of a schema change for every approved run file, and approval is of a file's exact text. The cost is that the first failure stops the rest, which a fast check can live with. The check also runs every part after any edit: a slower round, not a wrong one.
+
+**`cd`, not each tool's own flag.** `npm --prefix`, `pnpm --dir`, `yarn --cwd`, `go -C` and `--manifest-path` are five spellings of one thing, and pytest has none. `cd web && npm test` is one form a person reads at once on the card. `narrow` follows that form only: a plain relative path to a folder that is there. Anything else stays a compound command that is not narrowed.
+
+**What the card says.** The commands come first, because they are what is being approved. The first version put the scope in the note and the real screen showed why not: a docked card gets a third of the column, and the note filled it. What a run file leaves out stays at the top, in the warning colour; what it covers is a row after the commands. A project of one part shows nothing new.
+
+**A run file you wrote stands.** Discovery proposes; it never rewrites. It reads your commands against the parts it finds, so a suite that skips one says so at approval and at the end of every whole run. A command it can't read, such as `make test`, is said to be unread, never assumed to cover or to miss. A wrapper over a project of one part is taken to run it, or every such project would carry a warning.
+
+**What is not a part.** Tried on 35 real checkouts, read only: under 35 ms each, and half-covered repos came back complete. It also found this repo's own benchmark tasks, so benchmark folders joined fixtures, examples and tests as not the project's own. A `pyproject.toml` beside other manifests, with no sign of tests, is a linter's settings: `python3 -m unittest` there exits with an error for finding nothing. `npm init`'s placeholder `test` fails on purpose and is no test. A Cargo workspace runs its members. A Node workspace runs them only if its root has a `test`; otherwise a member brings its own, and the lockfile is looked for up to the top.
+
+**Makefiles.** Reading a recipe to see whether `make test` already runs a nested part was tried on paper and dropped. In the checkouts one recipe ran only one of three parts, and another hid its command behind a variable. A wrong guess hides a part, which is the fault being fixed, and a right one saves a repeated run the user can already take off on the card.
+
+**A crate does not own a frontend.** `cargo_package` walked up from any file to the nearest `Cargo.toml`, so an edit in `web/` ran the Rust tests as that file's tests. Another manifest nearer the file now ends the walk.
+
 ### 2026-11-01 — Review 108, round 1: the file is the session, and an option the gate can't read is refused
 
 **What the reviews showed.** Both rejected `490a016`. The store's check was a length, taken after this instance's own append, so an append made the file "known" with rows another Ryter had written unseen in it, and the next compaction dropped them; and a rewrite of the same number of bytes passed as this instance's own file. One review also found two more gate forms: `-c` glued to a substitution (`-c$(echo ' alias.st=!id')`) read as an unknown option while bash splits what the substitution prints into `-c alias.st=!id`; and `--config-env=alias.st=NAME`, whose alias body is the variable's value, which the gate never looks at.

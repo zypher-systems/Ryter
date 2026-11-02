@@ -1911,7 +1911,7 @@ impl Agent {
             crate::trace::log(&self.home, &format!("detected run file refused: {why}"));
             return self.approved_run();
         }
-        let note = format!("no run file yet: this is what {from} says, for you to approve");
+        let note = format!("no run file yet: read from {from}, for you to approve");
         if let Some(reply) = self.ask_run(&detected, Some(note))? {
             return Ok(Err(reply));
         }
@@ -2052,6 +2052,11 @@ impl Agent {
         }
         for line in &not_run {
             text.push_str(line);
+            text.push('\n');
+        }
+        if !narrowed && let Some(note) = crate::verbs::suite_note(&run, &crate::verbs::parts(&root))
+        {
+            text.push_str(&note);
             text.push('\n');
         }
         if narrowed {
@@ -2382,10 +2387,20 @@ impl Agent {
             ),
             (n, false) => n,
         };
+        // What it reaches of the project, whoever wrote it: a yes here is
+        // also a yes to what it leaves out, which is said first. What it
+        // covers follows the commands, which are what is being approved.
+        let reaches = crate::verbs::reaches(run, &crate::verbs::parts(&self.root()));
+        let note = note
+            .into_iter()
+            .chain(reaches.leaves)
+            .reduce(|said, line| format!("{said}\n{line}"));
+        let scope = reaches.covers.into_iter().enumerate();
         let rows = run
             .rows()
             .into_iter()
             .map(|(label, cmd)| (label.to_string(), cmd))
+            .chain(scope.map(|(i, line)| (if i == 0 { "scope" } else { "" }.to_string(), line)))
             .collect();
         let answer = io.present_run(rows, note, &self.ctx.cancel);
         if self.ctx.cancel.is_cancelled() {
@@ -6567,6 +6582,120 @@ mod tests {
         assert!(agent.last_formatted.is_empty());
     }
 
+    /// A project of several parts is put to the user whole, and the card
+    /// says what the commands cover.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_mixed_project_is_put_to_the_user_whole() {
+        use crate::user_io::PlanAnswer;
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::write(cwd.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::create_dir(cwd.path().join("web")).unwrap();
+        std::fs::write(
+            cwd.path().join("web/package.json"),
+            r#"{"scripts":{"test":"vitest run","build":"vite build"}}"#,
+        )
+        .unwrap();
+        let (shown, _, _) = build_turn(
+            &mut agent,
+            vec![call("test", serde_json::json!({}))],
+            vec![PlanAnswer::Reject],
+        )
+        .await;
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert_eq!(
+            shown[0].1.as_deref(),
+            Some("no run file yet: read from Cargo.toml and web/package.json, for you to approve")
+        );
+        assert_eq!(
+            shown[0].0[shown[0].0.len() - 2..],
+            [
+                (
+                    "scope".to_string(),
+                    "tests cover Cargo.toml and web/package.json".to_string()
+                ),
+                (String::new(), "the check covers Cargo.toml".to_string()),
+            ]
+        );
+        let row = |label: &str| {
+            shown[0]
+                .0
+                .iter()
+                .find(|(l, _)| l == label)
+                .map(|(_, c)| c.as_str())
+        };
+        assert_eq!(
+            row("build"),
+            Some("cargo build && (cd web && npm run build)")
+        );
+        assert_eq!(row("test"), Some("cargo test"));
+        assert!(
+            shown[0]
+                .0
+                .contains(&(String::new(), "cd web && npm test".to_string())),
+            "{shown:?}"
+        );
+    }
+
+    /// A run file the user wrote stands as written; the card and the
+    /// suite's report say what it leaves out.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_run_file_that_leaves_a_part_out_stands_and_is_reported() {
+        use crate::user_io::PlanAnswer;
+        let (_home, cwd, mut agent) = repo_setup(ReplayProvider::new(vec![StreamDelta::Done]));
+        std::fs::write(cwd.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::create_dir(cwd.path().join("web")).unwrap();
+        std::fs::write(
+            cwd.path().join("web/package.json"),
+            r#"{"scripts":{"test":"vitest run"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir(cwd.path().join(".ryter")).unwrap();
+        let file = cwd.path().join(crate::run::FILE);
+        let written = "test = [\"cargo test\"]\n";
+        std::fs::write(&file, written).unwrap();
+        let (shown, _, _) = build_turn(
+            &mut agent,
+            vec![call("test", serde_json::json!({}))],
+            vec![PlanAnswer::Reject],
+        )
+        .await;
+        assert_eq!(
+            shown[0].1.as_deref(),
+            Some(
+                ".ryter/run.toml is not as you last approved it, or is new to Ryter\n\
+                 tests leave out web/package.json"
+            )
+        );
+        assert_eq!(
+            shown[0].0.last(),
+            Some(&("scope".to_string(), "tests cover Cargo.toml".to_string()))
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), written);
+        // Approved, a whole run passes and says what it did not run.
+        let run = crate::run::RunFile {
+            test: vec!["echo 1 passed".into()],
+            ..crate::run::RunFile::default()
+        };
+        crate::run::save_approved(cwd.path(), &agent.home, &run).unwrap();
+        let (shown, results, _) = build_turn(
+            &mut agent,
+            vec![call("test", serde_json::json!({}))],
+            vec![],
+        )
+        .await;
+        assert!(shown.is_empty(), "{shown:?}");
+        assert!(
+            results[0].ends_with(
+                "[not in this suite: Cargo.toml and web/package.json; those have not been \
+                 tested]\n"
+            ),
+            "{results:?}"
+        );
+        assert_eq!(agent.last_check, Some(true));
+    }
+
     /// With no run file, a verb reads the project's manifest and puts what
     /// it found to the user: a yes saves it as the run file and the verb
     /// runs; a no leaves the model told as before. Headless, nothing is
@@ -6591,7 +6720,7 @@ mod tests {
         assert_eq!(shown.len(), 1, "{shown:?}");
         assert_eq!(
             shown[0].1.as_deref(),
-            Some("no run file yet: this is what package.json says, for you to approve")
+            Some("no run file yet: read from package.json, for you to approve")
         );
         assert_eq!(
             shown[0].0,
