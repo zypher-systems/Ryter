@@ -50,6 +50,8 @@ pub enum PanelId {
     Help,
     /// `/doctor`.
     Doctor,
+    /// `/storage`.
+    Storage,
     /// `/changes`.
     Changes,
     /// `/benchmark`.
@@ -154,6 +156,8 @@ pub enum Action {
     Resume(String),
     /// Delete a saved session.
     DeleteSession(String),
+    /// Do a cleanup `/storage` previewed.
+    CleanStorage(Box<ryter_core::storage::Plan>),
     /// Set the current session title.
     RenameSession(String),
     /// Set the session budget in USD; `0` turns it off. Applies now and is

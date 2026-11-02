@@ -4,7 +4,7 @@
   New session                                       ● Idle · asks first ┊ ryter  ⎇ 0.2.0-patch
   0.2.0-patch                                                           ┊
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖   ┊ HATS
-     Commands                                               5 of 32     ┊ ● Plan   grok-4.6     $0
+     Commands                                               5 of 33     ┊ ● Plan   grok-4.6     $0
      mo                                                                 ┊ ┃ Build               $0
     ›/models         Choose models: one for every hat, or one e… ▸      ┊   grok-4.6
      /permissions    Durable allow/ask/deny bash rules from the… ▸      ┊   asks first

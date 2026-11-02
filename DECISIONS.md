@@ -2,6 +2,22 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — What Ryter keeps is shown, and a cleanup is previewed before it is done
+
+**What was reported.** The gap report's G17: checkpoints under `refs/ryter/undo/` were never pruned, deleting a session left them, and nothing said how big or how old any of it was. Its closing conditions: say what persists and why, show size and age, preview a cleanup, keep active undo references and the user's branches, test session deletion and checkpoint cleanup apart, make cleanup opt-in and say what recovery it costs.
+
+**A checkpoint is kept by what names it, not by its name.** Most refs carry their session's id, but an audit's after, undone and redone checkpoints carry none, and `/undo` reads the commit a session's index names, never a ref by name. So a checkpoint stays while any session's index names its commit. Every object id in the index counts, whatever field it is in, so a field a later Ryter adds still holds. All sessions in the home count, not only this project's, because a linked worktree shares the repository's refs from another folder. An index that can't be read, or that a newer Ryter wrote, holds every checkpoint it might name: its own, and every one with no owner in its name.
+
+**A day's grace.** An audit's starting checkpoint lives in its process until the audit ends, and another Ryter may be mid-turn in the same repository. A checkpoint made in the last day stays, whatever names it. `review` and `now` are rewritten on every use and stay too.
+
+**No `git gc`.** Removing a ref frees nothing until git collects garbage. Running `git gc --prune=now` would give the space back at once, and it would also prune the objects the user left dangling, such as a dropped stash. Ryter removes refs under its own prefix and says that git gives the space back later. The size shown is git's own count (`rev-list --disk-usage`, 2.38 and later) of the objects only those checkpoints reach, against every other ref and HEAD.
+
+**Shown, then done, then read again.** A cleanup runs only from its preview, and the yes reads everything again first. A session used since the preview, a checkpoint a session has come to name or that moved, and a copy that changed are left and said. The refs go in one `update-ref --stdin` transaction, each with the value it had, and are tried one by one if that fails. Removing sessions first brings the project's spend total up to date, so the cost the preview says it keeps is in it.
+
+**Deleting a session stays what it was.** It removes the folder and the pages, and now says that its checkpoints stay and `/storage` finds them. Removing them with the session was weighed: the gap report asked for the two to be separate, and a delete that also reached into the repository would be a second action under one key.
+
+**Three cleanups, not a policy.** Unreachable checkpoints, sessions unused for 7, 30, 90 or 180 days with the checkpoints only they reach, and recovery copies. No automatic pruning: item 9 puts pruning after 1.0, and an opt-in screen is not pruning. `ryter storage` prints the figures and removes nothing, since a cleanup belongs where its preview is read.
+
 ### 2026-11-02 — A project is its parts, and a run file is read against them
 
 **What was reported.** The gap report's G11, carried since the 0.41.0 notes: `detect` returned at the first manifest, so a root `Cargo.toml` hid `package.json`, and a project with nothing at its root got nothing. The `test` that came back looked whole and covered half the project.

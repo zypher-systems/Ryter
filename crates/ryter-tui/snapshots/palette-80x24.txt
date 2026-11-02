@@ -2,7 +2,7 @@
   New session                                               ● Idle · asks first
   0.2.0-patch
    ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖
-     Commands                                                       5 of 32
+     Commands                                                       5 of 33
      mo
     ›/models         Choose models: one for every hat, or one each for … ▸
      /permissions    Durable allow/ask/deny bash rules from the TUI      ▸

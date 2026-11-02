@@ -42,6 +42,7 @@ pub mod schema;
 pub mod session;
 pub mod skill;
 pub mod spend;
+pub mod storage;
 #[cfg(unix)]
 pub mod sudo;
 pub mod tools;

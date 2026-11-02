@@ -132,6 +132,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         run_sessions,
     ),
     spec(
+        "storage",
+        &["cleanup"],
+        Category::Session,
+        "What sessions and checkpoints take up, and a cleanup shown before it is done",
+        None,
+        true,
+        None,
+        false,
+        |_, _| Action::OpenPanel(PanelId::Storage),
+    ),
+    spec(
         "rename",
         &[],
         Category::Session,

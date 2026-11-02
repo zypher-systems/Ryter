@@ -173,7 +173,7 @@ Type a message and press `Enter`. `Shift+Enter` (or `Alt+Enter`) inserts a newli
 
 **Scrolling.** The transcript follows the bottom until you scroll up (`PgUp`, `Shift+↑`, or the mouse wheel over the chat); then it holds still and the scrollbar turns amber. `Ctrl+End` reattaches. `Ctrl+↑`/`Ctrl+↓` jump between turns. While detached, a sticky header at the top of the chat keeps the in-flight user message in view.
 
-`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (it asks; `Enter` deletes, `n` keeps), `n` starts a new one. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
+`/sessions` (alias `/resume`) is one browser for this directory’s sessions: `Enter` resumes, `r` renames, `d` deletes (it asks; `Enter` deletes, `n` keeps), `n` starts a new one. Deleting a session removes its folder and its pages; its checkpoints stay in the repository, and `/storage` finds them. `ryter sessions` and `ryter resume [id]` are the CLI equivalents.
 
 **Approving.** When the build hat needs your yes, a card opens in the conversation's column, between the chat and the message box: inset from the column's edges so it reads as a card, a slab on its own tint with its title in the warn color. The chat moves up to make room for it, so the last lines of the reply stay in sight above it; nothing is painted over. The card never takes more than a third of the column, and a change longer than that scrolls inside it with `↑↓` or the mouse wheel. It is announced where you are looking: the row under the model says `waiting for you · allow?`, the header's state word is in the warn color, and the foot line shows the card's keys in the warn color. `[ui] bell = true`, or *bell on a question* in `/settings`, rings the terminal's bell once when a card opens; it is off by default. The card has these rows:
 - **what** the call does (`edit stats.js`, `run cargo test`);
@@ -559,7 +559,7 @@ The **budget** card on the right shows the cap, how much is used and left, or `o
 
 ## Slash commands
 
-Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/spend` `/theme` `/tools` `/permissions` `/context` `/doctor` `/benchmark` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
+Type `/` to open the palette; every built-in has a one-line description there. Configuration commands open panels: `/settings` `/provider` `/models` `/mcp` `/skills` `/rules` `/hooks` `/sessions` `/storage` `/spend` `/theme` `/tools` `/permissions` `/context` `/doctor` `/benchmark` `/help`. `/changes` and `/commit` open panels too (see [Review and commit](#review-and-commit)). Direct commands act immediately: `/undo [force]` `/redo [force]` `/new` `/rename <title>` `/budget [amount|+amount|off]` `/compact` `/cancel` `/quit`. Near-duplicates are hidden aliases (`/resume` → `/sessions`, `/model` → `/models`, `/connections` → `/provider`); `/delete [id]` stays as a hidden direct command.
 
 User-invocable skills and `~/.ryter/commands/*.md` join the palette under **skills**. Built-ins win on a name clash.
 
@@ -824,14 +824,25 @@ No SQLite. `ryter spend` uses the latest session for this directory.
 | What | Where | Note |
 |---|---|---|
 | A session | `~/.ryter/sessions/<cwd-slug>/<id>/` | Above. Deleting a session removes this folder |
-| Recovery copies | `<log>.jsonl.recovery-<id>.bak`, beside the log | The whole log as it was, kept when resume repairs a torn final record. Yours to delete |
+| Recovery copies | `<log>.jsonl.recovery-<id>.bak`, beside the log | The whole log as it was, kept when resume repairs a torn final record. Yours to delete; `/storage` removes them too |
 | Project spend | `~/.ryter/projects/<project>.json` | A running total of the sessions' `spend.jsonl`, which stay the truth: a missing or wrong total is rebuilt from them |
-| Checkpoints | `refs/ryter/undo/` in the project's own Git repository | What `/undo`, `/redo` and the audit's rollback restore from. They are never pruned, and deleting a session leaves them |
+| Checkpoints | `refs/ryter/undo/` in the project's own Git repository | What `/undo`, `/redo` and the audit's rollback restore from. Nothing prunes them on its own, and deleting a session leaves them: `/storage` removes the ones no session can reach |
 | Your settings | `~/.ryter/config.toml`, `settings.toml`, `routing.toml` | `/settings` and `/provider` write the last two, and never `config.toml` |
 | Keys | `~/.ryter/keys/` | Mode 0600 |
 | Approvals | `~/.ryter/run-approved.toml`, `trusted.json` | What you approved, by project |
 | The project's own | `.ryter/run.toml`, `plan.md`, `plans/`, `decisions.md`, `audit.md` | In the project, yours to commit or ignore |
 | Caches | `~/.ryter/cache/`, `prices.json` | Fetched again when they are gone |
+
+**How big, how old, and a cleanup.** `/storage` (alias `/cleanup`) shows what Ryter keeps for this project: its sessions (the folder you started in and those under it) with their size and the oldest last use, any recovery copies, and the checkpoints with the space only they hold in Git. The checkpoints are counted by what keeps them:
+
+- **a session reaches it:** a session in this Ryter home names its commit, for `/undo`, `/redo`, "last turn" or an audit's rollback. Every session counts, not only this project's, so another folder of the same repository (a linked worktree) keeps what it names;
+- **made in the last day:** another Ryter may be in the middle of a turn whose checkpoint only it knows;
+- **working:** `review` and `now`, rewritten on every `/changes` and `/redo`;
+- **no session reaches it:** left by a deleted session, by an audit already closed, or older than the 50 a session keeps for `/undo`. Nothing in Ryter can restore from these.
+
+Under the figures are three cleanups: the checkpoints no session reaches; the sessions unused for a number of days (`←` `→` choose 7, 30, 90 or 180), with the checkpoints only they reach; and the recovery copies. Nothing is removed until you have seen it. `Enter` on one shows what goes, what you lose with it (a session's conversation, `/resume` of it, and `/undo` or `/redo` of what it changed), what stays, and the question: `Enter` cleans up, `n` keeps. The open session is never part of it. The yes reads everything again first, and leaves what changed since the preview: a session used since, a checkpoint a session has come to name or that moved, a copy that changed. The panel and the chat say what was removed and what was left.
+
+Only refs under `refs/ryter/undo/` are ever removed: your branches, tags, stashes and commits are not touched, and Ryter does not run `git gc`, which would also prune what you left dangling. Git gives the space back when it next collects garbage; the preview says about how much (Git 2.38 or later can say). The project's spend total keeps what a removed session cost. It is rebuilt from the sessions' logs only when one is found rewritten, and a rebuild counts only the sessions that are left, so what removed ones cost drops out of it then. `ryter storage` prints the same figures and what each cleanup would remove, and removes nothing.
 
 **What 1.0 writes, 1.x reads.** Sessions, the spend records, `config.toml`, `settings.toml`, `routing.toml`, `.ryter/run.toml` and `.ryter/plan.md` carry a schema number: `schema = 1`, `"schema": 1`, or a comment on the plan's last line. A file with no number reads as schema 1, so what you have from before the number works as it did. Ryter never adds the number to a `run.toml` you have: your approval is of the file's exact text, so it would ask you again. From 1.0 a change to these is an addition, and a renamed field reads both names, so every 1.x release reads what an earlier one wrote. The other files in `~/.ryter` carry no number.
 
