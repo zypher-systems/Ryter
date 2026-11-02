@@ -22,7 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.43.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.44.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -56,9 +56,8 @@ What gates 1.0 is the numbered list under Now. This section holds what is open b
 
 **Also open, not gating 1.0** (the report's P2s among them)
 - OpenRouter's `reasoning_details` go back within a tool loop, on dev 2026-10-30, unreleased; live on `anthropic/claude-sonnet-4.6` and `deepseek/deepseek-v4.1-flash`. Told to say nothing of a sum it had worked out, the Claude reply stopped repeating it (54 output tokens to 13). One comparison on one small prompt: a real task is still to come. Whether the model thinks on the round after a tool result is not shown either way: it did not in either capture.
-- Mixed-language projects (G11): on dev 2026-11-02, unreleased. Every manifest at the top and three folders down is a part of the project, nested commands run as `cd web && …` and narrow in their folder, and the card and a whole `test` run say what the commands reach or leave out. Open: a root Makefile that already runs a nested part is proposed beside it, so that part can run twice (reading recipes was weighed and left: it would hide a part on a guess); the fast check runs every part's check after any edit; `build`, `check`, `lint` and `format` share one line per verb, so the first failure stops the rest.
 - Routing: `is_openrouter` matches any base URL containing `openrouter.ai`; the `/models` picker cannot choose a `:floor`/`:nitro` id; `ryter connections` does not show routing; empty percentile tables and the project override edge cases (G14, from the 0.42.0 notes).
-- Storage usage and cleanup (G17): on dev 2026-11-02, unreleased. `/storage` shows the project's sessions, recovery copies and checkpoints with their size and age, and three cleanups, each previewed in full before a yes: checkpoints no session reaches, sessions unused for 7 to 180 days with the checkpoints only they reach, and recovery copies. A checkpoint any session in the home names, one made in the last day, and `review`/`now` stay; only refs under `refs/ryter/undo/` are removed and Ryter does not run `git gc`. `ryter storage` prints it and removes nothing. Open: a rebuild of the project's spend total (on a rewritten log) drops what removed sessions cost; the blobs saved for a gitignored file's undo are loose objects no ref holds, so a `git gc` two weeks on can take them; a second Ryter home on the same repository is not seen, past the day's grace.
+- From 0.44.0, open. Commands: a root Makefile that already runs a nested part is proposed beside it, so that part can run twice; a root script that runs `turbo` with only whole-selection options counts as every member; `pnpm -r` written on the run line itself stays an unread pick; the fast check runs every part's check after any edit; `build`, `check`, `lint` and `format` share one line per verb, so the first failure stops the rest. Storage: a rebuild of the project's spend total (on a rewritten log) drops what removed sessions cost; the blobs saved for a gitignored file's undo are loose objects no ref holds, so a `git gc` two weeks on can take them (older than 0.44.0); a second Ryter home on the same repository is not seen past the day's grace. Hooks: the retry reads the English `Text file busy` message only; `a_test_command_that_cannot_be_narrowed_is_said` has the same harness race.
 - Release evidence: the Intel macOS cross-build is not smoke-tested in the release job; no written drill for a signing-key rotation or a failed update (G19).
 - Scale: no kept baseline for startup, map, checkpoint, resume and memory on a large tree or a long history (G21). Generated fixtures, local and opt-in.
 - The bench measures the build hat on small and hard tasks, not the whole flow (G16): audit misses, repair success and interventions on real-project cases, and per-task artifacts published, when a paid run is wanted.
@@ -84,6 +83,16 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.44.0 — Mixed-language projects and storage cleanup (2026-11-02)
+
+Released 2026-11-02 (PR #109, five rounds, most on what a test command reaches. Round 1: both rejected `dc71527`, eight findings: a symbolic ref under `refs/ryter/undo/` made a cleanup delete the branch it pointed at; a Node workspace's own `test` script hid its members; Cargo membership was guessed rather than read as cargo reads it; `python3 -m unittest` was proposed where it collects nothing; a word naming a folder counted as running it, and `--prefix` was not followed; a `./web/…` path was dropped by narrowing. Round 2: both rejected `8dfe68b`: `cargo test --workspace` was read as a pick of some packages, a `[workspace.dependencies]` path counted as a member before any member used it, a filtered hand-off counted as every member. Round 3: one approved, one rejected `0848a91` on `--filter-prod`, past a list of selectors; a hand-off is now whole only when every option is on a list known to keep it whole. Round 4: one approved, one rejected `b46cad9` on a quoted `"--filter=a"`; the root script is read as shell words. Round 5: both approved `e1a85de`.)
+
+- **Mixed-language projects (G11).** Every manifest at the top and three folders down is a part of the project; nested commands run as `cd web && …` and narrow in their folder; the card and a whole `test` run say what the commands reach and what they may leave out. Workspace members are read as each tool reads them (Cargo's members, excludes and inherited path dependencies; a Node root's script handing the run on), and package picks are read per tool.
+- **Storage usage and cleanup (G17).** `/storage` (also `/cleanup`) shows the project's sessions, recovery copies and checkpoints with their size and age, and three cleanups, each previewed in full before a yes: checkpoints no session reaches, sessions unused for 7 to 180 days with the checkpoints only they reach, and recovery copies. A checkpoint any session in the home names, one made in the last day, and `review`/`now` stay; only refs under `refs/ryter/undo/` are removed, symbolic refs never followed, and Ryter does not run `git gc`. `ryter storage` prints it and removes nothing.
+- **Hooks.** A hook that exits 126 with `Text file busy` naming its own program is started again, up to four times (under CPU load, 2 failures in 25 runs before, 0 in 30 after).
+- `fixtures/persisted/0.44.0` added. The release went out without the OpenAI and SpaceXSI provider proof, by the user's choice (Now, step 5).
+- Open: listed under Next, "From 0.44.0".
 
 ### 0.43.1 — The session store, and two gate gaps closed (2026-11-01)
 
