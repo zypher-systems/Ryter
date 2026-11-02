@@ -529,10 +529,12 @@ fn spec(name: &str) -> Option<ToolSpec> {
              --findRelatedTests; go test: their directories): give the files you edited \
              for a quick round. A narrowed run says nothing about the rest: run `test` \
              with no arguments before you finish. A command Ryter can't narrow (make \
-             test, several commands in one) is listed as not run. With no run file yet, \
-             Ryter reads the project's manifest (Cargo.toml, package.json, pyproject.toml, \
-             go.mod, Makefile) and asks the user to approve what it found; only when that \
-             finds nothing, propose one with propose_run. The build and audit hats run \
+             test, several commands in one) is listed as not run. A whole run names any \
+             part of the project its commands leave out. With no run file yet, Ryter reads \
+             the project's manifests (Cargo.toml, package.json, pyproject.toml, go.mod, \
+             Makefile), at the top and in the folders under it, and asks the user to approve \
+             what it found; only when that finds nothing, propose one with propose_run. The \
+             build and audit hats run \
              tests; the plan hat starts nothing.",
             json!({"type":"object","properties":{
                 "filter":{"type":"string","description":"a test name or pattern, as the runner matches it, without its flag"},

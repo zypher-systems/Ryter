@@ -4284,6 +4284,10 @@ fn the_delete_question_is_on_screen_in_a_long_list() {
         shown.contains("? this removes its folder and its transcript"),
         "{shown}"
     );
+    assert!(
+        shown.contains("its checkpoints stay in the repository: /storage"),
+        "{shown}"
+    );
     // At 80 columns the title is cut to what the sentence leaves, down to
     // an ellipsis: the sentence is whole and nothing runs past the border.
     let shown = render_to_string(&v, 80, 24);
@@ -5086,4 +5090,126 @@ fn the_welcome_sits_under_a_system_line() {
     assert!(v.has_content());
     let text = render_to_string(&v, 120, 40);
     assert!(!titles.iter().any(|t| text.contains(t)), "{text}");
+}
+
+/// `/storage` shows the figures and three cleanups; Enter previews one with
+/// what it costs, the question stays on screen at 80 columns, `n` keeps,
+/// ←→ moves the sessions' age, and Enter on the preview hands the plan on.
+#[test]
+fn storage_previews_a_cleanup_before_it_is_done() {
+    use ryter_core::Session;
+    use std::process::Command;
+    let home = tempfile::tempdir().unwrap();
+    let repo = tempfile::tempdir().unwrap();
+    let root = repo.path().canonicalize().unwrap();
+    let git = |args: &[&str], date: Option<&str>| {
+        let mut c = Command::new("git");
+        c.arg("-C").arg(&root).args(args);
+        c.env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t");
+        c.env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t");
+        if let Some(d) = date {
+            c.env("GIT_COMMITTER_DATE", d).env("GIT_AUTHOR_DATE", d);
+        }
+        let out = c.output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    git(&["init", "-q", "-b", "main"], None);
+    std::fs::write(root.join("a.txt"), "a\n").unwrap();
+    git(&["add", "-A"], None);
+    git(
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        None,
+    );
+    let tree = git(&["write-tree"], None);
+    let old = format!(
+        "{} +0000",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 10 * 86_400
+    );
+    let sha = git(
+        &["commit-tree", &tree, "-m", "ryter undo checkpoint"],
+        Some(&old),
+    );
+    git(&["update-ref", "refs/ryter/undo/left-over", &sha], None);
+
+    let s = Session::create(home.path(), &root, "c".into(), "m".into()).unwrap();
+    let meta = s.dir.join("meta.json");
+    let mut m: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+    m["title"] = "the pager fix".into();
+    m["updated_at"] = "1000".into();
+    std::fs::write(&meta, serde_json::to_vec(&m).unwrap()).unwrap();
+
+    let my_env = PanelEnv {
+        home: home.path().to_path_buf(),
+        cwd: root.clone(),
+        trusted: true,
+        sandbox: ryter_core::sandbox::SandboxProfile::Off,
+    };
+    let mut v = idle();
+    v.session_id = "another".into();
+    let _ = panel::open(&mut v, PanelId::Storage, &my_env);
+    let press = |v: &mut View, code: KeyCode| {
+        crate::run_keys_handle(v, KeyEvent::new(code, KeyModifiers::NONE))
+    };
+    let shown = render_to_string(&v, 120, 40);
+    for want in [
+        "sessions",
+        "checkpoints",
+        "1 no session reaches",
+        "checkpoints no session reaches",
+        "sessions unused for ‹30› days",
+        "recovery copies",
+        "1 checkpoint",
+    ] {
+        assert!(shown.contains(want), "{want}\n{shown}");
+    }
+    // The age moves on the sessions' row only.
+    press(&mut v, KeyCode::Right);
+    assert!(render_to_string(&v, 120, 40).contains("‹30›"));
+    press(&mut v, KeyCode::Down);
+    press(&mut v, KeyCode::Right);
+    assert!(render_to_string(&v, 120, 40).contains("‹90›"));
+    press(&mut v, KeyCode::Left);
+    // Preview: what goes, what is lost, the question, all at 80 columns.
+    press(&mut v, KeyCode::Enter);
+    let shown = render_to_string(&v, 80, 24);
+    for want in [
+        "the pager fix",
+        "You lose its conversation",
+        "Kept:",
+        "clean up: 1 session",
+    ] {
+        assert!(shown.contains(want), "{want}\n{shown}");
+    }
+    // `n` keeps.
+    assert_eq!(press(&mut v, KeyCode::Char('n')), Action::None);
+    assert!(s.dir.exists());
+    press(&mut v, KeyCode::Enter);
+    let Action::CleanStorage(plan) = press(&mut v, KeyCode::Enter) else {
+        panic!("no cleanup");
+    };
+    assert_eq!(plan.sessions.len(), 1);
+    // The session was the only one naming nothing; the left-over is the
+    // other row's.
+    assert!(plan.checkpoints.is_empty(), "{plan:?}");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let done = ryter_core::storage::apply(home.path(), &plan, now).unwrap();
+    assert_eq!(done.sessions, 1);
+    assert!(!s.dir.exists());
+    assert_eq!(
+        git(
+            &["for-each-ref", "--format=%(refname)", "refs/ryter/"],
+            None
+        ),
+        "refs/ryter/undo/left-over"
+    );
 }

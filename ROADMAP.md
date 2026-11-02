@@ -22,10 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.43.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
-
-**On dev since 0.43.0, unreleased.** The two gate gaps the 0.43.0 reviews left: a `git -c` setting the gate can't read is refused as the verb is, and `set` with positionals is found past `builtin`, `command`, `time` and an assignment prefix (`DECISIONS.md` 2026-11-01).
-The session store: a compaction keeps what another Ryter with the same session open appended, and refuses to rewrite a transcript that was rewritten elsewhere; a session's folders and logs are made `0700`/`0600` by mode and an older session's are tightened on open (`DECISIONS.md` 2026-11-01).
+The last release is 0.43.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -59,15 +56,16 @@ What gates 1.0 is the numbered list under Now. This section holds what is open b
 
 **Also open, not gating 1.0** (the report's P2s among them)
 - OpenRouter's `reasoning_details` go back within a tool loop, on dev 2026-10-30, unreleased; live on `anthropic/claude-sonnet-4.6` and `deepseek/deepseek-v4.1-flash`. Told to say nothing of a sum it had worked out, the Claude reply stopped repeating it (54 output tokens to 13). One comparison on one small prompt: a real task is still to come. Whether the model thinks on the round after a tool result is not shown either way: it did not in either capture.
-- Mixed-language projects: a root `Cargo.toml` returns the Rust verbs before `package.json` is looked at, so a Rust backend with a frontend gets half its commands (G11, from the 0.41.0 notes). Discover every ecosystem and show the scope on the approval card.
+- Mixed-language projects (G11): on dev 2026-11-02, unreleased. Every manifest at the top and three folders down is a part of the project, nested commands run as `cd web && …` and narrow in their folder, and the card and a whole `test` run say what the commands reach or leave out. Open: a root Makefile that already runs a nested part is proposed beside it, so that part can run twice (reading recipes was weighed and left: it would hide a part on a guess); the fast check runs every part's check after any edit; `build`, `check`, `lint` and `format` share one line per verb, so the first failure stops the rest.
 - Routing: `is_openrouter` matches any base URL containing `openrouter.ai`; the `/models` picker cannot choose a `:floor`/`:nitro` id; `ryter connections` does not show routing; empty percentile tables and the project override edge cases (G14, from the 0.42.0 notes).
-- Retention: checkpoints under `refs/ryter/undo/` are never pruned and session deletion leaves them; no size or age view and no cleanup preview (G17). Opt-in, after item 9's promise is written.
+- Storage usage and cleanup (G17): on dev 2026-11-02, unreleased. `/storage` shows the project's sessions, recovery copies and checkpoints with their size and age, and three cleanups, each previewed in full before a yes: checkpoints no session reaches, sessions unused for 7 to 180 days with the checkpoints only they reach, and recovery copies. A checkpoint any session in the home names, one made in the last day, and `review`/`now` stay; only refs under `refs/ryter/undo/` are removed and Ryter does not run `git gc`. `ryter storage` prints it and removes nothing. Open: a rebuild of the project's spend total (on a rewritten log) drops what removed sessions cost; the blobs saved for a gitignored file's undo are loose objects no ref holds, so a `git gc` two weeks on can take them; a second Ryter home on the same repository is not seen, past the day's grace.
 - Release evidence: the Intel macOS cross-build is not smoke-tested in the release job; no written drill for a signing-key rotation or a failed update (G19).
 - Scale: no kept baseline for startup, map, checkpoint, resume and memory on a large tree or a long history (G21). Generated fixtures, local and opt-in.
 - The bench measures the build hat on small and hard tasks, not the whole flow (G16): audit misses, repair success and interventions on real-project cases, and per-task artifacts published, when a paid run is wanted.
 - `agent.rs`, `tools/policy.rs` and `config.rs` carry most of the safety and state code (G22): extract the state transitions (provider apply, hat change, admission, persistence) one at a time behind the existing tests, no rewrite while gate items are open.
 - More search providers behind `[search]`, if asked for: Brave Search (a key), or the model provider's own search (OpenRouter's plugin, Anthropic's and OpenAI's tools), which the gate cannot see and would need checking against zero data retention. Tavily and SearXNG are in.
 - A light-theme contrast pass; the kitty keyboard protocol for Shift+Enter where the terminal supports it; `/theme` previewing a custom theme's full syntax palette.
+- The gate, from the 0.43.1 reviews: `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.st GIT_CONFIG_VALUE_0='!id' git st` installs an alias from the environment as `--config-env` does; it asks in the build hat today. Refuse an `alias.*` key on sight there as well.
 - Landlock ABI V4 for `AccessNet` (the sandbox is filesystem-only today).
 - Headless `ryter -p --pretty` reusing the TUI's Markdown renderer.
 - Confirm grok-4.6's context window (500k in `window_for`, 256k in fixtures).
@@ -86,6 +84,15 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.43.1 — The session store, and two gate gaps closed (2026-11-01)
+
+Released 2026-11-01 (PR #108, two rounds. Round 1: both rejected `490a016`: the store's freshness check was a length taken after this instance's own append, so rows another Ryter had appended unseen became known and the next compaction dropped them, and a rewrite of the same number of bytes passed as this instance's own; one review added `-c` glued to a substitution and an alias body supplied through `--config-env`. Round 2: both approved `9fa1c50`.) Cut from an outside review of dev the day after 0.43.0, which reproduced the two gate gaps that release's reviews had left and two session faults older than any release.
+
+- **The file is the session.** Each instance keeps the transcript's length and a hash of its bytes, taken under the lock; every write checks it first. An append takes in what another Ryter wrote since (own rows in front: the rest join memory; otherwise memory follows the file); a rewrite keeps a tail appended behind it and refuses when the file is not this instance's own in front. Two Ryters interleaving one conversation is still not a thing that works; neither loses the other's words. `DECISIONS.md` 2026-11-01.
+- **Session files are private.** Folders `0700` and logs `0600` by mode, at creation and at a creating append; an older session's tightened on open, best effort.
+- **The gate.** A `git` option before the verb that the gate can't read (`-c $(x)`, `-c$(x)`, `-c $v`, `--git-dir=$d`) is refused as a verb it can't read is; `--config-env` with an `alias.*` key is refused on sight; `set` with positionals is found past `builtin`, `command`, `time` and an assignment prefix. Replay of 1,573 real commands and the 229 review commands: no verdict changed from 0.43.0.
+- Open, from the reviews: git's `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0` environment can install a `!` alias too; that path asks in the build hat today (an environment assignment before `git`), and a refusal on sight of an `alias.*` key there would match `--config-env`. Left from 0.43.0: a reader handed a whole substitution passes under the standing ruling; the card and the tool row drop a tab in a command's display. Next: the two feature patches, mixed-language command discovery (G11) and storage usage with a cleanup preview (G17).
 
 ### 0.43.0 — The gate reads what is written (2026-10-31)
 

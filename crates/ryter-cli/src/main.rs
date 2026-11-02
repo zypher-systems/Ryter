@@ -168,6 +168,9 @@ enum Command {
     },
     /// List sessions for this directory.
     Sessions,
+    /// What Ryter keeps for this project, and what each cleanup would
+    /// remove. Reads only: `/storage` in the TUI does the cleanup.
+    Storage,
     /// Open the TUI on a saved session (`latest` if omitted).
     Resume {
         /// Session id or unique prefix.
@@ -351,6 +354,13 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Sessions) => match sessions_cmd() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(1)
+            }
+        },
+        Some(Command::Storage) => match storage_cmd() {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("{e}");
@@ -1475,6 +1485,32 @@ fn sessions_cmd() -> ryter_core::Result<()> {
             s.meta.spend_label(),
             s.preview
         );
+    }
+    Ok(())
+}
+
+fn storage_cmd() -> ryter_core::Result<()> {
+    use ryter_core::storage;
+    let cwd = std::env::current_dir().map_err(|e| Error::Io(e.to_string()))?;
+    let home = config::home_dir();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let report = storage::report(&home, &cwd, now)?;
+    println!("project {}", report.root.display());
+    for (what, value) in report.rows() {
+        println!("  {what:<16} {value}");
+    }
+    println!();
+    println!("what each cleanup would remove (/storage in the TUI shows it in full and does it):");
+    for cleanup in [
+        storage::Cleanup::Unreachable,
+        storage::Cleanup::OlderThan(storage::DEFAULT_AGE),
+        storage::Cleanup::Copies,
+    ] {
+        let plan = storage::plan(&report, cleanup, None);
+        println!("  {:<40} {}", plan.label(), plan.amount());
     }
     Ok(())
 }

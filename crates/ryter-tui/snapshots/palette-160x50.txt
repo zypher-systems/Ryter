@@ -7,7 +7,7 @@
                                                                                                                     ┊ HATS
            ·  welcome · /help for keys                                                                              ┊ ● Plan   grok-4.6                     $0
                      ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖                   ┊ ┃ Build                               $0
-                       Commands                                                         5 of 32                     ┊   grok-4.6
+                       Commands                                                         5 of 33                     ┊   grok-4.6
                        mo                                                                                           ┊   asks first
       What are we bui ›/models         Choose models: one for every hat, or one each for pl… ▸                      ┊ ● Audit  grok-4.6                     $0
                        /permissions    Durable allow/ask/deny bash rules from the TUI        ▸                      ┊ ● Scribe follows all hats             $0

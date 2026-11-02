@@ -6,7 +6,7 @@
   0.2.0-patch                                                                           ┊
                                                                                         ┊ HATS
       ▗▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▖      ┊ ● Plan   grok-4.6         $0
-        Commands                                                         5 of 32        ┊ ┃ Build                   $0
+        Commands                                                         5 of 33        ┊ ┃ Build                   $0
         mo                                                                              ┊   grok-4.6
        ›/models         Choose models: one for every hat, or one each for pl… ▸         ┊   asks first
     Wh  /permissions    Durable allow/ask/deny bash rules from the TUI        ▸         ┊ ● Audit  grok-4.6         $0

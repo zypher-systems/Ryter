@@ -2,6 +2,70 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — Review 109, round 4: the root's script is read as the shell reads it
+
+**What was reported.** One approval and one rejection on `b46cad9`. The allowlist was applied to whitespace-split text, so `pnpm -r "--filter=a" test` started with a quote and passed as no option at all, though the shell hands pnpm the same `--filter=a`. The approval's notes: a hand-off word after `--` still counted.
+
+**Shell words first.** The script goes through the same reading as a run file's commands (`steps`): quotes are taken off, each step's words are read up to `--`, and a step that can't be read, or a word the shell would expand (`$FILTER`), keeps the members. A raw prefix check for more spellings was the alternative and would only move the gap.
+
+### 2026-11-02 — Review 109, round 3: a hand-off is whole only when every option is known to keep it whole
+
+**What was reported.** One approval and one rejection on `0848a91`: `pnpm -r --filter-prod a test` passed the selector list, so member `b` was dropped unsaid. `yarn workspaces foreach --from` was in the approving review's notes too.
+
+**Read the other way round.** A list of selectors is never complete: pnpm alone has `--filter`, `--filter-prod`, `--test-pattern`, `--changed-files-ignore-pattern`. A hand-off now counts as running every member only when every option before a `--` is on a short list of options that leave the selection whole (`-r`, `--workspaces`, `--parallel`, `--if-present`, `--stream`, `-A`, `-t`, …). Anything else keeps the members with tests as parts. A wrong guess this way runs a member twice; the other way it went unrun.
+
+### 2026-11-02 — Review 109, round 2: each tool's flags are its own, and a shared dependency is a member only once used
+
+**What was reported.** Two rejections on `8dfe68b`, three findings, all in round 1's new reading. `--workspace` was in one list of package picks for every tool, so `cargo test --workspace`, the command discovery writes, was reported as unread beside any other part; cargo's `-r` (`--release`) and `-F` (`--features`) would have been picks too. Every path in `[workspace.dependencies]` was taken as a member, though cargo makes one only when a member inherits it (checked with `cargo metadata`). A root script that hands off with a selector (`pnpm -r --filter a`, `turbo --filter`, `lerna --scope`, `nx affected`) was read as running every member.
+
+**Picks by tool.** Node's are `-w`, `--workspace(s)`, `-ws`, `--filter`, `-F`, `-r`, `--recursive`; cargo's are `-p`, `--package` and `--exclude`. A shared dependency is followed from a member's `dep = { workspace = true }`. A hand-off with any selector keeps every member with tests: which ones it runs is the tool's to work out, and a member left a part can at worst run twice. The 35 real checkouts read the same as after round 1.
+
+### 2026-11-02 — Review 109, round 1: a part is run only where its folder is, and a symbolic ref is never followed
+
+**What was reported.** Two rejections on `dc71527`, eight findings, all in the new code. Storage: a symbolic ref under `refs/ryter/undo/` aimed at an old commit was deleted through, taking the branch it named (`update-ref` follows a symref and the old value matched the branch); a reread that failed after sessions were removed returned an error in place of what was done. Verbs: a Node workspace root's `test` hid members it does not run; Cargo membership was "not excluded", so a package `members` does not name was dropped though `--workspace` never runs it (cargo refuses it, exit 101); `python3 -m unittest` was proposed beside a Rust `tests/` folder and a plain `tests/test_x.py`, both of which it does not collect (exit 5); any word naming a folder, an option's value included, counted as running it, and `--prefix` was not read; `./web/a.ts` was not in `web` for narrowing.
+
+**A part runs where its folder is.** What a command reaches is the folder its step runs in: `cd`, then the program's own folder option (`--prefix`, `--dir`, `-C`, `--cwd`, `--directory`, `--manifest-path`), read from the step's folder. A word that names the folder is no sign: jest's `--testPathIgnorePatterns=web` names it to leave it out. An option that picks some workspace packages (`-w`, `--filter`, `-r`) can't be read as any one part and is said to be unread.
+
+**Membership is read as the tool reads it.** Cargo: `members` globs, the workspace's package, their path dependencies inside the workspace, less `exclude` as a path (cargo takes no glob there; checked against `cargo metadata`). A package that is none of these stays a part: proposing a command cargo refuses shows the fault; dropping the package hid it. Node: a member with tests of its own is the root's only when the root's script hands the run on; a root runner that also walks into it can run it twice, which the user can take off on the card, as with a Makefile. A member with no tests is left to the root, as before: keeping it only chained its build and lint behind the root's, which on two real workspaces would have built every package twice. Python: `unittest` where it collects (`test*.py` beside the manifest or in a package), pytest where test files are in a plain folder, and otherwise no suite, which a project of several parts drops.
+
+**Symbolic refs.** Ryter writes direct refs only, so a symref under the prefix is not listed, and every delete carries `no-deref`, in the transaction and in the one-by-one fallback.
+
+**Hook retry, narrowed.** A retry now needs the busy file to be the hook's own program, so a hook of several commands is not started again after one ran.
+
+### 2026-11-02 — What Ryter keeps is shown, and a cleanup is previewed before it is done
+
+**What was reported.** The gap report's G17: checkpoints under `refs/ryter/undo/` were never pruned, deleting a session left them, and nothing said how big or how old any of it was. Its closing conditions: say what persists and why, show size and age, preview a cleanup, keep active undo references and the user's branches, test session deletion and checkpoint cleanup apart, make cleanup opt-in and say what recovery it costs.
+
+**A checkpoint is kept by what names it, not by its name.** Most refs carry their session's id, but an audit's after, undone and redone checkpoints carry none, and `/undo` reads the commit a session's index names, never a ref by name. So a checkpoint stays while any session's index names its commit. Every object id in the index counts, whatever field it is in, so a field a later Ryter adds still holds. All sessions in the home count, not only this project's, because a linked worktree shares the repository's refs from another folder. An index that can't be read, or that a newer Ryter wrote, holds every checkpoint it might name: its own, and every one with no owner in its name.
+
+**A day's grace.** An audit's starting checkpoint lives in its process until the audit ends, and another Ryter may be mid-turn in the same repository. A checkpoint made in the last day stays, whatever names it. `review` and `now` are rewritten on every use and stay too.
+
+**No `git gc`.** Removing a ref frees nothing until git collects garbage. Running `git gc --prune=now` would give the space back at once, and it would also prune the objects the user left dangling, such as a dropped stash. Ryter removes refs under its own prefix and says that git gives the space back later. The size shown is git's own count (`rev-list --disk-usage`, 2.38 and later) of the objects only those checkpoints reach, against every other ref and HEAD.
+
+**Shown, then done, then read again.** A cleanup runs only from its preview, and the yes reads everything again first. A session used since the preview, a checkpoint a session has come to name or that moved, and a copy that changed are left and said. The refs go in one `update-ref --stdin` transaction, each with the value it had, and are tried one by one if that fails. Removing sessions first brings the project's spend total up to date, so the cost the preview says it keeps is in it.
+
+**Deleting a session stays what it was.** It removes the folder and the pages, and now says that its checkpoints stay and `/storage` finds them. Removing them with the session was weighed: the gap report asked for the two to be separate, and a delete that also reached into the repository would be a second action under one key.
+
+**Three cleanups, not a policy.** Unreachable checkpoints, sessions unused for 7, 30, 90 or 180 days with the checkpoints only they reach, and recovery copies. No automatic pruning: item 9 puts pruning after 1.0, and an opt-in screen is not pruning. `ryter storage` prints the figures and removes nothing, since a cleanup belongs where its preview is read.
+
+### 2026-11-02 — A project is its parts, and a run file is read against them
+
+**What was reported.** The gap report's G11, carried since the 0.41.0 notes: `detect` returned at the first manifest, so a root `Cargo.toml` hid `package.json`, and a project with nothing at its root got nothing. The `test` that came back looked whole and covered half the project.
+
+**One run file, no new shape.** `build`, `check`, `lint` and `format` stay one string each, and `test` stays a list. Several parts share a line (`cargo build && (cd web && npm run build)`), which the file could already hold and the gate already allows. Lists in those fields would have read more cleanly in a report, at the price of a schema change for every approved run file, and approval is of a file's exact text. The cost is that the first failure stops the rest, which a fast check can live with. The check also runs every part after any edit: a slower round, not a wrong one.
+
+**`cd`, not each tool's own flag.** `npm --prefix`, `pnpm --dir`, `yarn --cwd`, `go -C` and `--manifest-path` are five spellings of one thing, and pytest has none. `cd web && npm test` is one form a person reads at once on the card. `narrow` follows that form only: a plain relative path to a folder that is there. Anything else stays a compound command that is not narrowed.
+
+**What the card says.** The commands come first, because they are what is being approved. The first version put the scope in the note and the real screen showed why not: a docked card gets a third of the column, and the note filled it. What a run file leaves out stays at the top, in the warning colour; what it covers is a row after the commands. A project of one part shows nothing new.
+
+**A run file you wrote stands.** Discovery proposes; it never rewrites. It reads your commands against the parts it finds, so a suite that skips one says so at approval and at the end of every whole run. A command it can't read, such as `make test`, is said to be unread, never assumed to cover or to miss. A wrapper over a project of one part is taken to run it, or every such project would carry a warning.
+
+**What is not a part.** Tried on 35 real checkouts, read only: under 35 ms each, and half-covered repos came back complete. It also found this repo's own benchmark tasks, so benchmark folders joined fixtures, examples and tests as not the project's own. A `pyproject.toml` beside other manifests, with no sign of tests, is a linter's settings: `python3 -m unittest` there exits with an error for finding nothing. `npm init`'s placeholder `test` fails on purpose and is no test. A Cargo workspace runs its members. A Node workspace runs them only if its root has a `test`; otherwise a member brings its own, and the lockfile is looked for up to the top. (Both rules were corrected in review 109, round 1, above.)
+
+**Makefiles.** Reading a recipe to see whether `make test` already runs a nested part was tried on paper and dropped. In the checkouts one recipe ran only one of three parts, and another hid its command behind a variable. A wrong guess hides a part, which is the fault being fixed, and a right one saves a repeated run the user can already take off on the card.
+
+**A crate does not own a frontend.** `cargo_package` walked up from any file to the nearest `Cargo.toml`, so an edit in `web/` ran the Rust tests as that file's tests. Another manifest nearer the file now ends the walk.
+
 ### 2026-11-01 — Review 108, round 1: the file is the session, and an option the gate can't read is refused
 
 **What the reviews showed.** Both rejected `490a016`. The store's check was a length, taken after this instance's own append, so an append made the file "known" with rows another Ryter had written unseen in it, and the next compaction dropped them; and a rewrite of the same number of bytes passed as this instance's own file. One review also found two more gate forms: `-c` glued to a substitution (`-c$(echo ' alias.st=!id')`) read as an unknown option while bash splits what the substitution prints into `-c alias.st=!id`; and `--config-env=alias.st=NAME`, whose alias body is the variable's value, which the gate never looks at.

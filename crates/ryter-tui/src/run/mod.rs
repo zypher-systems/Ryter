@@ -1105,7 +1105,12 @@ fn drain_user_prompts(
     let mut about = match &req {
         UserRequest::Permission { .. } => String::new(),
         UserRequest::Plan { title, .. } => title.clone(),
-        UserRequest::Run { note, .. } => note.clone().unwrap_or_default(),
+        // The first line: the rest is what the commands reach, for the card.
+        UserRequest::Run { note, .. } => note
+            .as_deref()
+            .and_then(|n| n.lines().next())
+            .unwrap_or_default()
+            .to_string(),
         UserRequest::Question {
             title, question, ..
         } => title.clone().unwrap_or_else(|| question.clone()),

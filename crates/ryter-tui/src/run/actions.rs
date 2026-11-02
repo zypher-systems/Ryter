@@ -204,6 +204,7 @@ pub fn perform(view: &mut View, cx: &mut Ctx, action: Action) {
         Action::OpenPanel(id) => open_panel(view, cx, id),
         Action::Resume(id) => resume(view, cx, &id),
         Action::DeleteSession(id) => delete_session(view, cx, &id),
+        Action::CleanStorage(plan) => clean_storage(view, cx, &plan),
         Action::RenameSession(title) => {
             let title = title.trim().to_string();
             view.session_title = title.clone();
@@ -612,6 +613,26 @@ fn delete_session(view: &mut View, cx: &mut Ctx, id: &str) {
         }
         Err(e) => view.error(e.to_string()),
     }
+}
+
+fn clean_storage(view: &mut View, cx: &mut Ctx, plan: &ryter_core::storage::Plan) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let said = match ryter_core::storage::apply(&cx.home, plan, now) {
+        Ok(done) => {
+            view.refresh_sessions_count();
+            view.system(format!("storage · {}", done.summary()));
+            done.summary()
+        }
+        Err(e) => {
+            view.error(format!("storage cleanup stopped: {e}"));
+            format!("stopped: {e}")
+        }
+    };
+    cx.notice(Notice::SessionsChanged);
+    cx.notice(Notice::StorageCleaned(said));
 }
 
 /// Rebuild the transcript from a saved session (`/resume`, startup).

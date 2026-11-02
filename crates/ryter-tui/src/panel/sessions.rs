@@ -197,10 +197,10 @@ impl Panel for Sessions {
         let list = self.filtered(view);
         let n = list.len();
         let sel = self.selected.min(n.saturating_sub(1));
-        // The delete question takes two rows under the list, so the list
+        // The delete question takes three rows under the list, so the list
         // gives them up: the sentence is on screen however long the list.
         let asking = self.mode == Mode::ConfirmDelete;
-        let rows_h = h.saturating_sub(1 + if asking { 2 } else { 0 }).max(1);
+        let rows_h = h.saturating_sub(1 + if asking { 3 } else { 0 }).max(1);
         let first = super::window(sel, n, rows_h);
         let now = wall_ms();
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -264,6 +264,14 @@ impl Panel for Sessions {
                         r.short
                     ),
                     theme.warn,
+                    theme,
+                ));
+                // Deleting a session is not erasing every trace of it.
+                lines.push(widgets::note(
+                    &wrap::truncate(
+                        "its checkpoints stay in the repository: /storage shows them and cleans up",
+                        w.saturating_sub(2),
+                    ),
                     theme,
                 ));
             }

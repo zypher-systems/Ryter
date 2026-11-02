@@ -336,7 +336,26 @@ fn fire(h: &Hook, payload: &Value, cwd: &Path, can_deny: bool) -> HookDecision {
     HookDecision::Allow
 }
 
+/// Run a hook command. A script written a moment ago can fail to start with
+/// "Text file busy": another thread of this process forked while the writer
+/// still held the file open, and the child keeps that descriptor until its
+/// own exec. The shell then exits 126 having run nothing, which read as an
+/// allow, so a deny hook was skipped. It is tried again, a few times, when
+/// the file that was busy is the hook's own program. The shell's message is
+/// read in English; a translated one is not retried.
 fn run_command(command: &str, input: &str, cwd: &Path) -> Result<(i32, String), String> {
+    let mut tries = 0;
+    loop {
+        let (code, text, busy) = run_once(command, input, cwd)?;
+        tries += 1;
+        if !busy || tries >= 4 {
+            return Ok((code, text));
+        }
+        std::thread::sleep(Duration::from_millis(25 * tries));
+    }
+}
+
+fn run_once(command: &str, input: &str, cwd: &Path) -> Result<(i32, String, bool), String> {
     let mut child = Command::new("/bin/sh")
         .arg("-c")
         .arg(command)
@@ -360,11 +379,19 @@ fn run_command(command: &str, input: &str, cwd: &Path) -> Result<(i32, String), 
     match rx.recv_timeout(TIMEOUT) {
         Ok(Ok(out)) => {
             let code = out.status.code().unwrap_or(1);
+            let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+            // Only when the busy file is the hook's own program: a hook of
+            // several commands may have run some before one failed to start.
+            let program = command.split_whitespace().next().unwrap_or_default();
+            let busy = code == 126
+                && stderr.contains("Text file busy")
+                && !program.is_empty()
+                && stderr.contains(&format!("{program}: "));
             let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
             if text.trim().is_empty() {
-                text = String::from_utf8_lossy(&out.stderr).into_owned();
+                text = stderr;
             }
-            Ok((code, text))
+            Ok((code, text, busy))
         }
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => {

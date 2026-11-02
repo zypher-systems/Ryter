@@ -26,6 +26,7 @@ pub mod settings;
 pub mod skills;
 pub mod spend;
 pub mod spend_drawer;
+pub mod storage;
 pub mod theme;
 pub mod toggles;
 pub mod widgets;
@@ -115,6 +116,8 @@ pub enum Notice {
     },
     /// Sessions list refreshed (after rename/delete).
     SessionsChanged,
+    /// A `/storage` cleanup finished: what it did, or why it stopped.
+    StorageCleaned(String),
     /// A benchmark run moved on (`/benchmark`).
     Bench(ryter_bench::Progress),
     /// A benchmark run finished: one model's report, or several compared.
@@ -400,6 +403,7 @@ pub fn open(view: &mut View, id: PanelId, env: &PanelEnv) -> Action {
         PanelId::Context => Box::new(context::Context::default()),
         PanelId::Help => Box::new(help::Help::default()),
         PanelId::Doctor => Box::new(doctor::Doctor::new(env)),
+        PanelId::Storage => Box::new(storage::Storage::new(view, env)),
         PanelId::Changes => Box::new(changes::Changes::new(view, env)),
         PanelId::Benchmark => Box::new(benchmark::Benchmark::new(view)),
         PanelId::Commit => {
