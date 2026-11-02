@@ -581,28 +581,53 @@ fn node_runs_members(root: &Path, workspace: &str) -> bool {
         .collect();
     let has = |w: &str| words.contains(&w);
     let after = |a: &str, b: &str| words.windows(2).any(|p| p[0] == a && p[1] == b);
-    // A hand-off that selects some members runs those, not all: which ones
-    // is the tool's to work out, so every member with tests stays a part.
-    let selects = words.iter().any(|w| {
-        let flag = w.split('=').next().unwrap_or(w);
-        matches!(
-            flag,
-            "--filter"
-                | "-F"
-                | "--scope"
-                | "--ignore"
-                | "--since"
-                | "--projects"
-                | "-p"
-                | "--exclude"
-                | "--affected"
-                | "-w"
-                | "--workspace"
-                | "--include"
-                | "affected"
-        )
-    });
-    if selects {
+    // A hand-off that selects some members runs those, not all, and the
+    // tools have more selectors than any list here (`--filter-prod`,
+    // `--from`, `--since`). So it is read the other way round: every option
+    // before a `--` must be one known to leave the selection whole, or the
+    // members with tests stay parts. What follows `--` is each member's.
+    const WHOLE: &[&str] = &[
+        "--workspaces",
+        "-ws",
+        "-r",
+        "--recursive",
+        "--include-workspace-root",
+        "--if-present",
+        "--parallel",
+        "--stream",
+        "--bail",
+        "--no-bail",
+        "--continue",
+        "--concurrency",
+        "--workspace-concurrency",
+        "--sort",
+        "--no-sort",
+        "--silent",
+        "-s",
+        "--verbose",
+        "--loglevel",
+        "--color",
+        "--no-color",
+        "--reporter",
+        "--cache",
+        "--no-cache",
+        "--force",
+        "--output-logs",
+        "--all",
+        "-A",
+        "--topological",
+        "--topological-dev",
+        "-t",
+        "--target",
+        "--targets",
+        "--interlaced",
+    ];
+    let whole = words
+        .iter()
+        .take_while(|w| **w != "--")
+        .filter(|w| w.starts_with('-'))
+        .all(|w| WHOLE.contains(&w.split('=').next().unwrap_or(w)));
+    if !whole {
         return false;
     }
     has("--workspaces")
@@ -1418,6 +1443,10 @@ mod tests {
             "lerna run test --scope a",
             "nx affected -t test",
             "npm test -w packages/a",
+            "pnpm -r --filter-prod a test",
+            "yarn workspaces foreach --from a run test",
+            "lerna run test --since main",
+            "pnpm -r --some-flag-not-known test",
         ] {
             let json =
                 format!(r#"{{"workspaces":["packages/*"],"scripts":{{"test":"{script}"}}}}"#);
@@ -1436,8 +1465,14 @@ mod tests {
                 "{script}"
             );
         }
-        // Each hand-off is read as one.
+        // Each hand-off is read as one, with options that leave the
+        // selection whole, and the member's own arguments after `--`.
         for script in [
+            "pnpm -r --parallel test",
+            "turbo run test -- --filter=x",
+            "yarn workspaces foreach -A run test",
+            "nx run-many -t test --all",
+            "npm test --workspaces --if-present",
             "npm test --workspaces",
             "npm run test -ws",
             "pnpm -r test",

@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — Review 109, round 3: a hand-off is whole only when every option is known to keep it whole
+
+**What was reported.** One approval and one rejection on `0848a91`: `pnpm -r --filter-prod a test` passed the selector list, so member `b` was dropped unsaid. `yarn workspaces foreach --from` was in the approving review's notes too.
+
+**Read the other way round.** A list of selectors is never complete: pnpm alone has `--filter`, `--filter-prod`, `--test-pattern`, `--changed-files-ignore-pattern`. A hand-off now counts as running every member only when every option before a `--` is on a short list of options that leave the selection whole (`-r`, `--workspaces`, `--parallel`, `--if-present`, `--stream`, `-A`, `-t`, …). Anything else keeps the members with tests as parts. A wrong guess this way runs a member twice; the other way it went unrun.
+
 ### 2026-11-02 — Review 109, round 2: each tool's flags are its own, and a shared dependency is a member only once used
 
 **What was reported.** Two rejections on `8dfe68b`, three findings, all in round 1's new reading. `--workspace` was in one list of package picks for every tool, so `cargo test --workspace`, the command discovery writes, was reported as unread beside any other part; cargo's `-r` (`--release`) and `-F` (`--features`) would have been picks too. Every path in `[workspace.dependencies]` was taken as a member, though cargo makes one only when a member inherits it (checked with `cargo metadata`). A root script that hands off with a selector (`pnpm -r --filter a`, `turbo --filter`, `lerna --scope`, `nx affected`) was read as running every member.
