@@ -80,7 +80,7 @@ impl Part {
     }
 
     /// `cmd` as run from the project's top.
-    fn from_top(&self, cmd: &str) -> String {
+    fn run_from_top(&self, cmd: &str) -> String {
         if self.dir.is_empty() {
             cmd.to_string()
         } else {
@@ -505,14 +505,14 @@ fn chain(parts: &[Part], verb: impl Fn(&RunFile) -> Option<&String>) -> Option<S
         .collect();
     match cmds.as_slice() {
         [] => None,
-        [(part, cmd)] => Some(part.from_top(cmd)),
+        [(part, cmd)] => Some(part.run_from_top(cmd)),
         many => Some(
             many.iter()
                 .map(|(part, cmd)| {
                     if part.dir.is_empty() {
                         (*cmd).clone()
                     } else {
-                        format!("({})", part.from_top(cmd))
+                        format!("({})", part.run_from_top(cmd))
                     }
                 })
                 .collect::<Vec<_>>()
@@ -542,7 +542,7 @@ pub fn detect(root: &Path) -> Option<(RunFile, String)> {
         build: chain(shown, |r| r.build.as_ref()),
         test: shown
             .iter()
-            .flat_map(|p| p.run.test.iter().map(|t| p.from_top(t)))
+            .flat_map(|p| p.run.test.iter().map(|t| p.run_from_top(t)))
             .collect(),
         check: chain(shown, |r| r.check.as_ref()),
         lint: chain(shown, |r| r.lint.as_ref()),
