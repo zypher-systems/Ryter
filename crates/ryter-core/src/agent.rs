@@ -2,7 +2,7 @@
 
 use futures_util::StreamExt;
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
@@ -164,6 +164,10 @@ pub struct Agent {
     /// The verdict of the last audit turn that ended: filed, or read from
     /// its last words. What `/audit` reports.
     pub last_audit_verdict: Option<bool>,
+    /// The build turn's "no checkpoints here" notice last given: said once
+    /// a session, not at every turn of a folder that will never have one,
+    /// and again only when the reason changes.
+    pub told_no_checkpoints: Option<String>,
     /// The turn in progress, for the events made during it; `0` between
     /// turns.
     pub turn: u64,
@@ -475,6 +479,15 @@ fn names_address(cmd: &str, host: &str, port: u16) -> bool {
     })
 }
 
+/// Why a folder has no checkpoint, as the start of a sentence: no
+/// repository, or no git to keep one with.
+fn no_checkpoint_why(dir: &Path) -> &'static str {
+    match crate::git::repo_state(dir) {
+        crate::git::RepoState::NotInstalled => crate::git::NOT_INSTALLED,
+        _ => "no git repository here",
+    }
+}
+
 impl Agent {
     /// Run one user message to completion (or cap).
     ///
@@ -663,8 +676,8 @@ impl Agent {
         // changes the system prompt or the tools (or the cache).
         let content = match self.role.hat_note() {
             Some(note) if self.ctx.read_only => format!(
-                "{note}\n[no git repository here, so no checkpoint: read-only commands only \
-                 this turn]\n\n{user}"
+                "{note}\n[{}, so no checkpoint: read-only commands only this turn]\n\n{user}",
+                no_checkpoint_why(&self.ctx.workspace)
             ),
             Some(note) => format!("{note}\n\n{user}"),
             None => user.to_string(),
@@ -1480,6 +1493,7 @@ impl Agent {
                 scope: None,
                 whole: true,
                 asks: None,
+                ..crate::user_io::ToolAsk::default()
             },
             &self.ctx.cancel,
         );
@@ -2453,11 +2467,11 @@ impl Agent {
         let taken = self.ctx.sandboxed(|| crate::git::checkpoint(&dir, &name));
         let message = match &taken {
             Ok(Some(_)) => None,
-            Ok(None) => Some(
-                "no git repository here, so the audit has no checkpoint to put the tree back \
-                 from: it runs read-only commands only this turn"
-                    .to_string(),
-            ),
+            Ok(None) => Some(format!(
+                "{}, so the audit has no checkpoint to put the tree back from: it runs \
+                 read-only commands only this turn",
+                no_checkpoint_why(&dir)
+            )),
             Err(e) => Some(format!(
                 "the audit's checkpoint could not be taken ({e}), so there is nothing to put \
                  the tree back from: it runs read-only commands only this turn"
@@ -3380,10 +3394,12 @@ impl Agent {
             Ok(None) => {}
             // Home folder or root: work without checkpoints, and say so once.
             Err(e) => {
-                if self.session.meta.checkpoints.is_empty() {
-                    self.emit(AgentEvent::Notice {
-                        message: format!("{e} Until then, /undo is unavailable."),
-                    })?;
+                let message = format!("{e} Until then, /undo is unavailable.");
+                if self.session.meta.checkpoints.is_empty()
+                    && self.told_no_checkpoints.as_deref() != Some(message.as_str())
+                {
+                    self.told_no_checkpoints = Some(message.clone());
+                    self.emit(AgentEvent::Notice { message })?;
                 }
                 return Ok(());
             }
@@ -3528,7 +3544,13 @@ impl Agent {
             .ctx
             .sandboxed(|| crate::git::checkpoint(&dir, &redo_name))?
         else {
-            return Ok("nothing to undo: this folder has no repository to undo from".into());
+            return Ok(match crate::git::repo_state(&dir) {
+                crate::git::RepoState::NotInstalled => format!(
+                    "nothing to undo: {}, so Ryter kept no checkpoints. Install git to have them.",
+                    crate::git::NOT_INSTALLED
+                ),
+                _ => "nothing to undo: this folder has no repository to undo from".into(),
+            });
         };
         let now_tree = self
             .ctx
@@ -4954,6 +4976,7 @@ mod tests {
             audit_live: None,
             leaving_audit: None,
             last_audit_verdict: None,
+            told_no_checkpoints: None,
             turn: 0,
             last_input_tokens: None,
             project_map: None,
@@ -11286,7 +11309,12 @@ mod tests {
     /// repository: `/undo` is off there, and it says why.
     #[tokio::test]
     async fn solo_edits_a_folder_of_repositories_without_making_one() {
-        let p = ReplayProvider::scripted(vec![write("hello.py", "print('hello')\n"), say("done")]);
+        let p = ReplayProvider::scripted(vec![
+            write("hello.py", "print('hello')\n"),
+            say("done"),
+            write("again.py", "print('again')\n"),
+            say("done again"),
+        ]);
         let (_home, cwd, mut agent) = setup(p);
         for app in ["alpha", "beta"] {
             std::fs::create_dir_all(cwd.path().join(app)).unwrap();
@@ -11303,6 +11331,13 @@ mod tests {
             e,
             AgentEvent::Notice { message }
                 if message.contains("won't set up git") && message.contains("/undo is unavailable")
+        )));
+        // Said once a session: the next build turn edits without it again.
+        agent.turn("add again.py").await.unwrap();
+        assert!(cwd.path().join("again.py").exists());
+        assert!(!rx.try_iter().any(|e| matches!(
+            e,
+            AgentEvent::Notice { message } if message.contains("/undo is unavailable")
         )));
     }
 

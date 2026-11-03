@@ -2,6 +2,34 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-03 — Review 110, round 3: the lister is the command's first word
+
+**What was reported.** One approval and one rejection on `3e7d1cd`. The option check stopped at the first `--` of the whole segment, so a wrapper's own (`env -- ls --recurs /usr/local`, `command -- ls --recurs …`) ended it before the lister's options were read, and the listing walked the kept folders unasked.
+
+**Decision.** The listing rule applies only when the lister is the command's first word, as the card's "only reads" already requires: no wrapper, no assignment before it. Checking from the lister's own word on was the review's suggestion; a wrapper has options of its own (`nice -n`, `timeout -s`, `env -u`) that would each need reading, for a form no session uses. `env ls /usr/bin` and `LANG=C ls /usr/bin` ask.
+
+### 2026-11-03 — Review 110, round 2: a listing's options count only written out
+
+**What was reported.** One approval on `72d3113`. One rejection on `a0cddbe`, the commit before it: GNU `ls` takes any unambiguous start of a long option, so `ls --recurs /usr/local` and `ls --recursiv /usr/local` walked into the kept folders unasked, where `ls -R` asked. Its second finding, the macOS failure of the link test, was what `72d3113` fixed.
+
+**Decision.** The listing rule applies only when every option is one it knows for that program: short letters from its list, long options by their whole name. Anything else asks, an abbreviation or an option it has never heard of, whatever it would do, so a spelling it doesn't know can't walk or follow where it can't see. `test` and `[` take their operators written whole. It is the same lesson as round 1 and review 109's round 3, held to the options now as well as the programs.
+
+### 2026-11-03 — Review 110, round 1: the card vouches only for plain readers, and a listing is judged by where it reaches
+
+**What was reported.** Both reviews rejected `a349abf`. `reads_only` took every `READ_ONLY` program, so `yq -i`, `fd -x rm`, `rg --pre`, `sort --compress-program` and `time -o f cat` were labelled "only reads · changes nothing". The listing rule judged only the path it was given: `ls -R /usr/local` and `du /usr` walked into the kept `/usr/local/etc` and `/usr/local/share` unasked. It also sat in the check the build hat shares with an audit behind a checkpoint, which the ruling did not cover. Notes: `/changes` showed `io:` before the missing git, and the once-a-session notice stayed silent for a later, different reason.
+
+**Decision.** The card vouches only for `PLAIN_READERS`, programs with no form that writes or runs another program, written as the command's first word: a list of what is known plain, as round 3 of review 109 taught, not a list of the forms that are not. The listing rule is the build hat's alone, and a path is judged by where it really leads, every match of a pattern included. A link in `/usr/lib` can lead into `/etc` (Debian's `/usr/lib/ssl/certs` does), and `ls` lists the folder a link points at. A listing that walks down (`ls -R`, every `du`) asks when a kept folder is under where it starts, or when it follows links (`-L`). A pattern with more than 10,000 matches asks. The notice is said again only when its reason changes.
+
+**How it was checked.** The reviewers' commands as tests, and a link out of an installed folder in a temporary tree. The rule only narrowed since the replay of 1,439 real commands, so that result stands.
+
+### 2026-11-02 — Four distros: a missing git is said as missing, and a listing of the system's programs runs
+
+**What was found.** The user's distroboxes (Debian 13, Arch, openSUSE Tumbleweed, Ubuntu 24.04) ran 0.44.0: the installer, `doctor`, the offline TUI, the Landlock sandbox and a live fix on `deepseek/deepseek-v4.1-flash-1017` (about $0.001 a box) all held. What did not: Tumbleweed and Ubuntu ship no git, and a repository cloned on the host and opened there read as "not a git repository" in `/undo`, `/storage`, `/changes` and the audit, because `is_repo` was false for a git that could not start. The build turn's notice was `io: git: No such file or directory (os error 2) Until then, /undo is unavailable.` The question card said "/undo covers files in the project" there, and "runs a command that can change things" of an `ls`. Debian ships no Python; the model's `ls /usr/bin/python*` asked, and a bare `test_calc.py` with no manifest gave the `test` tool nothing.
+
+**Decision.** `git::repo_state` tells a repository, no repository and no git apart, and every place that said "not a git repository" says which. The card is told whether the command only reads (`reads_only`: every part a reader, no redirect to a file, nothing substituted, no `find`) and whether a checkpoint can stand behind it; it promises `/undo` only then. In the build hat a listing (`ls`, `stat`, `readlink`, `realpath`, `test`, `du`) under `/usr`, `/bin`, `/sbin`, `/lib*` and `/opt/homebrew` runs unasked, by the user's ruling: it says what is installed and holds nobody's data. `/usr/local/etc`, `/usr/local/share`, `/etc` and reading a file there still ask. With no manifest and no Makefile, `test*.py` files that `unittest` collects are a suite.
+
+**How it was checked.** Replay of 1,439 real commands from the user's sessions through dev and the branch: no verdict changed. The plan, audit and scribe hats still refuse the listing as any read outside the project: not this ruling.
+
 ### 2026-11-02 — Review 109, round 4: the root's script is read as the shell reads it
 
 **What was reported.** One approval and one rejection on `b46cad9`. The allowlist was applied to whitespace-split text, so `pnpm -r "--filter=a" test` started with a quote and passed as no option at all, though the shell hands pnpm the same `--filter=a`. The approval's notes: a hand-off word after `--` still counted.

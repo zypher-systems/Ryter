@@ -623,6 +623,7 @@ async fn run_prompt(
         audit_live: None,
         leaving_audit: None,
         last_audit_verdict: None,
+        told_no_checkpoints: None,
         turn: 0,
         last_input_tokens,
         project_map: None,
@@ -771,7 +772,7 @@ fn models_cmd(connection: Option<&str>) -> ryter_core::Result<()> {
     println!("{conn_name}");
     for m in models {
         let price = match (m.input_per_million, m.output_per_million) {
-            (Some(i), Some(o)) => format!("  ${i}/{o}"),
+            (Some(i), Some(o)) => format!("  {}", ryter_core::spend::format_rates_short(i, o)),
             _ => String::new(),
         };
         println!("  {}{price}", m.id);
@@ -1220,6 +1221,7 @@ fn mcp_serve() -> ryter_core::Result<()> {
         audit_live: None,
         leaving_audit: None,
         last_audit_verdict: None,
+        told_no_checkpoints: None,
         turn: 0,
         last_input_tokens: None,
         project_map: None,
@@ -1363,6 +1365,7 @@ fn serve_host_from_config(
         audit_live: None,
         leaving_audit: None,
         last_audit_verdict: None,
+        told_no_checkpoints: None,
         turn: 0,
         last_input_tokens: None,
         project_map: None,

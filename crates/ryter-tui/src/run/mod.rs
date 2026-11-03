@@ -1125,6 +1125,8 @@ fn drain_user_prompts(
             scope,
             whole,
             asks,
+            reads_only,
+            no_undo,
             reply,
         } => {
             cx.perm_reply = Some(reply);
@@ -1135,6 +1137,7 @@ fn drain_user_prompts(
                 .with_answers(strict, scope)
                 .showing_whole(whole)
                 .asking(asks)
+                .reaching(reads_only, no_undo)
                 .with_context(why, opened);
             about = card.what();
             view.panels.push(Box::new(card));

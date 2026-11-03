@@ -86,6 +86,11 @@ pub struct PermissionModal {
     rows: std::cell::RefCell<Option<(usize, Vec<Line<'static>>)>>,
     /// Enter was pressed where it can't answer: say what can.
     nudge: Option<&'static str>,
+    /// The command only reads: nothing to undo.
+    pub reads_only: bool,
+    /// No checkpoint can be taken here (no repository, or no git), so
+    /// `/undo` is not promised.
+    pub no_undo: bool,
 }
 
 impl PermissionModal {
@@ -109,7 +114,18 @@ impl PermissionModal {
             read: std::cell::Cell::new(false),
             rows: std::cell::RefCell::new(None),
             nudge: None,
+            reads_only: false,
+            no_undo: false,
         }
+    }
+
+    /// What the command reaches: whether it only reads, and whether a
+    /// checkpoint stands behind it.
+    #[must_use]
+    pub fn reaching(mut self, reads_only: bool, no_undo: bool) -> Self {
+        self.reads_only = reads_only;
+        self.no_undo = no_undo;
+        self
     }
 
     /// The card is the only view of the change: show all of it, and take
@@ -276,9 +292,20 @@ impl PermissionModal {
                 "deletes, moves, or discards files · /undo may not reach it".into(),
                 true,
             ),
+            "bash" if self.reads_only => ("only reads · changes nothing".into(), false),
+            "bash" if self.no_undo => (
+                "runs a command that can change things · no checkpoint here: /undo can't put \
+                 files back"
+                    .into(),
+                true,
+            ),
             "bash" => (
                 "runs a command that can change things · /undo covers files in the project".into(),
                 false,
+            ),
+            "write" | "search_replace" if self.no_undo => (
+                "changes your project · no checkpoint here: /undo can't put it back".into(),
+                true,
             ),
             "write" if self.preview.as_ref().is_some_and(|d| d.created) => (
                 "creates a file in your project · /undo removes it".into(),
@@ -1205,7 +1232,7 @@ impl Panel for TrustModal {
     }
 
     fn size(&self, _view: &View) -> (u16, u16) {
-        (70, 7)
+        (70, 9)
     }
 
     fn modal(&self) -> Option<ModalKind> {
@@ -1217,7 +1244,9 @@ impl Panel for TrustModal {
         let mut lines: Vec<Line<'static>> = Vec::new();
         for row in wrap::wrap_plain(
             &format!(
-                "{} contains a .ryter/ directory with skills, commands, or memory. trusted projects can add slash commands and inject RYTER.md into the system prompt.",
+                "{} has a .ryter/ folder. Trusted, it can add skills and slash commands, put \
+                 RYTER.md into the system prompt, and set models, a budget and hooks in its \
+                 config.toml: hooks are commands Ryter runs. Your gate rules stay yours.",
                 view.cwd
             ),
             w.saturating_sub(2),
@@ -1226,7 +1255,7 @@ impl Panel for TrustModal {
         }
         lines.push(widgets::blank(theme));
         lines.push(answer_row(
-            &[("⏎", "trust: load project skills and memory", theme.success)],
+            &[("⏎", "trust: load what is in .ryter/", theme.success)],
             theme,
         ));
         lines.push(answer_row(
@@ -1259,6 +1288,33 @@ impl Panel for TrustModal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The risk row says what is at stake: a read changes nothing, and with
+    /// no checkpoint (no repository, or no git) `/undo` is not promised.
+    #[test]
+    fn the_risk_row_promises_undo_only_where_a_checkpoint_is() {
+        let card = |tool: &str, reads: bool, no_undo: bool| {
+            PermissionModal::new(tool.into(), "x".into())
+                .reaching(reads, no_undo)
+                .risk()
+        };
+        assert_eq!(card("bash", true, false).0, "only reads · changes nothing");
+        assert_eq!(card("bash", true, true).0, "only reads · changes nothing");
+        let (said, warn) = card("bash", false, true);
+        assert!(
+            said.contains("no checkpoint here") && !said.contains("covers"),
+            "{said}"
+        );
+        assert!(warn);
+        assert!(card("bash", false, false).0.contains("/undo covers files"));
+        let (said, warn) = card("search_replace", false, true);
+        assert!(said.contains("/undo can't put it back") && warn, "{said}");
+        assert!(
+            card("search_replace", false, false)
+                .0
+                .contains("/undo puts it back")
+        );
+    }
 
     /// Asked for with /audit: yes or no, with no "allow for the session",
     /// since each audit spends money.
@@ -1850,9 +1906,13 @@ mod tests {
             })
             .collect();
         assert!(
-            shown.contains("⏎ · trust: load project skills and memory"),
+            shown.contains("⏎ · trust: load what is in .ryter/"),
             "{shown}"
         );
+        // Hooks run commands: the card says so, and no sentence starts in
+        // lower case.
+        assert!(shown.contains("hooks are commands Ryter runs"), "{shown}");
+        assert!(!shown.contains(". trusted"), "{shown}");
         assert!(
             shown.contains("n · skip: user-level config only"),
             "{shown}"

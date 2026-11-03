@@ -2105,6 +2105,89 @@ pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
         .filter(|s| !s.is_empty() && s != cmd.trim())
 }
 
+/// Programs with no form that writes a file or runs another program, so
+/// the card may say a command of theirs changes nothing. The rest of
+/// [`READ_ONLY`] has such a form: `sort -o` and `--compress-program`,
+/// `rg --pre`, `fd -x`, `yq -i`, `find -exec`, `sed -i`, `file -C`,
+/// `date -s`, `hostname name`. A list of what is known to be plain, not a
+/// list of the forms that are not: a new option can't slip past it.
+const PLAIN_READERS: &[&str] = &[
+    "ls",
+    "cat",
+    "head",
+    "tail",
+    "wc",
+    "stat",
+    "readlink",
+    "realpath",
+    "basename",
+    "dirname",
+    "pwd",
+    "echo",
+    "printf",
+    "grep",
+    "egrep",
+    "fgrep",
+    "diff",
+    "cmp",
+    "du",
+    "df",
+    "uname",
+    "id",
+    "whoami",
+    "which",
+    "type",
+    "test",
+    "[",
+    "true",
+    "false",
+    "sha256sum",
+    "sha1sum",
+    "md5sum",
+    "cksum",
+    "nl",
+    "tac",
+    "cut",
+    "tr",
+];
+
+/// Every command in `cmd` only reads (`ls`, `cat`, `grep`, …), with no
+/// redirect to a file and nothing run inside it: what the question card says
+/// of a command that changes nothing. Each program is one of
+/// [`PLAIN_READERS`], written as the command's first word: a wrapper before
+/// it (`time -o f cat x`, `env`, `nice`) or an assignment is not vouched for.
+pub fn reads_only(cmd: &str) -> bool {
+    let segs = segments(cmd);
+    !segs.is_empty()
+        && segs.iter().all(|seg| {
+            let w = words(seg);
+            let Some(prog) = program(&w) else {
+                return false;
+            };
+            let first = w.first().map(|f| f.rsplit('/').next().unwrap_or(f));
+            if first != Some(prog) || !PLAIN_READERS.contains(&prog) {
+                return false;
+            }
+            let mut target = false;
+            w.iter().all(|x| {
+                if std::mem::take(&mut target) {
+                    return x == "/dev/null";
+                }
+                if x.contains("$(") || x.contains('`') || x.starts_with("<(") {
+                    return false;
+                }
+                match redirect(x, false) {
+                    Redir::Next => {
+                        target = true;
+                        true
+                    }
+                    Redir::To(t) => t == "/dev/null",
+                    Redir::No | Redir::Dup => true,
+                }
+            }) && !target
+        })
+}
+
 /// What a shell command does to the files around it, read before it runs,
 /// for the turn's record ([`ToolContext::created`], [`ToolContext::kept`],
 /// [`ToolContext::sessions`]).
@@ -8148,6 +8231,206 @@ fn forbidden_to_read(path: &Path, ctx: &ToolContext) -> bool {
 }
 
 /// The system's own folders.
+/// Programs that list or describe a path without printing what is in it.
+const LISTERS: &[&str] = &["ls", "stat", "readlink", "realpath", "test", "[", "du"];
+
+/// `path` is under one of `installed` and none of `kept`: with
+/// [`INSTALLED`] and [`KEPT`], where the system keeps its programs and
+/// libraries, listed to find which `python3` there is. `/usr/local/etc` and
+/// `/usr/local/share` are configuration and data a person may keep.
+fn place_in(path: &Path, installed: &[&str], kept: &[&str]) -> bool {
+    installed.iter().any(|s| path.starts_with(s)) && !kept.iter().any(|s| path.starts_with(s))
+}
+
+const INSTALLED: &[&str] = &[
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib32",
+    "/lib64",
+    "/libx32",
+    "/opt/homebrew",
+];
+
+/// Under [`INSTALLED`], and asked about all the same.
+const KEPT: &[&str] = &["/usr/local/etc", "/usr/local/share", "/opt/homebrew/etc"];
+
+/// A listing the build hat runs unasked: `path` names an installed place,
+/// judged by where it really leads, and so does every match of a pattern
+/// (`ls` lists the folder a link it is handed points at, and a link in
+/// `/usr/lib` can point into `/etc`). One that walks down (`ls -R`, `du`)
+/// asks when a kept folder is under where it starts, and when it follows the
+/// links it meets on the way (`-L`).
+fn installed_listing(prog: &str, words: &[String], path: &Path) -> bool {
+    listing_within(prog, words, path, INSTALLED, KEPT)
+}
+
+/// The options each lister may carry for [`listing_within`]: short letters,
+/// and long options by their whole name (with `=value` after it, or not).
+/// A short option that takes a value (`du -d 1`, `stat -c %s`) is in the
+/// list with the value its own word, which is judged as a path is.
+fn lister_options_known(prog: &str, words: &[String]) -> bool {
+    let (shorts, longs): (&str, &[&str]) = match prog {
+        "ls" => (
+            "1aAbBcCdfFgGhiklLmnNopqQrRsStuUvxX",
+            &[
+                "--all",
+                "--almost-all",
+                "--classify",
+                "--color",
+                "--dereference",
+                "--directory",
+                "--format",
+                "--full-time",
+                "--group-directories-first",
+                "--human-readable",
+                "--indicator-style",
+                "--inode",
+                "--literal",
+                "--no-group",
+                "--numeric-uid-gid",
+                "--quote-name",
+                "--recursive",
+                "--reverse",
+                "--si",
+                "--size",
+                "--sort",
+                "--time",
+                "--time-style",
+                "--width",
+            ],
+        ),
+        "du" => (
+            "0abcdhHklLmsSx",
+            &[
+                "--all",
+                "--apparent-size",
+                "--block-size",
+                "--bytes",
+                "--count-links",
+                "--dereference",
+                "--human-readable",
+                "--max-depth",
+                "--null",
+                "--one-file-system",
+                "--si",
+                "--summarize",
+                "--total",
+            ],
+        ),
+        "stat" => (
+            "cfLt",
+            &[
+                "--dereference",
+                "--file-system",
+                "--format",
+                "--printf",
+                "--terse",
+            ],
+        ),
+        "readlink" => (
+            "efmnqsvz",
+            &[
+                "--canonicalize",
+                "--canonicalize-existing",
+                "--canonicalize-missing",
+                "--no-newline",
+                "--quiet",
+                "--silent",
+                "--verbose",
+                "--zero",
+            ],
+        ),
+        "realpath" => (
+            "emLPqsz",
+            &[
+                "--canonicalize-existing",
+                "--canonicalize-missing",
+                "--quiet",
+                "--strip",
+                "--zero",
+            ],
+        ),
+        // `test`'s words are its operators, each written whole.
+        "test" | "[" => {
+            const OPS: &[&str] = &[
+                "-e", "-f", "-d", "-x", "-r", "-w", "-s", "-L", "-h", "-b", "-c", "-p", "-S", "-n",
+                "-z", "-a", "-o", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-le", "-gt", "-ge",
+            ];
+            return words
+                .iter()
+                .skip(1)
+                .filter(|w| w.starts_with('-'))
+                .all(|w| OPS.contains(&w.as_str()));
+        }
+        _ => return false,
+    };
+    for w in words.iter().skip(1) {
+        if w == "--" {
+            break;
+        }
+        if let Some(name) = w.strip_prefix("--") {
+            let name = name.split('=').next().unwrap_or(name);
+            if !longs.iter().any(|l| l[2..] == *name) {
+                return false;
+            }
+        } else if let Some(letters) = w.strip_prefix('-') {
+            if letters.is_empty() || !letters.chars().all(|c| shorts.contains(c)) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn listing_within(
+    prog: &str,
+    words: &[String],
+    path: &Path,
+    installed: &[&str],
+    kept: &[&str],
+) -> bool {
+    let short = |c: char| {
+        words
+            .iter()
+            .any(|w| w.starts_with('-') && !w.starts_with("--") && w[1..].contains(c))
+    };
+    let long = |f: &str| words.iter().any(|w| w == f);
+    // Every option one this rule knows, written out: GNU tools take any
+    // unambiguous start of a long option (`ls --recurs` is `--recursive`),
+    // and an option it does not know may walk or follow where it can't see.
+    if !lister_options_known(prog, words) {
+        return false;
+    }
+    let down = prog == "du" || (prog == "ls" && (short('R') || long("--recursive")));
+    if down && (short('L') || long("--dereference")) {
+        return false;
+    }
+    let text = path.to_string_lossy();
+    const MOST: usize = 10_000;
+    let matches: Vec<PathBuf> = if text.contains(['*', '?', '[']) {
+        match glob::glob(&text) {
+            Ok(found) => found.take(MOST + 1).flatten().collect(),
+            Err(_) => return false,
+        }
+    } else {
+        vec![path.to_path_buf()]
+    };
+    // More matches than are looked at: some went unjudged.
+    if matches.len() > MOST {
+        return false;
+    }
+    let inside = |p: &Path| place_in(p, installed, kept);
+    inside(path)
+        && matches.iter().all(|m| {
+            let real = m.canonicalize().unwrap_or_else(|_| m.clone());
+            inside(m)
+                && inside(&real)
+                && !(down && kept.iter().any(|k| Path::new(k).starts_with(&real)))
+        })
+}
+
 fn system_place(path: &Path) -> bool {
     const SYSTEM: &[&str] = &[
         "/etc",
@@ -8823,6 +9106,18 @@ fn outside_segment(
             // written.
             Some(p) if named_only && system_place(&p) && !is_copy_dest => {}
             Some(p) if !read_only && forbidden_outside(&p, ctx) => return Decision::Deny,
+            // A listing of where the system keeps its programs and
+            // libraries (`ls /usr/bin/python*`) says what is installed and
+            // holds nobody's data. `/etc` still asks. The lister is the
+            // command's first word: a wrapper's own options and `--`
+            // (`env -- ls --recurs`) would stand between the rule and the
+            // lister's.
+            Some(p)
+                if read_only
+                    && ctx.role == Role::Build
+                    && program == 0
+                    && LISTERS.contains(&prog)
+                    && installed_listing(prog, &words[..own], &p) => {}
             Some(p) if !destroys && free_place(&p, ctx, !read_only) => {}
             _ => {
                 if !read_only {
@@ -9725,6 +10020,178 @@ mod tests {
 
     fn bash(cmd: &str, role: Role, dir: &Path) -> Decision {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
+    }
+
+    #[test]
+    fn a_command_that_only_reads_is_told_from_one_that_changes() {
+        for cmd in [
+            "ls /usr/bin/python* 2>/dev/null",
+            "cat /etc/hosts",
+            "grep -n x /etc/hosts | head -3",
+            "ls ~ 2>&1",
+            "wc -l a.txt && head b.txt",
+        ] {
+            assert!(reads_only(cmd), "{cmd}");
+        }
+        for cmd in [
+            "ls > list.txt",
+            "cat a >> b",
+            "sort -o out in",
+            "find / -name x -delete",
+            "find . -exec rm {} ;",
+            "ls $(rm -rf x)",
+            "cat `id`",
+            "ls && rm x",
+            "npm test",
+            "sed -i s/a/b/ f",
+            "ls >",
+            "",
+            // Forms that edit or run another program (review 110).
+            "yq -i '.a=1' /etc/hosts",
+            "fd --exec rm {} ;",
+            "fd -x rm",
+            "rg --pre cat pat /etc/hosts",
+            "rg --pre ./preprocess.sh needle input.txt && cat /etc/hosts",
+            "sort --compress-program=./x /etc/hosts",
+            "file -C -m magic",
+            "date -s tomorrow",
+            // A wrapper before the reader writes, or runs it as it likes.
+            "/usr/bin/time -o timing.txt cat /etc/hosts",
+            "time -o t.txt cat /etc/hosts",
+            "env cat /etc/hosts",
+            "FOO=1 cat /etc/hosts",
+        ] {
+            assert!(!reads_only(cmd), "{cmd}");
+        }
+        assert!(reads_only("/usr/bin/cat /etc/hosts"));
+    }
+
+    /// Looking for which `python3` a box has (Debian 13 ships none): the
+    /// model's `ls /usr/bin/python*` stopped a live run on a question.
+    #[test]
+    fn a_listing_of_installed_programs_runs_unasked() {
+        let tmp = TempDir::new().unwrap();
+        let d = tmp.path();
+        // Names that can't be there, so no verdict hangs on where this
+        // machine's programs lead; that is the next test's, in a folder of
+        // its own.
+        for cmd in [
+            "ls /usr/bin/ryter-test-none-* 2>/dev/null",
+            "ls -la /usr/bin",
+            "ls /usr/lib/x86_64-linux-gnu",
+            "ls /lib64",
+            "stat /usr/bin/ryter-test-none",
+            "readlink -f /usr/bin/ryter-test-none",
+            "test -x /usr/local/bin/ryter-test-none && echo yes",
+            "command -v python3 2>/dev/null; ls /usr/bin/ryter-test-none* 2>/dev/null",
+        ] {
+            assert_eq!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        // Their contents, and the places a person keeps things, still ask.
+        for cmd in [
+            "cat /usr/local/etc/app.conf",
+            "ls /usr/local/etc",
+            "ls /usr/local/share/app",
+            "ls /etc",
+            "ls /opt",
+        ] {
+            assert_ne!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        // Writing there is no listing.
+        assert_ne!(bash("touch /usr/bin/x", Role::Build, d), Decision::Allow);
+        assert_ne!(
+            bash("ls /usr/bin > /usr/lib/list", Role::Build, d),
+            Decision::Allow
+        );
+        // A listing that walks down asks when a kept folder is under where
+        // it starts (`du` always walks), or when it follows links.
+        for cmd in [
+            "ls -R /usr/local",
+            "ls -laR /usr",
+            "ls --recursive /usr/local",
+            "du /usr/local",
+            "du -a /usr",
+            "du -sh /usr",
+            "ls -RL /usr/lib",
+            "du -L /usr/lib",
+        ] {
+            assert_ne!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        assert_eq!(bash("du -sh /usr/bin", Role::Build, d), Decision::Allow);
+        // A long option counts only written out: GNU takes `--recurs` for
+        // `--recursive` (review 110, round 2). One the rule doesn't know
+        // asks, whatever it would do.
+        for cmd in [
+            // A wrapper's `--` is not the lister's (review 110, round 3).
+            "env -- ls --recurs /usr/local",
+            "command -- ls --recurs /usr/local",
+            "env ls /usr/bin",
+            "LANG=C ls /usr/bin",
+            "nice -n 5 ls /usr/bin",
+            "ls /usr/local --recurs",
+            "ls --recurs /usr/local",
+            "ls --recursiv /usr/local",
+            "ls --rec /usr",
+            "du --max /usr/bin",
+            "ls --ignore=x /usr/bin",
+            "ls -Z /usr/bin",
+            "stat --printf=%s --deref /usr/bin",
+            "test -k /usr/bin",
+        ] {
+            assert_ne!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        for cmd in [
+            "ls -la --color=never /usr/bin",
+            "ls --sort=time --reverse /usr/lib",
+            "du --max-depth=1 -h /usr/bin",
+            "ls -- /usr/bin",
+        ] {
+            assert_eq!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        // The build hat's ruling: an audit behind a checkpoint, which runs
+        // what the build hat runs, still asks.
+        let mut audit = ctx_for(Role::Audit, d);
+        audit.read_only = false;
+        let ls = |c: &ToolContext| decide("bash", &json!({"command": "ls /usr/bin"}), c);
+        assert_ne!(ls(&audit), Decision::Allow);
+        assert_eq!(ls(&ctx_for(Role::Build, d)), Decision::Allow);
+    }
+
+    /// Where a listed path really leads decides: `ls` lists the folder a
+    /// link it is handed points at, and a pattern can match such a link.
+    #[cfg(unix)]
+    #[test]
+    fn a_listing_is_judged_by_where_its_links_lead() {
+        let tmp = TempDir::new().unwrap();
+        // Where the folder really is: macOS's temporary folder is under
+        // `/var`, a link to `/private/var`.
+        let root = tmp.path().canonicalize().unwrap();
+        let sys = root.join("usr");
+        let kept = sys.join("local/etc");
+        let outside = root.join("etc");
+        std::fs::create_dir_all(sys.join("bin")).unwrap();
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(sys.join("bin/python3"), "").unwrap();
+        std::os::unix::fs::symlink(&outside, sys.join("lib-ssl")).unwrap();
+        let (sys_s, kept_s) = (sys.to_string_lossy(), kept.to_string_lossy());
+        let ok = |prog: &str, flags: &[&str], path: &Path| {
+            let words: Vec<String> = std::iter::once(prog)
+                .chain(flags.iter().copied())
+                .map(String::from)
+                .collect();
+            listing_within(prog, &words, path, &[&sys_s], &[&kept_s])
+        };
+        assert!(ok("ls", &[], &sys.join("bin")));
+        assert!(ok("ls", &[], &sys.join("bin/py*")));
+        // The link leads out: by name, and as a match of a pattern.
+        assert!(!ok("ls", &[], &sys.join("lib-ssl")));
+        assert!(!ok("ls", &[], &sys.join("lib-*")));
+        // Walking down from above a kept folder asks; beside it doesn't.
+        assert!(!ok("ls", &["-R"], &sys));
+        assert!(!ok("du", &[], &sys.join("local")));
+        assert!(ok("du", &["-sh"], &sys.join("bin")));
+        assert!(!ok("ls", &[], &kept));
     }
 
     #[cfg(unix)]

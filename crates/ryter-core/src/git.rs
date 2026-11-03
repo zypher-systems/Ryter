@@ -9,6 +9,42 @@ use std::process::Command;
 
 use crate::error::{Error, Result};
 
+/// Said wherever a folder has no checkpoints because git itself is missing
+/// (a fresh container, say), not because the folder is no repository.
+pub const NOT_INSTALLED: &str = "git isn't installed here";
+
+/// Whether `dir` can have checkpoints, and if not, why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepoState {
+    /// Inside a git work tree.
+    Repo,
+    /// git runs, and this is no work tree.
+    NotRepo,
+    /// git can't be started: not on `PATH`.
+    NotInstalled,
+}
+
+impl RepoState {
+    /// Why there are no checkpoints, for the user: "not a git repository" or
+    /// [`NOT_INSTALLED`]. Empty for a repository.
+    pub fn reason(self) -> &'static str {
+        match self {
+            RepoState::Repo => "",
+            RepoState::NotRepo => "not a git repository",
+            RepoState::NotInstalled => NOT_INSTALLED,
+        }
+    }
+}
+
+/// A failure to start git, said as the missing program when it is one.
+fn spawn_error(e: std::io::Error) -> Error {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        Error::Config(format!("{NOT_INSTALLED}."))
+    } else {
+        Error::Io(format!("git: {e}"))
+    }
+}
+
 /// Run `git -C dir …`; its output as text, lossily.
 pub fn git(dir: &Path, args: &[&str]) -> Result<String> {
     git_bytes(dir, args).map(|out| String::from_utf8_lossy(&out).into_owned())
@@ -21,7 +57,7 @@ pub fn git_bytes(dir: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .args(["-C", &dir.to_string_lossy()])
         .args(args)
         .output()
-        .map_err(|e| Error::Io(format!("git: {e}")))?;
+        .map_err(spawn_error)?;
     if !out.status.success() {
         let stdout = String::from_utf8_lossy(&out.stdout);
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -41,7 +77,7 @@ fn git_with_index(dir: &Path, index: &Path, args: &[&str]) -> Result<String> {
         .args(args)
         .env("GIT_INDEX_FILE", index)
         .output()
-        .map_err(|e| Error::Io(format!("git: {e}")))?;
+        .map_err(spawn_error)?;
     if !out.status.success() {
         return Err(Error::Io(format!(
             "git {} failed: {}",
@@ -298,7 +334,7 @@ pub fn put_blob(dir: &Path, path: &str, blob: Option<&str>) -> Result<()> {
     let out = Command::new("git")
         .args(["-C", &dir.to_string_lossy(), "cat-file", "blob", blob])
         .output()
-        .map_err(|e| Error::Io(format!("git: {e}")))?;
+        .map_err(spawn_error)?;
     if !out.status.success() {
         return Err(Error::Io(format!("git cat-file blob {blob} failed")));
     }
@@ -310,9 +346,30 @@ pub fn put_blob(dir: &Path, path: &str, blob: Option<&str>) -> Result<()> {
 
 /// Whether `dir` is inside a git work tree.
 pub fn is_repo(dir: &Path) -> bool {
-    git(dir, &["rev-parse", "--is-inside-work-tree"])
-        .map(|s| s.trim() == "true")
-        .unwrap_or(false)
+    repo_state(dir) == RepoState::Repo
+}
+
+/// Whether `dir` is inside a git work tree, and when not, whether that is
+/// because git is missing: a repository cloned on the host and opened in a
+/// container without git is still a repository.
+pub fn repo_state(dir: &Path) -> RepoState {
+    repo_state_with("git", dir)
+}
+
+fn repo_state_with(program: &str, dir: &Path) -> RepoState {
+    match Command::new(program)
+        .args(["-C", &dir.to_string_lossy()])
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+    {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => RepoState::NotInstalled,
+        Ok(out)
+            if out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "true" =>
+        {
+            RepoState::Repo
+        }
+        _ => RepoState::NotRepo,
+    }
 }
 
 /// Kept out of the first commit Ryter makes in a folder with no repository:
@@ -354,6 +411,14 @@ pub struct RepoSetup {
 /// no commits gets the first commit.
 pub fn ensure_repo(dir: &Path) -> Result<Option<RepoSetup>> {
     let mut did = Vec::new();
+    // No git at all: say that, not "no repository" or "your home folder"
+    // (a missing program reads as a folder with no repository below).
+    if repo_state(dir) == RepoState::NotInstalled {
+        return Err(Error::Config(format!(
+            "{NOT_INSTALLED}, so Ryter keeps no checkpoints of this project. Install git to \
+             have them."
+        )));
+    }
     let created = !is_repo(dir);
     // Started from the home folder or the root: a repository there would
     // sweep up everything the user owns. Ask them to pick a project folder.
@@ -666,6 +731,24 @@ pub fn init_repo(dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A repository opened where git is missing (a container without it,
+    /// the checkout made on the host) is not "not a git repository".
+    #[test]
+    fn a_missing_git_is_said_as_missing_not_as_no_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = repo_state_with("ryter-test-no-such-git-program", dir.path());
+        assert_eq!(missing, RepoState::NotInstalled);
+        assert_eq!(missing.reason(), "git isn't installed here");
+        assert_eq!(RepoState::NotRepo.reason(), "not a git repository");
+        let spawn = spawn_error(std::io::Error::from(std::io::ErrorKind::NotFound));
+        assert_eq!(spawn.to_string(), "git isn't installed here.");
+        assert!(
+            spawn_error(std::io::Error::other("boom"))
+                .to_string()
+                .starts_with("io: git:")
+        );
+    }
     use tempfile::TempDir;
 
     #[test]

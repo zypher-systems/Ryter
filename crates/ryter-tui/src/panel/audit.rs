@@ -188,7 +188,8 @@ impl AuditModal {
         }
         let mut tree: Vec<(String, ratatui::style::Color)> = if !self.checkpointed {
             vec![(
-                "no checkpoint: not a git repository, so the audit ran read-only commands".into(),
+                "no checkpoint (no git repository, or no git), so the audit ran read-only commands"
+                    .into(),
                 theme.warn,
             )]
         } else if self.restored.is_empty() {
@@ -667,7 +668,7 @@ mod tests {
         let rows = text(&p, &v, WIDTH, 60);
         assert!(
             rows.iter()
-                .any(|r| r.contains("no checkpoint: not a git repository"))
+                .any(|r| r.contains("no checkpoint (no git repository, or no git)"))
         );
     }
 }

@@ -258,7 +258,7 @@ impl Audit {
         }
         s.push_str("\n## Tree\n\n");
         if !checkpointed {
-            s.push_str("No checkpoint: this folder is not a git repository, so the audit ran read-only commands only.\n");
+            s.push_str("No checkpoint (no git repository here, or no git), so the audit ran read-only commands only.\n");
         } else if restored.is_empty() {
             s.push_str("Changed nothing; the checkpoint was kept.\n");
         } else {
