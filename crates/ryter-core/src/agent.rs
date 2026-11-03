@@ -164,9 +164,10 @@ pub struct Agent {
     /// The verdict of the last audit turn that ended: filed, or read from
     /// its last words. What `/audit` reports.
     pub last_audit_verdict: Option<bool>,
-    /// The build turn's "no checkpoints here" notice was given: once a
-    /// session, not at every turn of a folder that will never have one.
-    pub told_no_checkpoints: bool,
+    /// The build turn's "no checkpoints here" notice last given: said once
+    /// a session, not at every turn of a folder that will never have one,
+    /// and again only when the reason changes.
+    pub told_no_checkpoints: Option<String>,
     /// The turn in progress, for the events made during it; `0` between
     /// turns.
     pub turn: u64,
@@ -3393,12 +3394,12 @@ impl Agent {
             Ok(None) => {}
             // Home folder or root: work without checkpoints, and say so once.
             Err(e) => {
+                let message = format!("{e} Until then, /undo is unavailable.");
                 if self.session.meta.checkpoints.is_empty()
-                    && !std::mem::replace(&mut self.told_no_checkpoints, true)
+                    && self.told_no_checkpoints.as_deref() != Some(message.as_str())
                 {
-                    self.emit(AgentEvent::Notice {
-                        message: format!("{e} Until then, /undo is unavailable."),
-                    })?;
+                    self.told_no_checkpoints = Some(message.clone());
+                    self.emit(AgentEvent::Notice { message })?;
                 }
                 return Ok(());
             }
@@ -4975,7 +4976,7 @@ mod tests {
             audit_live: None,
             leaving_audit: None,
             last_audit_verdict: None,
-            told_no_checkpoints: false,
+            told_no_checkpoints: None,
             turn: 0,
             last_input_tokens: None,
             project_map: None,

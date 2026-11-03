@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-03 — Review 110, round 1: the card vouches only for plain readers, and a listing is judged by where it reaches
+
+**What was reported.** Both reviews rejected `a349abf`. `reads_only` took every `READ_ONLY` program, so `yq -i`, `fd -x rm`, `rg --pre`, `sort --compress-program` and `time -o f cat` were labelled "only reads · changes nothing". The listing rule judged only the path it was given: `ls -R /usr/local` and `du /usr` walked into the kept `/usr/local/etc` and `/usr/local/share` unasked. It also sat in the check the build hat shares with an audit behind a checkpoint, which the ruling did not cover. Notes: `/changes` showed `io:` before the missing git, and the once-a-session notice stayed silent for a later, different reason.
+
+**Decision.** The card vouches only for `PLAIN_READERS`, programs with no form that writes or runs another program, written as the command's first word: a list of what is known plain, as round 3 of review 109 taught, not a list of the forms that are not. The listing rule is the build hat's alone, and a path is judged by where it really leads, every match of a pattern included. A link in `/usr/lib` can lead into `/etc` (Debian's `/usr/lib/ssl/certs` does), and `ls` lists the folder a link points at. A listing that walks down (`ls -R`, every `du`) asks when a kept folder is under where it starts, or when it follows links (`-L`). A pattern with more than 10,000 matches asks. The notice is said again only when its reason changes.
+
+**How it was checked.** The reviewers' commands as tests, and a link out of an installed folder in a temporary tree. The rule only narrowed since the replay of 1,439 real commands, so that result stands.
+
 ### 2026-11-02 — Four distros: a missing git is said as missing, and a listing of the system's programs runs
 
 **What was found.** The user's distroboxes (Debian 13, Arch, openSUSE Tumbleweed, Ubuntu 24.04) ran 0.44.0: the installer, `doctor`, the offline TUI, the Landlock sandbox and a live fix on `deepseek/deepseek-v4.1-flash-1017` (about $0.001 a box) all held. What did not: Tumbleweed and Ubuntu ship no git, and a repository cloned on the host and opened there read as "not a git repository" in `/undo`, `/storage`, `/changes` and the audit, because `is_repo` was false for a git that could not start. The build turn's notice was `io: git: No such file or directory (os error 2) Until then, /undo is unavailable.` The question card said "/undo covers files in the project" there, and "runs a command that can change things" of an `ls`. Debian ships no Python; the model's `ls /usr/bin/python*` asked, and a bare `test_calc.py` with no manifest gave the `test` tool nothing.

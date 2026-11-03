@@ -149,11 +149,20 @@ pub fn head_time_ms(dir: &Path) -> Option<u64> {
         .map(|s| s * 1000)
 }
 
+/// No repository to read, said plainly: a missing git is not an io error
+/// to show with an `io:` in front.
+fn no_repo(state: git::RepoState) -> Error {
+    match state {
+        git::RepoState::NotInstalled => Error::Config(format!("{}.", git::NOT_INSTALLED)),
+        _ => Error::Io(state.reason().into()),
+    }
+}
+
 /// Everything that differs between `base` and the files now.
 pub fn changes(dir: &Path, base: &str) -> Result<Changes> {
     let state = git::repo_state(dir);
     if state != git::RepoState::Repo {
-        return Err(Error::Io(state.reason().into()));
+        return Err(no_repo(state));
     }
     let now =
         git::checkpoint(dir, "review")?.ok_or_else(|| Error::Io("not a git repository".into()))?;
@@ -244,7 +253,7 @@ fn count_lines(root: &Path, path: &str, cap: u64) -> Option<u32> {
 pub fn uncommitted(dir: &Path) -> Result<Vec<FileChange>> {
     let state = git::repo_state(dir);
     if state != git::RepoState::Repo {
-        return Err(Error::Io(state.reason().into()));
+        return Err(no_repo(state));
     }
     let dir = &root(dir)?;
     let mut files = Vec::new();
