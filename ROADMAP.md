@@ -22,7 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.44.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.44.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -83,6 +83,16 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.44.1 — Four distros: a missing git said, the card's stakes, the system's programs listed (2026-11-03)
+
+Released 2026-11-03 (PR #110, four rounds. Round 1: both rejected `a349abf`: the card's "only reads" took every read-only program, `yq -i`, `fd -x`, `rg --pre`, `sort --compress-program` and a wrapper's write among them; `ls -R` and `du` walked into the kept `/usr/local/etc` and `/usr/local/share`; a checkpointed audit got the build hat's listing. Plus one found on the way: a link out of `/usr` (Debian's `/usr/lib/ssl/certs` into `/etc`). Round 2: a shortened long option (`ls --recurs`) passed; options now count only written out. Round 3: a wrapper's `--` ended the option check; the lister must be the command's first word. Round 4: both approved `0ed633b`.) Cut from driving 0.44.0 in the user's distroboxes: Debian 13, Arch, openSUSE Tumbleweed and Ubuntu 24.04.
+
+- **A missing git is said as missing.** `git::repo_state` tells a repository, none, and no git apart; `/undo`, `/storage`, `/changes`, the audit and the build turn's notice (once a session) say "git isn't installed here".
+- **The card says what is at stake.** "only reads · changes nothing" for plain readers written first; no `/undo` promise where no checkpoint can be taken.
+- **The build hat lists the installed programs unasked** (the user's ruling): `ls`, `stat`, `readlink`, `realpath`, `test`, `du` under `/usr`, `/bin`, `/sbin`, `/lib*`, judged by where each path leads, options known and whole, no wrapper. Replay of 1,439 real commands: no verdict changed.
+- **Bare `test*.py` files are a unittest suite**; rates keep four places; doctor's price check and the trust card (hooks are commands) say what they mean.
+- Open: the plan, audit and scribe hats still refuse every read outside the project. Seven intermittent `ryter-core` failures were seen once in the full check (and by both reviewers on first runs), unidentified and not reproduced in 20 runs; the check now keeps each test log. The OpenAI and SpaceXSI provider proof is still owed.
 
 ### 0.44.0 — Mixed-language projects and storage cleanup (2026-11-02)
 
