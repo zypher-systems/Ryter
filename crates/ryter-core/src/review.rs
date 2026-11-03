@@ -151,8 +151,9 @@ pub fn head_time_ms(dir: &Path) -> Option<u64> {
 
 /// Everything that differs between `base` and the files now.
 pub fn changes(dir: &Path, base: &str) -> Result<Changes> {
-    if !git::is_repo(dir) {
-        return Err(Error::Io("not a git repository".into()));
+    let state = git::repo_state(dir);
+    if state != git::RepoState::Repo {
+        return Err(Error::Io(state.reason().into()));
     }
     let now =
         git::checkpoint(dir, "review")?.ok_or_else(|| Error::Io("not a git repository".into()))?;
@@ -241,8 +242,9 @@ fn count_lines(root: &Path, path: &str, cap: u64) -> Option<u32> {
 /// anything: [`changes`] snapshots the files into the repository first,
 /// which is more than a glance at the screen's side should do.
 pub fn uncommitted(dir: &Path) -> Result<Vec<FileChange>> {
-    if !git::is_repo(dir) {
-        return Err(Error::Io("not a git repository".into()));
+    let state = git::repo_state(dir);
+    if state != git::RepoState::Repo {
+        return Err(Error::Io(state.reason().into()));
     }
     let dir = &root(dir)?;
     let mut files = Vec::new();

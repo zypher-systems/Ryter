@@ -3126,6 +3126,8 @@ fn a_question_is_named_and_may_ring() {
         scope: None,
         whole: false,
         asks: None,
+        reads_only: false,
+        no_undo: false,
         reply: p.clone(),
     };
     assert_eq!(crate::run::ask_for(&perm("bash")), "allow?");

@@ -2,6 +2,14 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-02 — Four distros: a missing git is said as missing, and a listing of the system's programs runs
+
+**What was found.** The user's distroboxes (Debian 13, Arch, openSUSE Tumbleweed, Ubuntu 24.04) ran 0.44.0: the installer, `doctor`, the offline TUI, the Landlock sandbox and a live fix on `deepseek/deepseek-v4.1-flash-1017` (about $0.001 a box) all held. What did not: Tumbleweed and Ubuntu ship no git, and a repository cloned on the host and opened there read as "not a git repository" in `/undo`, `/storage`, `/changes` and the audit, because `is_repo` was false for a git that could not start. The build turn's notice was `io: git: No such file or directory (os error 2) Until then, /undo is unavailable.` The question card said "/undo covers files in the project" there, and "runs a command that can change things" of an `ls`. Debian ships no Python; the model's `ls /usr/bin/python*` asked, and a bare `test_calc.py` with no manifest gave the `test` tool nothing.
+
+**Decision.** `git::repo_state` tells a repository, no repository and no git apart, and every place that said "not a git repository" says which. The card is told whether the command only reads (`reads_only`: every part a reader, no redirect to a file, nothing substituted, no `find`) and whether a checkpoint can stand behind it; it promises `/undo` only then. In the build hat a listing (`ls`, `stat`, `readlink`, `realpath`, `test`, `du`) under `/usr`, `/bin`, `/sbin`, `/lib*` and `/opt/homebrew` runs unasked, by the user's ruling: it says what is installed and holds nobody's data. `/usr/local/etc`, `/usr/local/share`, `/etc` and reading a file there still ask. With no manifest and no Makefile, `test*.py` files that `unittest` collects are a suite.
+
+**How it was checked.** Replay of 1,439 real commands from the user's sessions through dev and the branch: no verdict changed. The plan, audit and scribe hats still refuse the listing as any read outside the project: not this ruling.
+
 ### 2026-11-02 — Review 109, round 4: the root's script is read as the shell reads it
 
 **What was reported.** One approval and one rejection on `b46cad9`. The allowlist was applied to whitespace-split text, so `pnpm -r "--filter=a" test` started with a quote and passed as no option at all, though the shell hands pnpm the same `--filter=a`. The approval's notes: a hand-off word after `--` still counted.

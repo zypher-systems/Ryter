@@ -247,6 +247,34 @@ fn python(root: &Path, dir: &str) -> Option<Part> {
     })
 }
 
+/// Python with no manifest at all, only test files beside the code (a
+/// script and its `test_calc.py`): `python3 -m unittest` where it collects
+/// them, `pytest` where a `conftest.py` says so. Nothing when neither would
+/// find a test, as `unittest` exits 5 for that.
+fn bare_python(root: &Path) -> Option<Part> {
+    let pytest = root.join("conftest.py").is_file();
+    if !pytest && !python_tests(root, 0, true) {
+        return None;
+    }
+    Some(Part {
+        dir: String::new(),
+        manifest: "the test*.py files",
+        ecosystem: Ecosystem::Python,
+        run: RunFile {
+            test: vec![
+                if pytest {
+                    "pytest"
+                } else {
+                    "python3 -m unittest"
+                }
+                .into(),
+            ],
+            ..RunFile::default()
+        },
+        assumed_test: false,
+    })
+}
+
 /// Whether `dir` holds Python tests: for `unittest` (`packages`), a
 /// `test*.py` here or in a package folder under it; for pytest, also a
 /// `test_*.py` or `*_test.py` in any folder under it. Three folders down,
@@ -702,6 +730,9 @@ pub fn parts(root: &Path) -> Vec<Part> {
     .collect();
     if found.is_empty() {
         found.extend(make(root).filter(|p| !p.run.is_empty()));
+    }
+    if found.is_empty() {
+        found.extend(bare_python(root));
     }
     for (dir, name) in nested_manifests(root) {
         let part = match name.as_str() {
@@ -1604,6 +1635,40 @@ mod tests {
     fn a_broken_manifest_leaves_the_others_standing() {
         let root = project(&[("package.json", "{ not json"), ("go.mod", "module x\n")]);
         assert_eq!(names(root.path()), ["go.mod"]);
+    }
+
+    /// A script and its test with no manifest (a live run in four distros:
+    /// the `test` tool said "no run file yet" and the model ran unittest by
+    /// hand).
+    #[test]
+    fn python_test_files_with_no_manifest_are_a_unittest_suite() {
+        let bare = project(&[
+            ("calc.py", "x = 1\n"),
+            ("test_calc.py", "import unittest\n"),
+        ]);
+        let (run, from) = detect(bare.path()).unwrap();
+        assert_eq!(run.test, ["python3 -m unittest"]);
+        assert_eq!(from, "the test*.py files");
+        // In a package folder unittest finds them; in a plain folder it
+        // does not, and nothing is proposed.
+        let package = project(&[("app/__init__.py", ""), ("app/test_x.py", "")]);
+        assert_eq!(
+            detect(package.path()).unwrap().0.test,
+            ["python3 -m unittest"]
+        );
+        let plain = project(&[("tests/test_x.py", ""), ("x.py", "")]);
+        assert!(detect(plain.path()).is_none());
+        // `conftest.py` says pytest.
+        let pytest = project(&[("conftest.py", ""), ("tests/test_x.py", "")]);
+        assert_eq!(detect(pytest.path()).unwrap().0.test, ["pytest"]);
+        // Python files with no test among them are no suite.
+        assert!(detect(project(&[("calc.py", "x = 1\n")]).path()).is_none());
+        // A manifest or a Makefile still says how it runs.
+        let made = project(&[
+            ("Makefile", "test:\n\tpython3 -m pytest\n"),
+            ("test_calc.py", ""),
+        ]);
+        assert_ne!(detect(made.path()).unwrap().0.test, ["python3 -m unittest"]);
     }
 
     #[test]

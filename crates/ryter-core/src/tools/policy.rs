@@ -2105,6 +2105,41 @@ pub fn asking_segment(cmd: &str, ctx: &ToolContext) -> Option<String> {
         .filter(|s| !s.is_empty() && s != cmd.trim())
 }
 
+/// Every command in `cmd` only reads (`ls`, `cat`, `grep`, …), with no
+/// redirect to a file and nothing run inside it: what the question card says
+/// of a command that changes nothing. `false` whenever a part could write or
+/// run something else; `find` is left out for `-exec` and `-delete`.
+pub fn reads_only(cmd: &str) -> bool {
+    let segs = segments(cmd);
+    !segs.is_empty()
+        && segs.iter().all(|seg| {
+            let w = words(seg);
+            let Some(prog) = program(&w) else {
+                return false;
+            };
+            if prog == "find" || !READ_ONLY.contains(&prog) || writes_output_file(prog, &w) {
+                return false;
+            }
+            let mut target = false;
+            w.iter().all(|x| {
+                if std::mem::take(&mut target) {
+                    return x == "/dev/null";
+                }
+                if x.contains("$(") || x.contains('`') || x.starts_with("<(") {
+                    return false;
+                }
+                match redirect(x, false) {
+                    Redir::Next => {
+                        target = true;
+                        true
+                    }
+                    Redir::To(t) => t == "/dev/null",
+                    Redir::No | Redir::Dup => true,
+                }
+            }) && !target
+        })
+}
+
 /// What a shell command does to the files around it, read before it runs,
 /// for the turn's record ([`ToolContext::created`], [`ToolContext::kept`],
 /// [`ToolContext::sessions`]).
@@ -8148,6 +8183,28 @@ fn forbidden_to_read(path: &Path, ctx: &ToolContext) -> bool {
 }
 
 /// The system's own folders.
+/// Programs that list or describe a path without printing what is in it.
+const LISTERS: &[&str] = &["ls", "stat", "readlink", "realpath", "test", "[", "du"];
+
+/// Where the system keeps its installed programs and libraries: listing
+/// them is how a model finds which `python3` there is. `/usr/local/etc`
+/// and `/usr/local/share` are configuration and data a person may keep, so
+/// they are not in it.
+fn installed_place(path: &Path) -> bool {
+    const INSTALLED: &[&str] = &[
+        "/usr",
+        "/bin",
+        "/sbin",
+        "/lib",
+        "/lib32",
+        "/lib64",
+        "/libx32",
+        "/opt/homebrew",
+    ];
+    const KEPT: &[&str] = &["/usr/local/etc", "/usr/local/share", "/opt/homebrew/etc"];
+    INSTALLED.iter().any(|s| path.starts_with(s)) && !KEPT.iter().any(|s| path.starts_with(s))
+}
+
 fn system_place(path: &Path) -> bool {
     const SYSTEM: &[&str] = &[
         "/etc",
@@ -8823,6 +8880,10 @@ fn outside_segment(
             // written.
             Some(p) if named_only && system_place(&p) && !is_copy_dest => {}
             Some(p) if !read_only && forbidden_outside(&p, ctx) => return Decision::Deny,
+            // A listing of where the system keeps its programs and
+            // libraries (`ls /usr/bin/python*`) says what is installed and
+            // holds nobody's data. `/etc` still asks.
+            Some(p) if read_only && LISTERS.contains(&prog) && installed_place(&p) => {}
             Some(p) if !destroys && free_place(&p, ctx, !read_only) => {}
             _ => {
                 if !read_only {
@@ -9725,6 +9786,71 @@ mod tests {
 
     fn bash(cmd: &str, role: Role, dir: &Path) -> Decision {
         decide("bash", &json!({"command": cmd}), &ctx_for(role, dir))
+    }
+
+    #[test]
+    fn a_command_that_only_reads_is_told_from_one_that_changes() {
+        for cmd in [
+            "ls /usr/bin/python* 2>/dev/null",
+            "cat /etc/hosts",
+            "grep -n x /etc/hosts | head -3",
+            "ls ~ 2>&1",
+            "wc -l a.txt && head b.txt",
+        ] {
+            assert!(reads_only(cmd), "{cmd}");
+        }
+        for cmd in [
+            "ls > list.txt",
+            "cat a >> b",
+            "sort -o out in",
+            "find / -name x -delete",
+            "find . -exec rm {} ;",
+            "ls $(rm -rf x)",
+            "cat `id`",
+            "ls && rm x",
+            "npm test",
+            "sed -i s/a/b/ f",
+            "ls >",
+            "",
+        ] {
+            assert!(!reads_only(cmd), "{cmd}");
+        }
+    }
+
+    /// Looking for which `python3` a box has (Debian 13 ships none): the
+    /// model's `ls /usr/bin/python*` stopped a live run on a question.
+    #[test]
+    fn a_listing_of_installed_programs_runs_unasked() {
+        let tmp = TempDir::new().unwrap();
+        let d = tmp.path();
+        for cmd in [
+            "ls /usr/bin/python* 2>/dev/null",
+            "ls -la /usr/bin",
+            "ls /usr/lib/x86_64-linux-gnu",
+            "ls /lib64",
+            "stat /usr/bin/git",
+            "readlink -f /usr/bin/python3",
+            "test -x /usr/local/bin/node && echo yes",
+            "command -v python3 2>/dev/null; ls /usr/bin/python* 2>/dev/null",
+        ] {
+            assert_eq!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        // Their contents, and the places a person keeps things, still ask.
+        for cmd in [
+            "cat /usr/local/etc/app.conf",
+            "ls /usr/local/etc",
+            "ls /usr/local/share/app",
+            "ls /etc",
+            "ls /opt",
+        ] {
+            assert_ne!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        // Writing there is no listing.
+        assert_ne!(bash("touch /usr/bin/x", Role::Build, d), Decision::Allow);
+        assert_ne!(
+            bash("ls /usr/bin > /usr/lib/list", Role::Build, d),
+            Decision::Allow
+        );
     }
 
     #[cfg(unix)]

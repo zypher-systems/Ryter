@@ -122,6 +122,9 @@ pub struct Report {
     pub copies: Vec<Copy>,
     /// The checkpoints, oldest first. `None` outside a repository.
     pub checkpoints: Option<Vec<Checkpoint>>,
+    /// Why there are none when `checkpoints` is `None`: no repository, or
+    /// no git to read one with.
+    pub repo: crate::git::RepoState,
     /// Bytes only the checkpoints hold, as git counts them on disk. `None`
     /// when this git can't say (before 2.38) or there is no repository.
     pub checkpoint_bytes: Option<u64>,
@@ -182,7 +185,10 @@ impl Report {
             ));
         }
         match &self.checkpoints {
-            None => out.push(("checkpoints".into(), "none: not a git repository".into())),
+            None => out.push((
+                "checkpoints".into(),
+                format!("none: {}", self.repo.reason()),
+            )),
             Some(refs) => {
                 let mut line = refs.len().to_string();
                 if !refs.is_empty() {
@@ -505,6 +511,7 @@ pub fn report(home: &Path, cwd: &Path, now_ms: u64) -> Result<Report> {
         sessions: Vec::new(),
         copies: Vec::new(),
         checkpoints: None,
+        repo: crate::git::RepoState::NotRepo,
         checkpoint_bytes: None,
         all_sessions: 0,
         all_bytes: 0,
@@ -567,7 +574,8 @@ pub fn report(home: &Path, cwd: &Path, now_ms: u64) -> Result<Report> {
     }
     out.sessions
         .sort_by(|a, b| b.updated_ms.cmp(&a.updated_ms).then(a.id.cmp(&b.id)));
-    if crate::git::is_repo(&root) {
+    out.repo = crate::git::repo_state(&root);
+    if out.repo == crate::git::RepoState::Repo {
         let mut refs = list_refs(&root)?;
         let none = BTreeSet::new();
         for c in &mut refs {

@@ -66,7 +66,7 @@ pub fn strict_prompt(name: &str, args: &Value) -> bool {
             .is_some_and(policy::destructive_command)
 }
 pub(crate) use policy::own_host;
-pub use policy::{Decision, decide, removes_stack_data};
+pub use policy::{Decision, decide, reads_only, removes_stack_data};
 
 /// How the build and test hats answer their own questions: `ask` a
 /// person; `always`, a yes to everything inside the project; `yolo`, a
@@ -1002,6 +1002,13 @@ fn gated_execute_inner(name: &str, args: &Value, ctx: &ToolContext) -> Result<To
                             .then(|| args.get("command").and_then(serde_json::Value::as_str))
                             .flatten()
                             .and_then(|c| policy::asking_segment(c, ctx)),
+                        reads_only: name == "bash"
+                            && args
+                                .get("command")
+                                .and_then(serde_json::Value::as_str)
+                                .is_some_and(policy::reads_only),
+                        no_undo: crate::git::repo_state(&ctx.workspace)
+                            != crate::git::RepoState::Repo,
                     },
                     &ctx.cancel,
                 );
@@ -1061,6 +1068,7 @@ fn run_as_root(name: &str, args: &Value, ctx: &ToolContext) -> Result<ToolOutput
                 .get("command")
                 .and_then(Value::as_str)
                 .and_then(|cmd| policy::asking_segment(cmd, ctx)),
+            ..crate::user_io::ToolAsk::default()
         },
         &ctx.cancel,
     );
@@ -2297,7 +2305,7 @@ mod allow_tests {
         // A compound that asks: `a` names the asking segment's kind, so a
         // later different chain with the same kind is covered.
         assert_eq!(
-            allow_scope("bash", &json!({"command": "ls /usr/include && true"}), &c),
+            allow_scope("bash", &json!({"command": "ls /etc && true"}), &c),
             Some(("bash:ls".into(), "`ls` commands".into()))
         );
         assert_eq!(
@@ -2337,9 +2345,11 @@ mod allow_tests {
         // and we only care which cards appeared (not that every host file
         // is present — `/etc/os-release` is Linux-only).
         let run = |cmd: &str| gated_execute("bash", &json!({"command": cmd}), &c).unwrap();
-        assert!(!run("ls /usr && true").is_error);
-        assert!(!run("ls /usr").is_error);
-        assert!(!run("ls /usr && pwd").is_error);
+        // (`ls /usr` no longer asks: a listing of the installed programs
+        // runs; `/etc` still asks.)
+        assert!(!run("ls /etc && true").is_error);
+        assert!(!run("ls /etc").is_error);
+        assert!(!run("ls /etc && pwd").is_error);
         assert!(!run("cat /etc/hosts").is_error);
         drop(c);
         let asked = answers.join().unwrap();
@@ -2347,7 +2357,7 @@ mod allow_tests {
         // `ls` once for the session; `cat` is another kind and asks once.
         assert_eq!(
             summaries,
-            vec!["ls /usr && true", "cat /etc/hosts"],
+            vec!["ls /etc && true", "cat /etc/hosts"],
             "{asked:?}"
         );
         assert_eq!(asked[0].1.as_deref(), Some("`ls` commands"));

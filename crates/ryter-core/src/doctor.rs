@@ -219,7 +219,12 @@ fn spend_checks(checks: &mut Vec<Check>, cfg: &Config, home: &Path) {
         Some(v) if v > 0.0 => checks.push(Check {
             name: "spend catalog".into(),
             status: CheckStatus::Ok,
-            detail: format!("grok-4.6 {}", format_usd(Some(v))),
+            // A check of the price table, not money spent: say what it
+            // priced, or it reads as a charge in a fresh home.
+            detail: format!(
+                "prices a call: 1k tokens in + 1k out on grok-4.6 is {}",
+                format_usd(Some(v))
+            ),
         }),
         Some(_) => checks.push(Check {
             name: "spend catalog".into(),

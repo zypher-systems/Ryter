@@ -73,6 +73,11 @@ pub enum UserRequest {
         /// For a script of several commands: the one that asked, which the
         /// card names first.
         asks: Option<String>,
+        /// The command only reads: the card says it changes nothing.
+        reads_only: bool,
+        /// No checkpoint can be taken here: the card does not promise
+        /// `/undo`.
+        no_undo: bool,
         /// Reply channel.
         reply: mpsc::Sender<Permission>,
     },
@@ -138,6 +143,11 @@ pub struct ToolAsk {
     /// For a script of several commands: the one that asked, which the
     /// card names first. `None`: the summary's first line is the name.
     pub asks: Option<String>,
+    /// The command only reads: the card says it changes nothing.
+    pub reads_only: bool,
+    /// No checkpoint can be taken here (no repository, or no git): the
+    /// card does not promise `/undo`.
+    pub no_undo: bool,
 }
 
 /// Handle held by [`crate::tools::ToolContext`].
@@ -271,6 +281,7 @@ impl UserIo {
                 scope: None,
                 whole: false,
                 asks: None,
+                ..ToolAsk::default()
             },
             cancel,
         )
@@ -299,6 +310,8 @@ impl UserIo {
             scope: ask.scope,
             whole: ask.whole,
             asks: ask.asks,
+            reads_only: ask.reads_only,
+            no_undo: ask.no_undo,
             reply: reply_tx,
         };
         let outcome = if self.send(req).is_err() {

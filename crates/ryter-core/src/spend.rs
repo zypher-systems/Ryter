@@ -307,11 +307,14 @@ pub fn format_rates_short(input: f64, output: f64) -> String {
     format!("${}/${}", trim_rate(input), trim_rate(output))
 }
 
+/// A rate per million as people write it: `2`, `0.5`, `0.035`. Four
+/// places, so a cheap model's `0.035` is not shown as `0.04`, and a list's
+/// `0.8999999999999999` is `0.9`.
 fn trim_rate(v: f64) -> String {
     if (v - v.round()).abs() < 1e-9 {
         format!("{}", v.round() as i64)
     } else {
-        let s = format!("{v:.2}");
+        let s = format!("{v:.4}");
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     }
 }
@@ -642,6 +645,12 @@ mod tests {
         assert_eq!(format_rates(None), "$?.??/M input / $?.??/M output");
         assert_eq!(format_rates_short(2.0, 6.0), "$2/$6");
         assert_eq!(format_rates_short(3.0, 15.0), "$3/$15");
+        // A cheap model's rate is kept, and a list's float noise is not.
+        assert_eq!(format_rates_short(0.035, 0.5), "$0.035/$0.5");
+        assert_eq!(
+            format_rates_short(0.21559999999999999, 0.8999999999999999),
+            "$0.2156/$0.9"
+        );
     }
 
     #[test]
