@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-03 — Review 110, round 3: the lister is the command's first word
+
+**What was reported.** One approval and one rejection on `3e7d1cd`. The option check stopped at the first `--` of the whole segment, so a wrapper's own (`env -- ls --recurs /usr/local`, `command -- ls --recurs …`) ended it before the lister's options were read, and the listing walked the kept folders unasked.
+
+**Decision.** The listing rule applies only when the lister is the command's first word, as the card's "only reads" already requires: no wrapper, no assignment before it. Checking from the lister's own word on was the review's suggestion; a wrapper has options of its own (`nice -n`, `timeout -s`, `env -u`) that would each need reading, for a form no session uses. `env ls /usr/bin` and `LANG=C ls /usr/bin` ask.
+
 ### 2026-11-03 — Review 110, round 2: a listing's options count only written out
 
 **What was reported.** One approval on `72d3113`. One rejection on `a0cddbe`, the commit before it: GNU `ls` takes any unambiguous start of a long option, so `ls --recurs /usr/local` and `ls --recursiv /usr/local` walked into the kept folders unasked, where `ls -R` asked. Its second finding, the macOS failure of the link test, was what `72d3113` fixed.

@@ -9108,10 +9108,14 @@ fn outside_segment(
             Some(p) if !read_only && forbidden_outside(&p, ctx) => return Decision::Deny,
             // A listing of where the system keeps its programs and
             // libraries (`ls /usr/bin/python*`) says what is installed and
-            // holds nobody's data. `/etc` still asks.
+            // holds nobody's data. `/etc` still asks. The lister is the
+            // command's first word: a wrapper's own options and `--`
+            // (`env -- ls --recurs`) would stand between the rule and the
+            // lister's.
             Some(p)
                 if read_only
                     && ctx.role == Role::Build
+                    && program == 0
                     && LISTERS.contains(&prog)
                     && installed_listing(prog, &words[..own], &p) => {}
             Some(p) if !destroys && free_place(&p, ctx, !read_only) => {}
@@ -10118,6 +10122,13 @@ mod tests {
         // `--recursive` (review 110, round 2). One the rule doesn't know
         // asks, whatever it would do.
         for cmd in [
+            // A wrapper's `--` is not the lister's (review 110, round 3).
+            "env -- ls --recurs /usr/local",
+            "command -- ls --recurs /usr/local",
+            "env ls /usr/bin",
+            "LANG=C ls /usr/bin",
+            "nice -n 5 ls /usr/bin",
+            "ls /usr/local --recurs",
             "ls --recurs /usr/local",
             "ls --recursiv /usr/local",
             "ls --rec /usr",
