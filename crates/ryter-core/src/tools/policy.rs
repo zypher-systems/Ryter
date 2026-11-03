@@ -8266,6 +8266,124 @@ fn installed_listing(prog: &str, words: &[String], path: &Path) -> bool {
     listing_within(prog, words, path, INSTALLED, KEPT)
 }
 
+/// The options each lister may carry for [`listing_within`]: short letters,
+/// and long options by their whole name (with `=value` after it, or not).
+/// A short option that takes a value (`du -d 1`, `stat -c %s`) is in the
+/// list with the value its own word, which is judged as a path is.
+fn lister_options_known(prog: &str, words: &[String]) -> bool {
+    let (shorts, longs): (&str, &[&str]) = match prog {
+        "ls" => (
+            "1aAbBcCdfFgGhiklLmnNopqQrRsStuUvxX",
+            &[
+                "--all",
+                "--almost-all",
+                "--classify",
+                "--color",
+                "--dereference",
+                "--directory",
+                "--format",
+                "--full-time",
+                "--group-directories-first",
+                "--human-readable",
+                "--indicator-style",
+                "--inode",
+                "--literal",
+                "--no-group",
+                "--numeric-uid-gid",
+                "--quote-name",
+                "--recursive",
+                "--reverse",
+                "--si",
+                "--size",
+                "--sort",
+                "--time",
+                "--time-style",
+                "--width",
+            ],
+        ),
+        "du" => (
+            "0abcdhHklLmsSx",
+            &[
+                "--all",
+                "--apparent-size",
+                "--block-size",
+                "--bytes",
+                "--count-links",
+                "--dereference",
+                "--human-readable",
+                "--max-depth",
+                "--null",
+                "--one-file-system",
+                "--si",
+                "--summarize",
+                "--total",
+            ],
+        ),
+        "stat" => (
+            "cfLt",
+            &[
+                "--dereference",
+                "--file-system",
+                "--format",
+                "--printf",
+                "--terse",
+            ],
+        ),
+        "readlink" => (
+            "efmnqsvz",
+            &[
+                "--canonicalize",
+                "--canonicalize-existing",
+                "--canonicalize-missing",
+                "--no-newline",
+                "--quiet",
+                "--silent",
+                "--verbose",
+                "--zero",
+            ],
+        ),
+        "realpath" => (
+            "emLPqsz",
+            &[
+                "--canonicalize-existing",
+                "--canonicalize-missing",
+                "--quiet",
+                "--strip",
+                "--zero",
+            ],
+        ),
+        // `test`'s words are its operators, each written whole.
+        "test" | "[" => {
+            const OPS: &[&str] = &[
+                "-e", "-f", "-d", "-x", "-r", "-w", "-s", "-L", "-h", "-b", "-c", "-p", "-S", "-n",
+                "-z", "-a", "-o", "-nt", "-ot", "-ef", "-eq", "-ne", "-lt", "-le", "-gt", "-ge",
+            ];
+            return words
+                .iter()
+                .skip(1)
+                .filter(|w| w.starts_with('-'))
+                .all(|w| OPS.contains(&w.as_str()));
+        }
+        _ => return false,
+    };
+    for w in words.iter().skip(1) {
+        if w == "--" {
+            break;
+        }
+        if let Some(name) = w.strip_prefix("--") {
+            let name = name.split('=').next().unwrap_or(name);
+            if !longs.iter().any(|l| l[2..] == *name) {
+                return false;
+            }
+        } else if let Some(letters) = w.strip_prefix('-') {
+            if letters.is_empty() || !letters.chars().all(|c| shorts.contains(c)) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 fn listing_within(
     prog: &str,
     words: &[String],
@@ -8279,6 +8397,12 @@ fn listing_within(
             .any(|w| w.starts_with('-') && !w.starts_with("--") && w[1..].contains(c))
     };
     let long = |f: &str| words.iter().any(|w| w == f);
+    // Every option one this rule knows, written out: GNU tools take any
+    // unambiguous start of a long option (`ls --recurs` is `--recursive`),
+    // and an option it does not know may walk or follow where it can't see.
+    if !lister_options_known(prog, words) {
+        return false;
+    }
     let down = prog == "du" || (prog == "ls" && (short('R') || long("--recursive")));
     if down && (short('L') || long("--dereference")) {
         return false;
@@ -9990,6 +10114,29 @@ mod tests {
             assert_ne!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
         }
         assert_eq!(bash("du -sh /usr/bin", Role::Build, d), Decision::Allow);
+        // A long option counts only written out: GNU takes `--recurs` for
+        // `--recursive` (review 110, round 2). One the rule doesn't know
+        // asks, whatever it would do.
+        for cmd in [
+            "ls --recurs /usr/local",
+            "ls --recursiv /usr/local",
+            "ls --rec /usr",
+            "du --max /usr/bin",
+            "ls --ignore=x /usr/bin",
+            "ls -Z /usr/bin",
+            "stat --printf=%s --deref /usr/bin",
+            "test -k /usr/bin",
+        ] {
+            assert_ne!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
+        for cmd in [
+            "ls -la --color=never /usr/bin",
+            "ls --sort=time --reverse /usr/lib",
+            "du --max-depth=1 -h /usr/bin",
+            "ls -- /usr/bin",
+        ] {
+            assert_eq!(bash(cmd, Role::Build, d), Decision::Allow, "{cmd}");
+        }
         // The build hat's ruling: an audit behind a checkpoint, which runs
         // what the build hat runs, still asks.
         let mut audit = ctx_for(Role::Audit, d);

@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-03 — Review 110, round 2: a listing's options count only written out
+
+**What was reported.** One approval on `72d3113`. One rejection on `a0cddbe`, the commit before it: GNU `ls` takes any unambiguous start of a long option, so `ls --recurs /usr/local` and `ls --recursiv /usr/local` walked into the kept folders unasked, where `ls -R` asked. Its second finding, the macOS failure of the link test, was what `72d3113` fixed.
+
+**Decision.** The listing rule applies only when every option is one it knows for that program: short letters from its list, long options by their whole name. Anything else asks, an abbreviation or an option it has never heard of, whatever it would do, so a spelling it doesn't know can't walk or follow where it can't see. `test` and `[` take their operators written whole. It is the same lesson as round 1 and review 109's round 3, held to the options now as well as the programs.
+
 ### 2026-11-03 — Review 110, round 1: the card vouches only for plain readers, and a listing is judged by where it reaches
 
 **What was reported.** Both reviews rejected `a349abf`. `reads_only` took every `READ_ONLY` program, so `yq -i`, `fd -x rm`, `rg --pre`, `sort --compress-program` and `time -o f cat` were labelled "only reads · changes nothing". The listing rule judged only the path it was given: `ls -R /usr/local` and `du /usr` walked into the kept `/usr/local/etc` and `/usr/local/share` unasked. It also sat in the check the build hat shares with an audit behind a checkpoint, which the ruling did not cover. Notes: `/changes` showed `io:` before the missing git, and the once-a-session notice stayed silent for a later, different reason.
