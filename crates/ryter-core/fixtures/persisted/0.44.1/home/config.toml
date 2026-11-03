@@ -1,0 +1,186 @@
+# Copy to ~/.ryter/config.toml (chmod 600 if you put api_key here).
+
+# What this file was written as. Leave it; a newer Ryter keeps reading it.
+schema = 1
+
+# Used when no connection was used before; a connection that has a key is
+# preferred over one without, so one exported key is enough to start.
+default_connection = "spacexsi"
+
+[connections.spacexsi]
+kind = "spacexsi"
+base_url = "https://api.x.ai/v1"
+api_backend = "responses"
+env_key = "XAI_API_KEY"
+default_model = "grok-4.6"
+
+[connections.openrouter]
+kind = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+api_backend = "chat_completions"
+env_key = "OPENROUTER_API_KEY"
+default_model = "anthropic/claude-sonnet-4.6"
+http_referer = "https://github.com/zypher-systems/ryter"
+x_title = "Ryter"
+# Which host serves a model: OpenRouter's `provider` object, sent with every
+# request. Unset, OpenRouter chooses, and its choice is not the cheapest; the
+# host that served each call is shown in /spend and `ryter spend`. Set in
+# /provider (r on the OpenRouter row), saved to ~/.ryter/routing.toml, which
+# lays over a table written here:
+# [connections.openrouter.routing]
+# sort = "price"                           # or "throughput" (fastest), "latency"
+# quantizations = ["fp8", "bf16", "fp16"]  # not a host serving a lossier quant
+# max_price = { prompt = 0.5, completion = 2 }  # $/million; fails rather than run dearer
+# preferred_min_throughput = 80            # tokens/s, a preference; or { p50 = 80, p90 = 40 }
+# preferred_max_latency = 2                # seconds to the first token, likewise
+# order = ["baseten", "fireworks"]         # hosts to try first, by OpenRouter's slug
+# allow_fallbacks = false                  # and no other when those fail
+# only = ["baseten/fp8/us"]                # the only hosts allowed; a slug names its region
+# ignore = ["wafer"]                       # hosts never used
+# zdr = true                               # zero-data-retention endpoints only
+# data_collection = "deny"                 # no host that keeps or trains on prompts
+# require_parameters = true                # only hosts taking every parameter sent
+
+[connections.anthropic]
+kind = "anthropic"
+base_url = "https://api.anthropic.com/v1"
+api_backend = "messages"
+env_key = "ANTHROPIC_API_KEY"
+default_model = "claude-opus-5-5"
+
+[connections.openai]
+kind = "openai"
+base_url = "https://api.openai.com/v1"
+api_backend = "responses"
+env_key = "OPENAI_API_KEY"
+default_model = "gpt-6.1-sol"
+
+# The model every hat uses. (`[orchestrator]` still loads under this name.)
+[model]
+connection = "spacexsi"
+model = "grok-4.6"
+
+# A hat can have a model of its own: plan, build, audit, scribe. Set them in the
+# TUI (/models), or uncomment (`[specialists.*]` and `[hats.review]` still load;
+# `review` is audit). The scribe writes documentation only: a small, cheap model
+# does. Per-hat choices from /models are kept in ~/.ryter/hats.toml.
+# [hats.audit]
+# connection = "openrouter"
+# model = "anthropic/claude-sonnet-4.6"
+# [hats.scribe]
+# connection = "openrouter"
+# model = "anthropic/claude-haiku-4.5"
+
+[spend]
+enabled = true
+currency = "USD"
+# Off (0) by default: set one with /budget.
+session_budget_usd = 0
+warn_usd = 1.00
+# The most one turn in the audit hat may spend. Off (0) by default: set it in /settings.
+audit_usd = 0
+# Pull the public price catalog (models.dev) once a day, so a model the shipped
+# tables don't know is still priced, cache reads and writes included. It lands
+# in ~/.ryter/prices.json and prices only what the shipped tables don't know;
+# false means no pull, the file is left unread, and the tables price what they know.
+catalog = true
+
+# How far one message may go: model rounds (a reply with its tool calls)
+# before Ryter stops the turn and asks for "continue". The spend budget is
+# the real guard; 0 lifts this cap. Also `rounds a turn` in /settings and
+# `--rounds N` for one run.
+# [limits]
+# rounds = 150
+
+# The scout: the plan and audit hats send it one question at a time, and it
+# reads (read_file, list_dir, grep, glob) under the asking hat's gate and
+# answers with paths and lines; its reading stays out of the conversation.
+# It runs on the asking hat's model unless one is named here; a cheap one
+# does. The caps are per question; the session budget still applies.
+# [scout]
+# connection = "openrouter"
+# model = "deepseek/deepseek-v4.1-flash"
+# rounds = 12
+# max_usd = 0.25
+
+# TUI presentation. Every key is optional; defaults shown. Unknown keys warn once at
+# startup instead of failing. `/theme` persists its pick to ~/.ryter/settings.toml [ui].
+[ui]
+username = ""              # speaker name for your messages; "" → git user.name → $USER → "you"
+theme = "dark"             # dark | light | default-16 | <name> from ~/.ryter/themes/<name>.toml
+start_hat = "plan"         # the hat a new session opens in: plan | build | audit | last (the hat this project's last session ended in)
+bell = false               # ring the terminal bell when a question opens (a permission, a plan, ask_user)
+nerd_font = false          # icons for hats, files, git, and status. Set true when the terminal uses a Nerd Font. RYTER_NERD_FONT=1 does the same when this key is absent
+caps = "auto"              # round ends on the hat chip: "round", "square", or "auto" (round in kitty, WezTerm, Ghostty, iTerm2 and Windows Terminal, which draw the glyphs themselves, and with nerd_font)
+reasoning = "collapsed"    # collapsed | expanded | off — startup state of the thinking strip
+mouse = true               # false disables mouse capture (use the terminal's own selection)
+panel = true               # the instruments beside the conversation at startup; ^b or F2 toggles them
+colors = "auto"            # auto | truecolor | 256 | 16 ; NO_COLOR always wins
+timestamps = true          # HH:MM beside each question
+line_numbers = true        # gutter in code blocks
+receipts = true            # /commit adds a `Ryter:` trailer: model, cost, tests
+open_pages = true          # open a page the model shows (show_page) in your browser; off, you get the link only
+
+# What the build hat asks about, as your own rules. Shipped, the work
+# runs (edits, toolchains, scripts, containers, git commit) and a question is
+# kept for deleting, discarding work in git, publishing, and writing outside the
+# project, scratch space and your home folder. A rule moves any of those, either
+# way; none opens what the gate refuses (secrets, sudo, a shell handed a string).
+# [permissions]
+# edit = "allow"                 # or "ask" for every edit of the project's files
+# [permissions.bash]             # patterns over one command as it runs; * and ?
+# "rm -rf target" = "allow"      # the most specific pattern wins, the stricter at a tie
+# "git push*" = "allow"
+# "docker compose down -v" = "allow"
+# "cargo publish*" = "deny"
+
+[mcp]
+inbound = true
+allow_dangerous = false
+# socket = "~/.ryter/ryter.sock"   # TUI attach + `ryter serve --socket`
+# bind = "127.0.0.1:8765"          # TCP inbound; token from /mcp or --token
+
+# [mcp_servers.github]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# enabled = true
+
+# Optional per-model USD / million tokens (wins over every catalog and the
+# shipped tables). `cached_per_million` prices a cache read and
+# `cache_write_per_million` a cache write; either left out bills as input.
+# [pricing."grok-4.6"]
+# input_per_million = 2.00
+# cached_per_million = 0.50
+# output_per_million = 6.00
+
+# Lifecycle hooks. Command gets JSON on stdin; exit 2 (or HTTP 403) denies.
+# [[hooks]]
+# event = "PreToolUse"          # PreToolUse | PostToolUse | SessionStart | Handoff
+# command = "/usr/local/bin/ryter-pre-tool"
+# matcher = "bash"              # optional glob on the tool name
+# # url = "http://127.0.0.1:9/hook"
+
+# Landlock. Off by default. `workspace` or `read-only` fail closed if the kernel cannot enforce.
+# [sandbox]
+# profile = "off"               # off | workspace | read-only
+
+# Updating Ryter itself. At launch (at most once a day): install a newer signed
+# release in the background, only say it's out, or don't check. `ryter update`
+# works either way.
+# [update]
+# mode = "install"              # install | notify | off
+
+# Public web tools (SSRF-blocked: no localhost / private IPs). On by default.
+# The plan and audit hats use web_fetch and web_search; build and scribe do not.
+# A search still needs a provider, chosen in /provider or set as [search] in this file.
+# [features]
+# web = false                   # set false to turn the web tools off
+
+# Skills: ~/.ryter/skills/<name>/SKILL.md (user-invocable → /name)
+# User slash: ~/.ryter/commands/<name>.md  ($ARGUMENTS)
+# Themes: ~/.ryter/themes/<name>.toml ; /theme default-16 | dark | <name>
+
+# Set the actual context window when a catalog omits it or a local server uses
+# a smaller limit. Keys are exact model IDs; positive token counts only.
+# [context_windows]
+# "your-model-id" = 32768
