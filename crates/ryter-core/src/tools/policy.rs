@@ -10005,9 +10005,12 @@ mod tests {
     #[test]
     fn a_listing_is_judged_by_where_its_links_lead() {
         let tmp = TempDir::new().unwrap();
-        let sys = tmp.path().join("usr");
+        // Where the folder really is: macOS's temporary folder is under
+        // `/var`, a link to `/private/var`.
+        let root = tmp.path().canonicalize().unwrap();
+        let sys = root.join("usr");
         let kept = sys.join("local/etc");
-        let outside = tmp.path().join("etc");
+        let outside = root.join("etc");
         std::fs::create_dir_all(sys.join("bin")).unwrap();
         std::fs::create_dir_all(&kept).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
