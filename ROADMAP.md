@@ -22,7 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.44.0. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.44.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -36,6 +36,8 @@ The last release is 0.44.0. Notes for the next one collect in `docs/releases/` a
 8. **Docs reconciled (G20).** Three verified drifts fixed 2026-10-29 (the guide's dependency paragraph, the Opus bench page's task count, two stale Next items). The guide read against the release, screen by screen, comes with the hand passes.
 9. **Hand passes (G06, G18; items 3, 6, 7).** macOS by a person with a Mac, from a one-page script: install → key → change → audit → undo → resume at three widths, the sudo prompt, drag-and-paste, the light theme. WSL2 by the user in a Windows 11 VM on this machine (nested KVM), Windows Terminal, the sandbox's own diagnosis. Still untried by a person from earlier: mouse selection (0.24.0) on Linux too; `sudo` on a Mac (0.23.0); the light theme anywhere.
 10. **The last real run** by the user on the candidate, both OSes, every ask written down. Then 1.0 is the user's decision, never proposed.
+
+**In dev, unreleased (item 7).** Compaction holds its size, 2026-11-07. The extract carried the last extract whole, so it grew with every pass until a pass could no longer get under the 85% line (pass 50 of a 200k-window session left 170k tokens) and the request was refused; older `write` arguments went out whole on every round. The extract is now held to a tenth of the window and folds the last one in, notes go before the user's words, older call arguments are shortened, and only the user's messages count as turns kept. Found by the state-of-the-harness review the same day (loop, tools, context, permissions, memory, subagents, hooks/telemetry).
 
 Closed before this list: item 1 (2026-10-14, fiscus and tunes); item 3's Linux half (2026-10-14); a real `sudo` on Linux (2026-10-07).
 
@@ -52,7 +54,7 @@ What gates 1.0 is the numbered list under Now. This section holds what is open b
 - Root: programs that run a text of their own are refused by name (`runs_a_text`), and a name on no list gets through (`pythonw`, a database client's shell escape). The guide says so. No allowlist per distribution before 1.0: every root command is already behind a card and the user's password. The listing programs' ancestor hole was closed 2026-10-30 (step 6).
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule.
 - The budget is a request-boundary stop: the last call can pass it by its own cost. Said on `/budget` and in the guide; no strict mode.
-- Compaction keeps the user's words and the assistant's notes verbatim, so a long prose-only session reaches a floor and is told to start a new session (G13). Documented, not changed: an invented summary could drop a constraint.
+- Compaction writes no summary: the extract is what was said, held to a tenth of the window, the assistant's and Ryter's notes cut and dropped before the user's words (G13; the floor it used to reach is gone, 2026-11-07). Kept deterministic: an invented summary could drop a constraint.
 
 **Also open, not gating 1.0** (the report's P2s among them)
 - OpenRouter's `reasoning_details` go back within a tool loop, on dev 2026-10-30, unreleased; live on `anthropic/claude-sonnet-4.6` and `deepseek/deepseek-v4.1-flash`. Told to say nothing of a sum it had worked out, the Claude reply stopped repeating it (54 output tokens to 13). One comparison on one small prompt: a real task is still to come. Whether the model thinks on the round after a tool result is not shown either way: it did not in either capture.
@@ -83,6 +85,16 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.44.1 — Four distros: a missing git said, the card's stakes, the system's programs listed (2026-11-03)
+
+Released 2026-11-03 (PR #110, four rounds. Round 1: both rejected `a349abf`: the card's "only reads" took every read-only program, `yq -i`, `fd -x`, `rg --pre`, `sort --compress-program` and a wrapper's write among them; `ls -R` and `du` walked into the kept `/usr/local/etc` and `/usr/local/share`; a checkpointed audit got the build hat's listing. Plus one found on the way: a link out of `/usr` (Debian's `/usr/lib/ssl/certs` into `/etc`). Round 2: a shortened long option (`ls --recurs`) passed; options now count only written out. Round 3: a wrapper's `--` ended the option check; the lister must be the command's first word. Round 4: both approved `0ed633b`.) Cut from driving 0.44.0 in the user's distroboxes: Debian 13, Arch, openSUSE Tumbleweed and Ubuntu 24.04.
+
+- **A missing git is said as missing.** `git::repo_state` tells a repository, none, and no git apart; `/undo`, `/storage`, `/changes`, the audit and the build turn's notice (once a session) say "git isn't installed here".
+- **The card says what is at stake.** "only reads · changes nothing" for plain readers written first; no `/undo` promise where no checkpoint can be taken.
+- **The build hat lists the installed programs unasked** (the user's ruling): `ls`, `stat`, `readlink`, `realpath`, `test`, `du` under `/usr`, `/bin`, `/sbin`, `/lib*`, judged by where each path leads, options known and whole, no wrapper. Replay of 1,439 real commands: no verdict changed.
+- **Bare `test*.py` files are a unittest suite**; rates keep four places; doctor's price check and the trust card (hooks are commands) say what they mean.
+- Open: the plan, audit and scribe hats still refuse every read outside the project. Seven intermittent `ryter-core` failures were seen once in the full check (and by both reviewers on first runs), unidentified and not reproduced in 20 runs; the check now keeps each test log. The OpenAI and SpaceXSI provider proof is still owed.
 
 ### 0.44.0 — Mixed-language projects and storage cleanup (2026-11-02)
 

@@ -4068,6 +4068,7 @@ impl Agent {
             &self.session.transcript,
             &note,
             crate::compact::KEEP_USER_TURNS,
+            crate::compact::extract_budget(before.window),
         );
         let changed = crate::compact::estimate_tokens(&sys, &next)
             < crate::compact::estimate_tokens(&sys, &self.session.transcript);
