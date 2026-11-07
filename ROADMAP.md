@@ -54,7 +54,7 @@ What gates 1.0 is the numbered list under Now. This section holds what is open b
 - Root: programs that run a text of their own are refused by name (`runs_a_text`), and a name on no list gets through (`pythonw`, a database client's shell escape). The guide says so. No allowlist per distribution before 1.0: every root command is already behind a card and the user's password. The listing programs' ancestor hole was closed 2026-10-30 (step 6).
 - Writing a key-named file to scratch space (`touch /tmp/tls_test.key`, to check a `.gitignore`) is refused as naming a secret. Left as the secret rule.
 - The budget is a request-boundary stop: the last call can pass it by its own cost. Said on `/budget` and in the guide; no strict mode.
-- Compaction keeps the user's words and the assistant's notes verbatim, so a long prose-only session reaches a floor and is told to start a new session (G13). Documented, not changed: an invented summary could drop a constraint.
+- Compaction writes no summary: the extract is what was said, held to a tenth of the window, the assistant's and Ryter's notes cut and dropped before the user's words (G13; the floor it used to reach is gone, 2026-11-07). Kept deterministic: an invented summary could drop a constraint.
 
 **Also open, not gating 1.0** (the report's P2s among them)
 - OpenRouter's `reasoning_details` go back within a tool loop, on dev 2026-10-30, unreleased; live on `anthropic/claude-sonnet-4.6` and `deepseek/deepseek-v4.1-flash`. Told to say nothing of a sum it had worked out, the Claude reply stopped repeating it (54 output tokens to 13). One comparison on one small prompt: a real task is still to come. Whether the model thinks on the round after a tool result is not shown either way: it did not in either capture.

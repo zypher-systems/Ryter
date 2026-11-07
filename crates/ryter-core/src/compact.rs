@@ -263,20 +263,33 @@ pub fn should_compact(rep: &ContextReport) -> bool {
 
 /// The first line of every extract.
 const EXTRACT_HEAD: &str = "[compacted earlier context]";
-/// Where an extract's messages begin; they run to its end.
-const HISTORY_HEAD: &str = "Earlier messages, oldest first:";
-/// The same line in extracts written before extracts were held to a size.
-const OLD_HISTORY_HEAD: &str = "Earlier user messages and assistant notes (verbatim):";
+/// Where an extract's messages begin; they run to its end. Each line of a
+/// message is indented, so a label is only ever one Ryter wrote.
+const HISTORY_HEAD: &str =
+    "Earlier messages, oldest first (each line of a message is indented two spaces):";
+/// A message's lines in an extract start with this.
+const INDENT: &str = "  ";
+/// Extracts written before messages were indented: 0.44.1's, and dev's
+/// for a day before it shipped. Read with the labels as they stand.
+const OLD_HISTORY_HEADS: [&str; 2] = [
+    "Earlier user messages and assistant notes (verbatim):",
+    "Earlier messages, oldest first:",
+];
+/// 0.44.1 wrote the plan's note after the messages, on this line.
+const OLD_PLAN_NOTE: &str = "The plan the user approved is in `";
 /// What Ryter itself says to the model starts so; it is not a user turn.
 const RYTER_MARK: &str = "[Ryter]";
+/// Between the two ends of a cut message.
+const CUT_MARK: &str = " […] ";
 /// A note from the model or from Ryter is cut to this when the extract is
 /// over its size.
 const NOTE_BYTES: usize = 600;
 /// A message of the user's longer than this is cut when the extract is
 /// still over its size with every note dropped.
 const LONG_USER_BYTES: usize = 4_000;
-/// Files named in an extract before "and N more".
-const NAMES_MAX: usize = 100;
+/// What the files touched may take of an extract's size: the rest is said
+/// as "and others".
+const FILES_SHARE: usize = 4;
 /// An older tool output or call argument longer than this is shortened...
 const SHORTEN_OVER: usize = 2_048;
 /// ...to this much of each end.
@@ -380,6 +393,7 @@ pub fn compact(
 }
 
 /// `s` with only [`KEEP_EACH_END`] bytes of each end, `mark` between.
+/// Called on strings over [`SHORTEN_OVER`], which this makes shorter.
 fn shorten(s: &str, mark: &str) -> String {
     let mut head = KEEP_EACH_END.min(s.len());
     while !s.is_char_boundary(head) {
@@ -413,21 +427,28 @@ fn shorten_strings(v: &mut Value) -> bool {
     }
 }
 
-/// `s` cut to about `max` bytes, its start and its end kept.
+/// `s` cut to at most `max` bytes, the marker included, its start and its
+/// end kept. Never longer than `s`: a string that fits comes back whole.
 fn cut_to(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    let half = max / 2;
-    let mut head = half;
+    let keep = max.saturating_sub(CUT_MARK.len());
+    let mut head = keep / 2;
     while !s.is_char_boundary(head) {
         head -= 1;
     }
-    let mut tail = s.len() - half;
+    let mut tail = s.len() - (keep - keep / 2);
     while !s.is_char_boundary(tail) {
         tail += 1;
     }
-    format!("{} […] {}", s[..head].trim_end(), s[tail..].trim_start())
+    let cut = format!("{}{CUT_MARK}{}", &s[..head], &s[tail..]);
+    // A limit under the marker's own length: a cut would only add to it.
+    if cut.len() < s.len() {
+        cut
+    } else {
+        s.to_string()
+    }
 }
 
 /// Who said a message kept in an extract.
@@ -449,16 +470,31 @@ struct Entry {
 }
 
 impl Entry {
-    /// Bytes it takes in the extract: `\n{label}:\n{text}\n`.
+    /// The entry as an extract writes it: a blank line, its label, and
+    /// each of its lines indented.
+    fn rendered(&self) -> String {
+        let mut s = format!("\n{}:\n", self.label);
+        for line in self.text.split('\n') {
+            s.push_str(INDENT);
+            s.push_str(line);
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Bytes it takes in the extract.
     fn len(&self) -> usize {
-        self.label.len() + self.text.len() + 4
+        self.rendered().len()
     }
 
     /// One user message: the hat's note in front is named, not copied.
     fn user(content: &str) -> Self {
         if let Some(rest) = content.strip_prefix("[hat: ") {
             let hat = rest.split([' ', ']']).next().unwrap_or_default();
-            if let Some((_, said)) = content.split_once("\n\n") {
+            // Only a hat's name goes in a label: a message that merely starts
+            // so must not write a line break into one.
+            let named = !hat.is_empty() && hat.chars().all(|c| c.is_ascii_lowercase());
+            if let Some((_, said)) = content.split_once("\n\n").filter(|_| named) {
                 return Self {
                     who: Who::User,
                     label: format!("user ({hat} hat)"),
@@ -499,7 +535,7 @@ struct Extract {
     tools: BTreeSet<String>,
     files: BTreeSet<String>,
     /// Files an earlier extract had no room to name.
-    files_more: usize,
+    files_others: bool,
     entries: Vec<Entry>,
     /// Messages folded in, by every pass so far.
     folded: usize,
@@ -546,19 +582,26 @@ impl Extract {
         x
     }
 
-    /// Take in a last extract (this format, or the one before it): its
-    /// tools, files, counts and messages, not its note, which is said anew.
+    /// Take in a last extract (this format, or one before it): its tools,
+    /// files, counts and messages, not its note, which is said anew.
     fn fold(&mut self, text: &str) {
-        let (meta, history) = match text
-            .split_once(&format!("\n{HISTORY_HEAD}\n"))
-            .or_else(|| text.split_once(&format!("\n{OLD_HISTORY_HEAD}\n")))
-        {
-            Some((meta, history)) => (meta, history),
-            None => (text, ""),
+        // The header that comes first is the extract's own: a message
+        // quoting another header comes after it.
+        let heads = std::iter::once((HISTORY_HEAD, false))
+            .chain(OLD_HISTORY_HEADS.iter().map(|h| (*h, true)));
+        let found = heads
+            .filter_map(|(head, old)| {
+                let at = text.find(&format!("\n{head}\n"))?;
+                Some((at, head, old))
+            })
+            .min_by_key(|(at, ..)| *at);
+        let (meta, history, old) = match found {
+            Some((at, head, old)) => (&text[..at], &text[at + head.len() + 2..], old),
+            None => (text, "", false),
         };
         let number = |s: &str| {
             s.chars()
-                .filter(char::is_ascii_digit)
+                .take_while(char::is_ascii_digit)
                 .collect::<String>()
                 .parse::<usize>()
                 .unwrap_or(0)
@@ -568,11 +611,13 @@ impl Extract {
                 self.tools
                     .extend(list.split(", ").filter(|t| !t.is_empty()).map(String::from));
             } else if let Some(list) = line.strip_prefix("Files touched: ") {
-                let (list, more) = match list.split_once(" (and ") {
-                    Some((list, more)) => (list, number(more)),
-                    None => (list, 0),
+                let list = match list.split_once(" (and ") {
+                    Some((list, _)) => {
+                        self.files_others = true;
+                        list
+                    }
+                    None => list,
                 };
-                self.files_more += more;
                 self.files
                     .extend(list.split(", ").filter(|f| !f.is_empty()).map(String::from));
             } else if let Some(n) = line.strip_prefix("Messages folded in so far: ") {
@@ -584,31 +629,68 @@ impl Extract {
                 }
             }
         }
-        // The extract before this format ended with its count.
+        if old {
+            self.fold_old(history);
+            return;
+        }
+        let mut current: Option<Entry> = None;
+        for line in history.lines() {
+            if let Some(said) = line.strip_prefix(INDENT) {
+                if let Some(e) = &mut current {
+                    e.text.push_str(said);
+                    e.text.push('\n');
+                }
+            } else if let Some((who, label)) = Entry::from_label(line) {
+                self.entries.extend(current.take().map(Self::tidy));
+                current = Some(Entry {
+                    who,
+                    label,
+                    text: String::new(),
+                });
+            } else if !line.is_empty() {
+                // Not a line Ryter wrote: it stays with the message it is in.
+                if let Some(e) = &mut current {
+                    e.text.push_str(line);
+                    e.text.push('\n');
+                }
+            }
+        }
+        self.entries.extend(current.map(Self::tidy));
+    }
+
+    /// The messages of an extract written before they were indented. A
+    /// label is any `user:` or `assistant:` after a blank line, so a
+    /// quoted one can't be told from a real one; what can be told is held
+    /// to. A `user:` whose text a user turn could not start with (not the
+    /// hat's note, not Ryter's) stays with the message it is in.
+    fn fold_old(&mut self, history: &str) {
         let mut history = history.trim_end();
+        // 0.44.1 ended with its count, after the plan's note.
         if let Some((rest, last)) = history.rsplit_once('\n') {
             if let Some(n) = last
                 .strip_prefix("Dropped ")
                 .and_then(|l| l.strip_suffix(" older messages."))
             {
-                self.folded += number(n);
-                history = rest;
+                self.folded += n.parse::<usize>().unwrap_or(0);
+                history = rest.trim_end();
             }
         }
-        let mut current: Option<Entry> = None;
+        if let Some((rest, last)) = history.rsplit_once('\n') {
+            if last.starts_with(OLD_PLAN_NOTE) {
+                history = rest.trim_end();
+            }
+        }
+        let mut entries: Vec<Entry> = Vec::new();
         let mut blank = true;
         for line in history.lines() {
             match Entry::from_label(line).filter(|_| blank) {
-                Some((who, label)) => {
-                    self.entries.extend(current.take().map(Self::tidy));
-                    current = Some(Entry {
-                        who,
-                        label,
-                        text: String::new(),
-                    });
-                }
+                Some((who, label)) => entries.push(Entry {
+                    who,
+                    label,
+                    text: String::new(),
+                }),
                 None => {
-                    if let Some(e) = &mut current {
+                    if let Some(e) = entries.last_mut() {
                         e.text.push_str(line);
                         e.text.push('\n');
                     }
@@ -616,13 +698,27 @@ impl Extract {
             }
             blank = line.trim().is_empty();
         }
-        self.entries.extend(current.map(Self::tidy));
+        for e in entries.into_iter().map(Self::tidy) {
+            let a_turn =
+                e.label != "user" || e.text.starts_with(RYTER_MARK) || e.text.starts_with("[hat: ");
+            match self.entries.last_mut() {
+                Some(prev) if !a_turn => {
+                    prev.text.push_str(&format!("\n\nuser:\n{}", e.text));
+                }
+                _ => self.entries.push(Self::tidy_old(e)),
+            }
+        }
     }
 
-    /// An entry read back: trimmed, and in the older format the user's
-    /// messages carried Ryter's notes and the hat's note too.
+    /// An entry read back, trimmed.
     fn tidy(mut e: Entry) -> Entry {
-        e.text = e.text.trim().to_string();
+        e.text = e.text.trim_end_matches('\n').to_string();
+        e
+    }
+
+    /// In the older formats the user's messages carried Ryter's notes and
+    /// the hat's note too.
+    fn tidy_old(e: Entry) -> Entry {
         if e.label == "user" {
             if e.text.starts_with(RYTER_MARK) {
                 return Entry::note("ryter", &e.text);
@@ -634,7 +730,9 @@ impl Extract {
         e
     }
 
-    fn meta(&self, note: &str) -> String {
+    /// Everything above the messages, the files held to their share of
+    /// `budget`.
+    fn meta(&self, note: &str, budget: usize) -> String {
         let mut s = format!("{EXTRACT_HEAD}\n");
         if !self.tools.is_empty() {
             s.push_str("Tools used: ");
@@ -642,21 +740,30 @@ impl Extract {
             s.push('\n');
         }
         if !self.files.is_empty() {
-            let more = self.files.len().saturating_sub(NAMES_MAX) + self.files_more;
-            s.push_str("Files touched: ");
-            s.push_str(
-                &self
-                    .files
-                    .iter()
-                    .take(NAMES_MAX)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            );
-            if more > 0 {
-                s.push_str(&format!(" (and {more} more)"));
+            let share = budget / FILES_SHARE;
+            let mut named = String::new();
+            let mut all = true;
+            for f in &self.files {
+                let sep = if named.is_empty() { "" } else { ", " };
+                if named.len() + sep.len() + f.len() > share {
+                    all = false;
+                    break;
+                }
+                named.push_str(sep);
+                named.push_str(f);
             }
-            s.push('\n');
+            if !named.is_empty() || !all {
+                s.push_str("Files touched: ");
+                s.push_str(&named);
+                if !all || self.files_others {
+                    s.push_str(if named.is_empty() {
+                        "(and others)"
+                    } else {
+                        " (and others)"
+                    });
+                }
+                s.push('\n');
+            }
         }
         let note = note.trim();
         if !note.is_empty() {
@@ -677,7 +784,7 @@ impl Extract {
     /// dropped; then the user's oldest long messages are cut, then dropped.
     fn render(mut self, note: &str, budget: usize) -> String {
         // Room for the counts' own line to grow as entries are left out.
-        let room = budget.saturating_sub(self.meta(note).len() + HISTORY_HEAD.len() + 160);
+        let room = budget.saturating_sub(self.meta(note, budget).len() + HISTORY_HEAD.len() + 160);
         let mut used: usize = self.entries.iter().map(Entry::len).sum();
         for (who, max) in [(Who::Note, NOTE_BYTES), (Who::User, LONG_USER_BYTES)] {
             for e in self.entries.iter_mut().filter(|e| e.who == who) {
@@ -686,24 +793,24 @@ impl Extract {
                 }
                 let before = e.len();
                 e.text = cut_to(&e.text, max);
-                used -= before - e.len();
+                used = used.saturating_sub(before).saturating_add(e.len());
             }
             while used > room {
                 let Some(i) = self.entries.iter().position(|e| e.who == who) else {
                     break;
                 };
-                used -= self.entries.remove(i).len();
+                used = used.saturating_sub(self.entries.remove(i).len());
                 match who {
                     Who::User => self.left_out.0 += 1,
                     Who::Note => self.left_out.1 += 1,
                 }
             }
         }
-        let mut s = self.meta(note);
+        let mut s = self.meta(note, budget);
         s.push_str(HISTORY_HEAD);
         s.push('\n');
         for e in &self.entries {
-            s.push_str(&format!("\n{}:\n{}\n", e.label, e.text));
+            s.push_str(&e.rendered());
         }
         s
     }
@@ -1092,16 +1199,19 @@ mod tests {
         let x = extract_of(&next);
         assert!(x.len() <= 8_000, "{}", x.len());
         assert!(
-            x.contains("user (build hat):\nNever touch the public API."),
+            x.contains("user (build hat):\n  Never touch the public API."),
             "{x}"
         );
         assert!(!x.contains("[hat: build"), "the hat's note was copied: {x}");
         for i in 0..40 {
-            let said = format!("\nrequest {i}\n");
+            let said = format!("\n  request {i}\n");
             assert!(x.contains(&said), "request {i} went: {x}");
         }
         assert!(!x.contains("note 0 "), "the oldest note stayed: {x}");
-        assert!(x.contains("\nmore 0\n"), "the last pass did not fold: {x}");
+        assert!(
+            x.contains("\n  more 0\n"),
+            "the last pass did not fold: {x}"
+        );
         assert_eq!(x.matches("The plan is in").count(), 1, "{x}");
         assert!(x.contains("Left out to fit: 0 of the user's,"), "{x}");
         let left: usize = x
@@ -1137,7 +1247,10 @@ mod tests {
         let next = compact(&transcript, "", 2, 8_000);
         let x = extract_of(&next);
         assert!(x.len() <= 8_000, "{}", x.len());
-        assert!(x.contains("user (plan hat):\nKeep the CSV format."), "{x}");
+        assert!(
+            x.contains("user (plan hat):\n  Keep the CSV format."),
+            "{x}"
+        );
         assert!(x.contains("Tools used: read_file"), "{x}");
         assert!(x.contains("Files touched: src/a.rs"), "{x}");
         assert!(!x.contains("Dropped 120"), "{x}");
@@ -1173,6 +1286,187 @@ mod tests {
         let next = compact(&transcript, "", 2, BUDGET);
         assert!(next[1].content.starts_with("real turn 1"), "{:?}", next[1]);
         assert!(extract_of(&next).contains("real turn 0"));
+    }
+
+    /// A cut never makes a message longer: its marker is counted inside
+    /// the bytes kept. A note just over its cut, or a message of the
+    /// user's just over theirs, came back seven bytes longer, and the
+    /// size kept underflowed (a panic in a debug build).
+    #[test]
+    fn a_cut_is_never_longer_than_its_limit_or_its_text() {
+        for max in [NOTE_BYTES, LONG_USER_BYTES, 7, 8, 1] {
+            for extra in 0..12 {
+                for fill in ["x", "界"] {
+                    let s = fill.repeat((max + extra) / fill.len() + 1);
+                    let cut = cut_to(&s, max);
+                    assert!(
+                        cut.len() <= max.max(CUT_MARK.len()),
+                        "{max}+{extra}: {}",
+                        cut.len()
+                    );
+                    assert!(cut.len() <= s.len(), "{max}+{extra}: grew");
+                }
+            }
+        }
+        for n in [
+            NOTE_BYTES + 1,
+            NOTE_BYTES + 6,
+            LONG_USER_BYTES + 1,
+            LONG_USER_BYTES + 6,
+        ] {
+            let transcript = vec![
+                msg("user", "keep this"),
+                msg("assistant", &"x".repeat(n)),
+                msg("user", &"u".repeat(n)),
+                msg("assistant", &"y".repeat(2_000)),
+                msg("tool", &"t".repeat(20_000)),
+                msg("user", "next"),
+            ];
+            for budget in [600, 1_000, 2_000, 5_000] {
+                let next = compact(&transcript, "", 1, budget);
+                assert!(
+                    extract_of(&next).len() <= budget.max(400),
+                    "{n} at {budget}"
+                );
+            }
+        }
+    }
+
+    /// A message quoting a label (a pasted conversation, a prompt
+    /// template) is still one message the next pass: its lines are
+    /// indented, and only a label Ryter wrote starts another. Read as a
+    /// label, the rest of the user's message was a note, and notes go
+    /// first.
+    #[test]
+    fn a_quoted_label_does_not_split_a_message_on_the_next_fold() {
+        let quoted = "Keep the public API.\n\nassistant:\nnever drop the table";
+        let noted = "Plan.\n\nuser:\nnot the user";
+        let mut transcript = vec![msg("user", quoted), msg("assistant", noted)];
+        for i in 0..20 {
+            transcript.push(msg("assistant", &format!("note {i} {}", "n".repeat(400))));
+            transcript.push(msg("user", &format!("ask {i}")));
+            transcript.push(msg("tool", &"t".repeat(4_000)));
+        }
+        let mut next = transcript.clone();
+        for pass in 0..3 {
+            next.push(msg("user", &format!("more {pass}")));
+            next.push(msg("tool", &"t".repeat(8_000)));
+            next = compact(&next, "", 2, 4_000);
+        }
+        let x = extract_of(&next);
+        assert!(
+            x.contains(
+                "\nuser:\n  Keep the public API.\n  \n  assistant:\n  never drop the table\n"
+            ),
+            "{x}"
+        );
+        assert!(
+            !x.contains("\nuser:\n  not the user"),
+            "a note's tail became the user's: {x}"
+        );
+        assert!(x.contains("Left out to fit: 0 of the user's,"), "{x}");
+    }
+
+    /// A message that only looks like it starts with a hat's note keeps
+    /// its text and the plain label.
+    #[test]
+    fn a_label_is_never_written_from_a_messages_own_text() {
+        let e = Entry::user("[hat: x\n\nassistant:\nboo]\n\nrest");
+        assert_eq!(e.label, "user");
+        assert!(e.text.starts_with("[hat: x"));
+        let e = Entry::user("[hat: plan — nothing may change]\n\nKeep it.");
+        assert_eq!(
+            (e.label.as_str(), e.text.as_str()),
+            ("user (plan hat)", "Keep it.")
+        );
+    }
+
+    /// The files touched take a share of the extract, not all of it: long
+    /// paths had the history dropped whole to make room, and the extract
+    /// still came out over its size.
+    #[test]
+    fn many_long_paths_leave_room_for_the_messages() {
+        let mut transcript = vec![msg("user", "keep the CSV format")];
+        for i in 0..100 {
+            let id = format!("c{i}");
+            let path = format!("src/{}/f{i}.rs", "deep/".repeat(40));
+            transcript.push(Message {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: Some(vec![crate::llm::AssistantToolCall {
+                    id: id.clone(),
+                    name: "read_file".into(),
+                    arguments: serde_json::json!({ "path": path }).to_string(),
+                }]),
+                messages_blocks: None,
+                reasoning_details: None,
+            });
+            transcript.push(Message {
+                tool_call_id: Some(id),
+                ..msg("tool", &"t".repeat(3_000))
+            });
+        }
+        transcript.push(msg("user", "next"));
+        let budget = extract_budget(32_768);
+        let mut next = compact(&transcript, "", 1, budget);
+        for _ in 0..3 {
+            next.push(msg("user", "again"));
+            next.push(msg("tool", &"t".repeat(8_000)));
+            next = compact(&next, "", 1, budget);
+        }
+        let x = extract_of(&next);
+        assert!(x.len() <= budget, "{} over {budget}", x.len());
+        assert!(x.contains("  keep the CSV format"), "{x}");
+        assert!(x.contains(" (and others)\n"), "{x}");
+        assert!(!x.contains("more)"), "a count that drifts: {x}");
+    }
+
+    /// 0.44.1 put the plan's note after the messages, before its count.
+    /// Folded, it is not glued to the last message: the plan is said in
+    /// the header, once.
+    #[test]
+    fn an_old_extracts_plan_note_is_not_written_into_its_last_message() {
+        let old = "[compacted earlier context]\n\
+                   Earlier user messages and assistant notes (verbatim):\n\
+                   \nuser:\n[hat: build — you may change files]\n\nShip the flag.\n\
+                   \nassistant:\nDone.\n\
+                   The plan the user approved is in `.ryter/plan.md`. Where the work differs from it is recorded in `DECISIONS.md`.\n\
+                   Dropped 4 older messages.\n";
+        let mut transcript = vec![msg("user", old)];
+        for i in 0..3 {
+            transcript.push(msg("user", &format!("ask {i}")));
+            transcript.push(msg("tool", &"t".repeat(8_000)));
+        }
+        let note = "The plan the user approved is in `.ryter/plan.md`. Where the work differs from it is recorded in `DECISIONS.md`.";
+        let next = compact(&transcript, note, 1, BUDGET);
+        let x = extract_of(&next);
+        assert_eq!(x.matches("The plan the user approved").count(), 1, "{x}");
+        assert!(x.contains("\nassistant:\n  Done.\n"), "{x}");
+        assert!(x.contains("user (build hat):\n  Ship the flag.\n"), "{x}");
+    }
+
+    /// In the older format a quoted `user:` inside a note can't be told
+    /// from a real one by its label, but a user's turn always began with
+    /// the hat's note or Ryter's mark: one that doesn't stays in the note.
+    #[test]
+    fn an_old_extracts_quoted_user_label_stays_in_its_note() {
+        let old = "[compacted earlier context]\n\
+                   Earlier user messages and assistant notes (verbatim):\n\
+                   \nuser:\n[hat: plan — nothing may change]\n\nKeep it small.\n\
+                   \nassistant:\nThe template reads\n\nuser:\nnot the user\n\
+                   Dropped 2 older messages.\n";
+        let mut transcript = vec![msg("user", old)];
+        for i in 0..3 {
+            transcript.push(msg("user", &format!("ask {i}")));
+            transcript.push(msg("tool", &"t".repeat(8_000)));
+        }
+        let x = extract_of(&compact(&transcript, "", 1, BUDGET)).to_string();
+        assert!(x.contains("user (plan hat):\n  Keep it small.\n"), "{x}");
+        assert!(
+            x.contains("\nassistant:\n  The template reads\n  \n  user:\n  not the user\n"),
+            "{x}"
+        );
     }
 
     #[test]
