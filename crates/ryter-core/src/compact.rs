@@ -261,13 +261,60 @@ pub fn should_compact(rep: &ContextReport) -> bool {
     rep.pct >= AUTO_COMPACT_PCT
 }
 
+/// The first line of every extract.
+const EXTRACT_HEAD: &str = "[compacted earlier context]";
+/// Where an extract's messages begin; they run to its end.
+const HISTORY_HEAD: &str = "Earlier messages, oldest first:";
+/// The same line in extracts written before extracts were held to a size.
+const OLD_HISTORY_HEAD: &str = "Earlier user messages and assistant notes (verbatim):";
+/// What Ryter itself says to the model starts so; it is not a user turn.
+const RYTER_MARK: &str = "[Ryter]";
+/// A note from the model or from Ryter is cut to this when the extract is
+/// over its size.
+const NOTE_BYTES: usize = 600;
+/// A message of the user's longer than this is cut when the extract is
+/// still over its size with every note dropped.
+const LONG_USER_BYTES: usize = 4_000;
+/// Files named in an extract before "and N more".
+const NAMES_MAX: usize = 100;
+/// An older tool output or call argument longer than this is shortened...
+const SHORTEN_OVER: usize = 2_048;
+/// ...to this much of each end.
+const KEEP_EACH_END: usize = 768;
+
+/// What an extract may take, in bytes, for a model with `window` tokens: a
+/// tenth of the window at four bytes a token.
+pub fn extract_budget(window: u64) -> usize {
+    usize::try_from(window)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(4)
+        / 10
+}
+
+/// Whether `m` is a message the user sent: not Ryter's own word to the
+/// model, and not an extract.
+fn is_users_turn(m: &Message) -> bool {
+    m.role == "user" && !m.content.starts_with(RYTER_MARK) && !m.content.starts_with(EXTRACT_HEAD)
+}
+
 /// Replace the prefix with a deterministic extract. No-op when already short.
 /// `note` is kept in the extract: what must outlive the messages dropped.
-pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<Message> {
+/// The extract is held to `budget` bytes: a last extract in the prefix is
+/// folded in, not carried whole, so compaction after compaction stays the
+/// same size however long the session runs.
+pub fn compact(
+    messages: &[Message],
+    note: &str,
+    keep_user_turns: usize,
+    budget: usize,
+) -> Vec<Message> {
+    // Only the user's own messages count as turns: Ryter's notes to the
+    // model (a check's result, "not done") and the last extract are
+    // user-role messages too, and counted they left fewer real turns kept.
     let user_idx: Vec<usize> = messages
         .iter()
         .enumerate()
-        .filter(|(_, m)| m.role == "user")
+        .filter(|(_, m)| is_users_turn(m))
         .map(|(i, _)| i)
         .collect();
     let cut = if user_idx.len() > keep_user_turns {
@@ -278,7 +325,7 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
     let mut out = if cut > 0 {
         let mut next = vec![Message {
             role: "user".into(),
-            content: extract_prefix(&messages[..cut], note),
+            content: Extract::of(&messages[..cut]).render(note, budget),
             tool_call_id: None,
             tool_calls: None,
             messages_blocks: None,
@@ -290,27 +337,39 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
         messages.to_vec()
     };
     // A single user turn can contain many tool rounds. Keep call/result
-    // identities and all narrative, but shorten older bulky tool results.
-    // The newest result batch remains intact for the next model response.
+    // identities and all narrative, but shorten older bulky tool results,
+    // and older bulky call arguments (a `write` carries its whole file).
+    // The newest call and its results stay whole for the next response.
     let latest_call = out
         .iter()
         .rposition(|m| m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()))
         .unwrap_or(0);
     for m in &mut out[..latest_call] {
-        if m.role == "tool" && m.content.len() > 2048 {
-            let mut head = 768;
-            while !m.content.is_char_boundary(head) {
-                head -= 1;
-            }
-            let mut tail = m.content.len() - 768;
-            while !m.content.is_char_boundary(tail) {
-                tail += 1;
-            }
-            m.content = format!(
-                "{}\n[earlier tool output shortened; re-read the source if needed]\n{}",
-                &m.content[..head],
-                &m.content[tail..]
+        if m.role == "tool" && m.content.len() > SHORTEN_OVER {
+            m.content = shorten(
+                &m.content,
+                "\n[earlier tool output shortened; re-read the source if needed]\n",
             );
+        }
+        if let Some(calls) = &mut m.tool_calls {
+            for c in calls {
+                if c.arguments.len() <= SHORTEN_OVER {
+                    continue;
+                }
+                if let Ok(mut v) = serde_json::from_str::<Value>(&c.arguments) {
+                    if shorten_strings(&mut v) {
+                        c.arguments = v.to_string();
+                    }
+                }
+            }
+        }
+        // Sent instead of `tool_calls` once thinking is on.
+        if let Some(blocks) = &mut m.messages_blocks {
+            for b in blocks {
+                if let crate::llm::MessagesBlock::ToolUse { input, .. } = b {
+                    shorten_strings(input);
+                }
+            }
         }
     }
     if estimate_tokens("", &out) < estimate_tokens("", messages) {
@@ -320,57 +379,342 @@ pub fn compact(messages: &[Message], note: &str, keep_user_turns: usize) -> Vec<
     }
 }
 
-fn extract_prefix(old: &[Message], note: &str) -> String {
-    let mut tools = BTreeSet::new();
-    let mut files = BTreeSet::new();
-    for m in old {
-        if let Some(calls) = &m.tool_calls {
-            for c in calls {
-                if !c.name.is_empty() {
-                    tools.insert(c.name.clone());
-                }
-                if let Ok(v) = serde_json::from_str::<Value>(&c.arguments) {
-                    if let Some(p) = v.get("path").and_then(Value::as_str) {
-                        if !p.is_empty() {
-                            files.insert(p.to_string());
+/// `s` with only [`KEEP_EACH_END`] bytes of each end, `mark` between.
+fn shorten(s: &str, mark: &str) -> String {
+    let mut head = KEEP_EACH_END.min(s.len());
+    while !s.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = s.len().saturating_sub(KEEP_EACH_END).max(head);
+    while !s.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!("{}{mark}{}", &s[..head], &s[tail..])
+}
+
+/// Shorten every string in `v` longer than [`SHORTEN_OVER`]; true if any was.
+fn shorten_strings(v: &mut Value) -> bool {
+    match v {
+        Value::String(s) if s.len() > SHORTEN_OVER => {
+            let left_out = s.len() - 2 * KEEP_EACH_END;
+            *s = shorten(
+                s,
+                &format!(
+                    "\n[… {left_out} bytes left out by compaction; read the file for them …]\n"
+                ),
+            );
+            true
+        }
+        Value::Array(a) => a.iter_mut().fold(false, |any, x| shorten_strings(x) || any),
+        Value::Object(o) => o
+            .values_mut()
+            .fold(false, |any, x| shorten_strings(x) || any),
+        _ => false,
+    }
+}
+
+/// `s` cut to about `max` bytes, its start and its end kept.
+fn cut_to(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let half = max / 2;
+    let mut head = half;
+    while !s.is_char_boundary(head) {
+        head -= 1;
+    }
+    let mut tail = s.len() - half;
+    while !s.is_char_boundary(tail) {
+        tail += 1;
+    }
+    format!("{} […] {}", s[..head].trim_end(), s[tail..].trim_start())
+}
+
+/// Who said a message kept in an extract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Who {
+    /// The user: kept longest.
+    User,
+    /// The model, or Ryter's own word to it: cut and dropped first.
+    Note,
+}
+
+#[derive(Debug, Clone)]
+struct Entry {
+    who: Who,
+    /// The line it is written under: `user`, `user (plan hat)`,
+    /// `assistant`, `ryter`.
+    label: String,
+    text: String,
+}
+
+impl Entry {
+    /// Bytes it takes in the extract: `\n{label}:\n{text}\n`.
+    fn len(&self) -> usize {
+        self.label.len() + self.text.len() + 4
+    }
+
+    /// One user message: the hat's note in front is named, not copied.
+    fn user(content: &str) -> Self {
+        if let Some(rest) = content.strip_prefix("[hat: ") {
+            let hat = rest.split([' ', ']']).next().unwrap_or_default();
+            if let Some((_, said)) = content.split_once("\n\n") {
+                return Self {
+                    who: Who::User,
+                    label: format!("user ({hat} hat)"),
+                    text: said.trim().to_string(),
+                };
+            }
+        }
+        Self {
+            who: Who::User,
+            label: "user".into(),
+            text: content.trim().to_string(),
+        }
+    }
+
+    fn note(label: &str, content: &str) -> Self {
+        Self {
+            who: Who::Note,
+            label: label.into(),
+            text: content.trim().to_string(),
+        }
+    }
+
+    /// The label line that starts an entry, read back from an extract.
+    fn from_label(line: &str) -> Option<(Who, String)> {
+        let label = line.strip_suffix(':')?;
+        match label {
+            "user" => Some((Who::User, label.into())),
+            "assistant" | "ryter" => Some((Who::Note, label.into())),
+            l if l.starts_with("user (") && l.ends_with(" hat)") => Some((Who::User, l.into())),
+            _ => None,
+        }
+    }
+}
+
+/// What an extract says, built from the messages it replaces.
+#[derive(Debug, Default)]
+struct Extract {
+    tools: BTreeSet<String>,
+    files: BTreeSet<String>,
+    /// Files an earlier extract had no room to name.
+    files_more: usize,
+    entries: Vec<Entry>,
+    /// Messages folded in, by every pass so far.
+    folded: usize,
+    /// Messages left out to fit, by every pass so far: the user's, notes.
+    left_out: (usize, usize),
+}
+
+impl Extract {
+    fn of(old: &[Message]) -> Self {
+        let mut x = Self::default();
+        for m in old {
+            if let Some(calls) = &m.tool_calls {
+                for c in calls {
+                    if !c.name.is_empty() {
+                        x.tools.insert(c.name.clone());
+                    }
+                    if let Ok(v) = serde_json::from_str::<Value>(&c.arguments) {
+                        if let Some(p) = v.get("path").and_then(Value::as_str) {
+                            if !p.is_empty() {
+                                x.files.insert(p.to_string());
+                            }
                         }
                     }
                 }
             }
+            match m.role.as_str() {
+                "user" if m.content.starts_with(EXTRACT_HEAD) => {
+                    x.fold(&m.content);
+                    continue;
+                }
+                "user" if m.content.starts_with(RYTER_MARK) => {
+                    x.entries.push(Entry::note("ryter", &m.content));
+                }
+                "user" if !m.content.trim().is_empty() => {
+                    x.entries.push(Entry::user(&m.content));
+                }
+                "assistant" if !m.content.trim().is_empty() => {
+                    x.entries.push(Entry::note("assistant", &m.content));
+                }
+                _ => {}
+            }
+            x.folded += 1;
         }
+        x
     }
-    let mut s = String::from("[compacted earlier context]\n");
-    if !tools.is_empty() {
-        s.push_str("Tools used: ");
-        s.push_str(&tools.into_iter().collect::<Vec<_>>().join(", "));
-        s.push('\n');
+
+    /// Take in a last extract (this format, or the one before it): its
+    /// tools, files, counts and messages, not its note, which is said anew.
+    fn fold(&mut self, text: &str) {
+        let (meta, history) = match text
+            .split_once(&format!("\n{HISTORY_HEAD}\n"))
+            .or_else(|| text.split_once(&format!("\n{OLD_HISTORY_HEAD}\n")))
+        {
+            Some((meta, history)) => (meta, history),
+            None => (text, ""),
+        };
+        let number = |s: &str| {
+            s.chars()
+                .filter(char::is_ascii_digit)
+                .collect::<String>()
+                .parse::<usize>()
+                .unwrap_or(0)
+        };
+        for line in meta.lines() {
+            if let Some(list) = line.strip_prefix("Tools used: ") {
+                self.tools
+                    .extend(list.split(", ").filter(|t| !t.is_empty()).map(String::from));
+            } else if let Some(list) = line.strip_prefix("Files touched: ") {
+                let (list, more) = match list.split_once(" (and ") {
+                    Some((list, more)) => (list, number(more)),
+                    None => (list, 0),
+                };
+                self.files_more += more;
+                self.files
+                    .extend(list.split(", ").filter(|f| !f.is_empty()).map(String::from));
+            } else if let Some(n) = line.strip_prefix("Messages folded in so far: ") {
+                self.folded += number(n);
+            } else if let Some(rest) = line.strip_prefix("Left out to fit: ") {
+                if let Some((users, notes)) = rest.split_once(", ") {
+                    self.left_out.0 += number(users);
+                    self.left_out.1 += number(notes);
+                }
+            }
+        }
+        // The extract before this format ended with its count.
+        let mut history = history.trim_end();
+        if let Some((rest, last)) = history.rsplit_once('\n') {
+            if let Some(n) = last
+                .strip_prefix("Dropped ")
+                .and_then(|l| l.strip_suffix(" older messages."))
+            {
+                self.folded += number(n);
+                history = rest;
+            }
+        }
+        let mut current: Option<Entry> = None;
+        let mut blank = true;
+        for line in history.lines() {
+            match Entry::from_label(line).filter(|_| blank) {
+                Some((who, label)) => {
+                    self.entries.extend(current.take().map(Self::tidy));
+                    current = Some(Entry {
+                        who,
+                        label,
+                        text: String::new(),
+                    });
+                }
+                None => {
+                    if let Some(e) = &mut current {
+                        e.text.push_str(line);
+                        e.text.push('\n');
+                    }
+                }
+            }
+            blank = line.trim().is_empty();
+        }
+        self.entries.extend(current.map(Self::tidy));
     }
-    if !files.is_empty() {
-        s.push_str("Files touched: ");
-        s.push_str(&files.into_iter().collect::<Vec<_>>().join(", "));
-        s.push('\n');
+
+    /// An entry read back: trimmed, and in the older format the user's
+    /// messages carried Ryter's notes and the hat's note too.
+    fn tidy(mut e: Entry) -> Entry {
+        e.text = e.text.trim().to_string();
+        if e.label == "user" {
+            if e.text.starts_with(RYTER_MARK) {
+                return Entry::note("ryter", &e.text);
+            }
+            if e.text.starts_with("[hat: ") {
+                return Entry::user(&e.text);
+            }
+        }
+        e
     }
-    s.push_str("Earlier user messages and assistant notes (verbatim):\n");
-    for m in old
-        .iter()
-        .filter(|m| matches!(m.role.as_str(), "user" | "assistant") && !m.content.is_empty())
-    {
-        s.push_str(&format!("\n{}:\n{}\n", m.role, m.content));
-    }
-    let note = note.trim();
-    if !note.is_empty() {
-        s.push_str(note);
-        if !note.ends_with('\n') {
+
+    fn meta(&self, note: &str) -> String {
+        let mut s = format!("{EXTRACT_HEAD}\n");
+        if !self.tools.is_empty() {
+            s.push_str("Tools used: ");
+            s.push_str(&self.tools.iter().cloned().collect::<Vec<_>>().join(", "));
             s.push('\n');
         }
+        if !self.files.is_empty() {
+            let more = self.files.len().saturating_sub(NAMES_MAX) + self.files_more;
+            s.push_str("Files touched: ");
+            s.push_str(
+                &self
+                    .files
+                    .iter()
+                    .take(NAMES_MAX)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            if more > 0 {
+                s.push_str(&format!(" (and {more} more)"));
+            }
+            s.push('\n');
+        }
+        let note = note.trim();
+        if !note.is_empty() {
+            s.push_str(note);
+            s.push('\n');
+        }
+        s.push_str(&format!("Messages folded in so far: {}\n", self.folded));
+        if self.left_out != (0, 0) {
+            s.push_str(&format!(
+                "Left out to fit: {} of the user's, {} notes from the assistant and Ryter\n",
+                self.left_out.0, self.left_out.1
+            ));
+        }
+        s
     }
-    s.push_str(&format!("Dropped {} older messages.\n", old.len()));
-    s
+
+    /// The extract, held to `budget` bytes: the oldest notes are cut, then
+    /// dropped; then the user's oldest long messages are cut, then dropped.
+    fn render(mut self, note: &str, budget: usize) -> String {
+        // Room for the counts' own line to grow as entries are left out.
+        let room = budget.saturating_sub(self.meta(note).len() + HISTORY_HEAD.len() + 160);
+        let mut used: usize = self.entries.iter().map(Entry::len).sum();
+        for (who, max) in [(Who::Note, NOTE_BYTES), (Who::User, LONG_USER_BYTES)] {
+            for e in self.entries.iter_mut().filter(|e| e.who == who) {
+                if used <= room {
+                    break;
+                }
+                let before = e.len();
+                e.text = cut_to(&e.text, max);
+                used -= before - e.len();
+            }
+            while used > room {
+                let Some(i) = self.entries.iter().position(|e| e.who == who) else {
+                    break;
+                };
+                used -= self.entries.remove(i).len();
+                match who {
+                    Who::User => self.left_out.0 += 1,
+                    Who::Note => self.left_out.1 += 1,
+                }
+            }
+        }
+        let mut s = self.meta(note);
+        s.push_str(HISTORY_HEAD);
+        s.push('\n');
+        for e in &self.entries {
+            s.push_str(&format!("\n{}:\n{}\n", e.label, e.text));
+        }
+        s
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 200k window's extract.
+    const BUDGET: usize = 80_000;
 
     fn msg(role: &str, content: &str) -> Message {
         Message {
@@ -447,7 +791,7 @@ mod tests {
                 reasoning_details: None,
             });
         }
-        let out = compact(&messages, "ship the flag", 2);
+        let out = compact(&messages, "ship the flag", 2, BUDGET);
         assert!(
             out.len() < messages.len(),
             "{} vs {}",
@@ -526,7 +870,7 @@ mod tests {
                 reasoning_details: None,
             });
         }
-        let next = compact(&messages, "", 4);
+        let next = compact(&messages, "", 4, BUDGET);
         assert_eq!(next.len(), messages.len());
         assert!(estimate_tokens("", &next) < estimate_tokens("", &messages) / 2);
         assert_eq!(next[0], messages[0]);
@@ -549,7 +893,7 @@ mod tests {
         ];
         history.push(msg("tool", &"bulky output".repeat(2000)));
         history.push(msg("user", "Continue"));
-        let next = compact(&history, "approved plan path", 1);
+        let next = compact(&history, "approved plan path", 1, BUDGET);
         assert!(next[0].content.contains("Keep the CSV format compatible."));
         assert!(
             next[0]
@@ -560,10 +904,281 @@ mod tests {
         assert_eq!(next.last(), history.last());
     }
 
+    /// One build turn as a real session has them: a request, rounds of a
+    /// line of text with a call and its output, and a summary at the end.
+    fn build_turn(i: usize) -> Vec<Message> {
+        let mut turn = vec![msg(
+            "user",
+            &format!("turn {i}: {}", "make the next change. ".repeat(12)),
+        )];
+        for r in 0..8 {
+            let id = format!("t{i}r{r}");
+            turn.push(Message {
+                role: "assistant".into(),
+                content: "Reading the module before the change. ".repeat(4),
+                tool_call_id: None,
+                tool_calls: Some(vec![crate::llm::AssistantToolCall {
+                    id: id.clone(),
+                    name: "read_file".into(),
+                    arguments: format!(r#"{{"path":"src/m{r}.rs"}}"#),
+                }]),
+                messages_blocks: None,
+                reasoning_details: None,
+            });
+            turn.push(Message {
+                role: "tool".into(),
+                content: "x".repeat(6_000),
+                tool_call_id: Some(id),
+                tool_calls: None,
+                messages_blocks: None,
+                reasoning_details: None,
+            });
+        }
+        turn.push(msg("assistant", &"Done: what changed and why. ".repeat(50)));
+        turn
+    }
+
+    /// A long session is compacted many times. Each pass has to bring the
+    /// transcript back under the line that set it off, however many passes
+    /// came before: an extract that carries the last extract whole grows
+    /// with every pass, until a pass can no longer get under the line, the
+    /// next round compacts again, and the request is finally refused.
+    #[test]
+    fn repeated_compaction_stays_under_the_line_however_long_the_session() {
+        let window: u64 = 200_000;
+        let line = window * u64::from(AUTO_COMPACT_PCT) / 100;
+        let mut transcript: Vec<Message> = Vec::new();
+        let mut passes = 0;
+        let mut first_after = None;
+        for i in 0..600 {
+            transcript.extend(build_turn(i));
+            if estimate_tokens("", &transcript) < line {
+                continue;
+            }
+            transcript = compact(&transcript, "", KEEP_USER_TURNS, extract_budget(window));
+            passes += 1;
+            let after = estimate_tokens("", &transcript);
+            let first = *first_after.get_or_insert(after);
+            assert!(
+                after < line,
+                "turn {i}, pass {passes}: compaction left {after} tokens, over the \
+                 {line}-token line that set it off (the first pass left {first})"
+            );
+            let extract = transcript[0].content.len();
+            assert!(
+                extract <= extract_budget(window),
+                "turn {i}, pass {passes}: the extract is {extract} bytes, over its {}",
+                extract_budget(window)
+            );
+        }
+        assert!(passes > 3, "the session never compacted enough: {passes}");
+    }
+
+    /// What a call sent is bulk too: a `write` carries the whole file. An
+    /// older call's arguments are shortened like its output, and still say
+    /// which file, as JSON the provider takes; the Messages echo of the
+    /// same call (sent instead of `tool_calls` once thinking is on) too.
+    #[test]
+    fn older_write_arguments_are_shortened_like_their_output() {
+        let body = "fn f() {}\n".repeat(4_000);
+        let mut messages = vec![msg("user", "write the files")];
+        for i in 0..4 {
+            let id = format!("w{i}");
+            let args = serde_json::json!({"path": format!("src/f{i}.rs"), "content": body});
+            messages.push(Message {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: Some(vec![crate::llm::AssistantToolCall {
+                    id: id.clone(),
+                    name: "write".into(),
+                    arguments: args.to_string(),
+                }]),
+                messages_blocks: (i % 2 == 1).then(|| {
+                    vec![
+                        crate::llm::MessagesBlock::Thinking {
+                            thinking: "plan".into(),
+                            signature: "sig".into(),
+                        },
+                        crate::llm::MessagesBlock::ToolUse {
+                            id: id.clone(),
+                            name: "write".into(),
+                            input: args.clone(),
+                        },
+                    ]
+                }),
+                reasoning_details: None,
+            });
+            messages.push(Message {
+                role: "tool".into(),
+                content: format!("wrote src/f{i}.rs"),
+                tool_call_id: Some(id),
+                tool_calls: None,
+                messages_blocks: None,
+                reasoning_details: None,
+            });
+        }
+        let next = compact(&messages, "", KEEP_USER_TURNS, BUDGET);
+        // The newest call is the one the next reply answers: left whole.
+        let newest = next.len() - 2;
+        for (i, m) in next
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == "assistant")
+        {
+            let call = &m.tool_calls.as_ref().unwrap()[0];
+            let args: serde_json::Value = serde_json::from_str(&call.arguments)
+                .unwrap_or_else(|e| panic!("arguments of {} are not JSON: {e}", call.id));
+            assert!(args.get("path").is_some(), "{} lost its path", call.id);
+            let echoed = m.messages_blocks.iter().flatten().find_map(|b| match b {
+                crate::llm::MessagesBlock::ToolUse { input, .. } => Some(input.to_string()),
+                _ => None,
+            });
+            if i == newest {
+                assert!(call.arguments.len() > body.len(), "the newest call was cut");
+                continue;
+            }
+            assert!(
+                call.arguments.len() < 4_096,
+                "{}: an older write still carries {} bytes",
+                call.id,
+                call.arguments.len()
+            );
+            if let Some(echoed) = echoed {
+                assert!(
+                    echoed.len() < 4_096,
+                    "{}: the Messages echo still carries {} bytes",
+                    call.id,
+                    echoed.len()
+                );
+            }
+        }
+    }
+
+    fn extract_of(messages: &[Message]) -> &str {
+        assert!(
+            messages[0].content.starts_with(EXTRACT_HEAD),
+            "{:?}",
+            messages[0]
+        );
+        &messages[0].content
+    }
+
+    /// Over its size, an extract gives up the assistant's and Ryter's notes
+    /// before any of the user's messages, says how many went, and says the
+    /// plan's note once however many passes carry it.
+    #[test]
+    fn a_full_extract_drops_notes_before_the_users_words_and_says_so() {
+        let mut transcript = vec![msg(
+            "user",
+            "[hat: build — you may change files]\n\nNever touch the public API.",
+        )];
+        for i in 0..40 {
+            transcript.push(msg("assistant", &format!("note {i} {}", "n".repeat(900))));
+            transcript.push(msg(
+                "user",
+                &format!("[Ryter] `cargo test` passed after your edits {i}."),
+            ));
+            transcript.push(msg("user", &format!("request {i}")));
+        }
+        let mut next = transcript.clone();
+        for pass in 0..3 {
+            next.push(msg("user", &format!("more {pass}")));
+            next.push(msg("assistant", "ok"));
+            // Bulk, so each pass has something to take: it folds again.
+            next.push(msg("tool", &"o".repeat(8_000)));
+            next = compact(&next, "The plan is in `.ryter/plan.md`.", 2, 8_000);
+        }
+        let x = extract_of(&next);
+        assert!(x.len() <= 8_000, "{}", x.len());
+        assert!(
+            x.contains("user (build hat):\nNever touch the public API."),
+            "{x}"
+        );
+        assert!(!x.contains("[hat: build"), "the hat's note was copied: {x}");
+        for i in 0..40 {
+            let said = format!("\nrequest {i}\n");
+            assert!(x.contains(&said), "request {i} went: {x}");
+        }
+        assert!(!x.contains("note 0 "), "the oldest note stayed: {x}");
+        assert!(x.contains("\nmore 0\n"), "the last pass did not fold: {x}");
+        assert_eq!(x.matches("The plan is in").count(), 1, "{x}");
+        assert!(x.contains("Left out to fit: 0 of the user's,"), "{x}");
+        let left: usize = x
+            .lines()
+            .find_map(|l| l.strip_prefix("Left out to fit: 0 of the user's, "))
+            .and_then(|l| l.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .unwrap();
+        assert!(left > 0);
+        assert!(x.contains("Messages folded in so far: "), "{x}");
+    }
+
+    /// A session compacted before extracts had a size carries one written
+    /// the old way. It is folded like any other, not kept whole as one of
+    /// the user's messages, and its count goes on.
+    #[test]
+    fn an_extract_in_the_old_format_is_folded_not_carried() {
+        let mut old = String::from(
+            "[compacted earlier context]\nTools used: read_file\nFiles touched: src/a.rs\n\
+             Earlier user messages and assistant notes (verbatim):\n",
+        );
+        old.push_str("\nuser:\n[hat: plan — nothing may change]\n\nKeep the CSV format.\n");
+        old.push_str("\nuser:\n[Ryter] `make` passed after your edits to a.rs.\n");
+        for i in 0..30 {
+            old.push_str(&format!("\nassistant:\nold note {i} {}\n", "o".repeat(900)));
+        }
+        old.push_str("Dropped 120 older messages.\n");
+        let mut transcript = vec![msg("user", &old)];
+        for i in 0..6 {
+            transcript.push(msg("user", &format!("ask {i}")));
+            transcript.push(msg("assistant", "done"));
+        }
+        let next = compact(&transcript, "", 2, 8_000);
+        let x = extract_of(&next);
+        assert!(x.len() <= 8_000, "{}", x.len());
+        assert!(x.contains("user (plan hat):\nKeep the CSV format."), "{x}");
+        assert!(x.contains("Tools used: read_file"), "{x}");
+        assert!(x.contains("Files touched: src/a.rs"), "{x}");
+        assert!(!x.contains("Dropped 120"), "{x}");
+        // 120 before, and 4 asks with their answers.
+        assert!(x.contains("Messages folded in so far: 128\n"), "{x}");
+        assert!(
+            !x.contains("user:\n[Ryter]"),
+            "Ryter's note read as the user's: {x}"
+        );
+    }
+
+    /// Ryter's own word to the model (a check's result, "not done") is a
+    /// user-role message, but not a turn: counted, it left fewer of the
+    /// user's turns kept than the setting says.
+    #[test]
+    fn ryters_notes_do_not_count_as_the_users_turns() {
+        let mut transcript = Vec::new();
+        for i in 0..3 {
+            transcript.push(msg("user", &format!("real turn {i} {}", "r".repeat(3000))));
+            for j in 0..3 {
+                transcript.push(msg("assistant", "editing"));
+                transcript.push(msg("tool", &"o".repeat(8_000)));
+                transcript.push(msg(
+                    "user",
+                    &format!("[Ryter] Not done: `make` still fails. {j}"),
+                ));
+            }
+        }
+        // Three turns of the user's, four kept: nothing is folded away.
+        let next = compact(&transcript, "", 4, BUDGET);
+        assert_eq!(next, transcript);
+        // Two kept: the first turn goes, with its notes, the second stays whole.
+        let next = compact(&transcript, "", 2, BUDGET);
+        assert!(next[1].content.starts_with("real turn 1"), "{:?}", next[1]);
+        assert!(extract_of(&next).contains("real turn 0"));
+    }
+
     #[test]
     fn short_transcript_is_unchanged() {
         let messages = vec![msg("user", "hi"), msg("assistant", "hello")];
-        assert_eq!(compact(&messages, "", 4), messages);
+        assert_eq!(compact(&messages, "", 4, BUDGET), messages);
     }
 
     #[test]
