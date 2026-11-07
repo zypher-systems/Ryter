@@ -22,7 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.44.1. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.44.2. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -36,8 +36,6 @@ The last release is 0.44.1. Notes for the next one collect in `docs/releases/` a
 8. **Docs reconciled (G20).** Three verified drifts fixed 2026-10-29 (the guide's dependency paragraph, the Opus bench page's task count, two stale Next items). The guide read against the release, screen by screen, comes with the hand passes.
 9. **Hand passes (G06, G18; items 3, 6, 7).** macOS by a person with a Mac, from a one-page script: install → key → change → audit → undo → resume at three widths, the sudo prompt, drag-and-paste, the light theme. WSL2 by the user in a Windows 11 VM on this machine (nested KVM), Windows Terminal, the sandbox's own diagnosis. Still untried by a person from earlier: mouse selection (0.24.0) on Linux too; `sudo` on a Mac (0.23.0); the light theme anywhere.
 10. **The last real run** by the user on the candidate, both OSes, every ask written down. Then 1.0 is the user's decision, never proposed.
-
-**In dev, unreleased (item 7).** Compaction holds its size, 2026-11-07. The extract carried the last extract whole, so it grew with every pass until a pass could no longer get under the 85% line (pass 50 of a 200k-window session left 170k tokens) and the request was refused; older `write` arguments went out whole on every round. The extract is now held to a tenth of the window and folds the last one in, notes go before the user's words, older call arguments are shortened, and only the user's messages count as turns kept. Found by the state-of-the-harness review the same day (loop, tools, context, permissions, memory, subagents, hooks/telemetry).
 
 Closed before this list: item 1 (2026-10-14, fiscus and tunes); item 3's Linux half (2026-10-14); a real `sudo` on Linux (2026-10-07).
 
@@ -85,6 +83,16 @@ After 1.0, by the user's decision then:
 - Session search across transcripts from `/sessions`.
 
 ## Done
+
+### 0.44.2 — Compaction holds its size (2026-11-07)
+
+Released 2026-11-07 (PR #111, two rounds. Round 1: both rejected `7d90dac`: a cut added its seven-byte marker past its limit, so a 601–606-byte note came back longer and the size kept underflowed, a panic in debug; the fold read any `assistant:` after a blank line as a new message, so a user's pasted conversation lost its tail to a note; the file list was held by count and long paths took the whole extract; 0.44.1's plan note was glued to the last message; "and N more" drifted. Round 2: both approved `f31f33c`; the notes line after went in without review on the user's ruling). Found by the state-of-the-harness review the user asked for the same day.
+
+- **The extract is held to a tenth of the window** and the last one folded in, not copied: pass 50 of a 200k session used to leave 170k tokens, over the 85% line, until requests were refused.
+- **Notes go before the user's words**, cut then dropped, oldest first, with a count of what was left out; each line of a message is indented so a quoted label is never read as one.
+- **Older call arguments are shortened** like older output (a `write` carried its whole file every round), in `tool_calls` and the Messages echo, keeping the path.
+- **Only the user's messages count as turns kept**; the hat's note is named, not copied; the files touched take at most a quarter, the rest "and others".
+- Open: a 0.44.1 extract whose user message quotes `assistant:` splits once on the upgrade fold. The macOS-only `plan::tests::two_savers_never_take_the_same_name` failed once on a push run (a leftover temporary file under `.ryter/plans/`), its own patch. The provider proof by hand was not run for this release (the user went straight to tag and publish); OpenAI and SpaceXSI still owed.
 
 ### 0.44.1 — Four distros: a missing git said, the card's stakes, the system's programs listed (2026-11-03)
 
