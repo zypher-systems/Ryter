@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-07 — Compaction folds its last extract and holds a size
+
+**What was found.** In the state-of-the-harness review the user asked for (the loop, tools, context, permissions, memory, subagents, hooks and telemetry), the extract compaction writes copied every earlier user and assistant message word for word, the last extract included. It grew with every pass: a test session in a 200k window left 25k tokens after the first pass and 170k after the fiftieth, over the 85% line that sets compaction off, so every round compacted again until the request was refused. Older call arguments were never shortened, so a `write`'s whole file went out on every round, and Ryter's own `[Ryter]` messages counted among the four user turns kept.
+
+**Decision.** Compaction stays deterministic, with no model summary: what it keeps is what was said, and a pass costs nothing. The extract is held to a tenth of the window (four bytes a token), and a last extract is folded into the next (its tools, files, counts and messages), not carried whole. The plan's note is said anew each pass, not repeated. Over its size, the assistant's and Ryter's notes are cut, then dropped, oldest first, before any of the user's messages, because the user's words carry the constraints; the user's long messages are cut and dropped last. A line counts what was left out, so the model knows the history is partial. Older call arguments over 2 KB are shortened like older output, in `tool_calls` and in the Messages echo, as JSON that keeps the path, so a provider takes it and the model knows which file to read. Extracts written in the earlier format are folded the same way, so a session compacted before this does not keep its oversized extract as one of the user's messages. A model summary as an option was not taken: the fault was the growth, not the lack of a summary.
+
 ### 2026-11-03 — Review 110, round 3: the lister is the command's first word
 
 **What was reported.** One approval and one rejection on `3e7d1cd`. The option check stopped at the first `--` of the whole segment, so a wrapper's own (`env -- ls --recurs /usr/local`, `command -- ls --recurs …`) ended it before the lister's options were read, and the listing walked the kept folders unasked.
