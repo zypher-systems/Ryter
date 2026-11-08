@@ -37,6 +37,8 @@ The last release is 0.44.2. Notes for the next one collect in `docs/releases/` a
 9. **Hand passes (G06, G18; items 3, 6, 7).** macOS by a person with a Mac, from a one-page script: install → key → change → audit → undo → resume at three widths, the sudo prompt, drag-and-paste, the light theme. WSL2 by the user in a Windows 11 VM on this machine (nested KVM), Windows Terminal, the sandbox's own diagnosis. Still untried by a person from earlier: mouse selection (0.24.0) on Linux too; `sudo` on a Mac (0.23.0); the light theme anywhere.
 10. **The last real run** by the user on the candidate, both OSes, every ask written down. Then 1.0 is the user's decision, never proposed.
 
+**In dev, unreleased.** A new plan file takes its name in one step, 2026-11-07 (0.44.3). It was given a second name and then lost its first, so for a moment it had two, and a first name that could not be removed was left in `.ryter/plans/` unsaid; a failed link removed the temporary name twice, the second time possibly another save's. It now moves into place with a rename that refuses a taken name (`renameat2` on Linux, `renameatx_np` on macOS), and the link remains only where a filesystem has no such rename. The macOS test that once found 201 files where 200 were saved now names what is extra.
+
 Closed before this list: item 1 (2026-10-14, fiscus and tunes); item 3's Linux half (2026-10-14); a real `sudo` on Linux (2026-10-07).
 
 ## Next
