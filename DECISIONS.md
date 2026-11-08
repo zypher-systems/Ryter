@@ -2,6 +2,12 @@
 
 Why, not what. Non-obvious choices are recorded here, newest first.
 
+### 2026-11-07 — A new plan file takes its name with a rename that refuses a taken one
+
+**What was found.** `plan::tests::two_savers_never_take_the_same_name` failed once on macOS CI (push run on `7d90dac`): eight threads saved 200 plans, each was given its own name, and the folder held 201 files. It did not come back in 760 rounds of the same race on GitHub's macOS runner, 400 alone and 360 inside six passes of the whole core suite, so the extra file was never seen. Reading `place` for how one could be there: a new file was given its name as a second hard link and then lost its temporary name, with a failed removal ignored, so for a moment the file had two names and a first that stayed was a file in `.ryter/plans/` that nobody saved. A link that failed for any reason but a taken name also removed the temporary name a second time, after another save could have made a new file under it.
+
+**Decision.** The new file moves into place with a rename that refuses a taken name: `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS. It never has two names. A filesystem without such a rename (`EINVAL`, `ENOSYS`, `ENOTSUP`) still gets the link, as before. Either way the temporary name is removed once, by the step that knows whether it is still there. The test names any file that is there and was not saved, so a recurrence says which mechanism it was. Not done: retrying a failed removal, or sweeping `.ryter/plans/` for stray `.new` files on start, since neither has been seen.
+
 ### 2026-11-07 — Review 111, round 1: an extract's messages are framed, its cuts never grow, its file list has a share
 
 **What was reported.** Two rejections on `7d90dac`, agreeing on two defects and each adding one. A cut kept its limit's bytes and then added the seven-byte marker, so a note of 601–606 bytes (a user's message of 4,001–4,006) came back longer and the size kept underflowed: a panic in a debug build, a wrap in release. The fold read any `user:` or `assistant:` after a blank line as a new message, so a user's pasted conversation lost its tail to a note on the next pass, and notes go first. The file list was held by count, not bytes: a hundred long paths took the whole budget, every message was dropped, and the extract was still over. 0.44.1's extracts end with the plan's note before their count, and the fold glued it to the last message. "And N more" drifted when a file in the count was touched again.

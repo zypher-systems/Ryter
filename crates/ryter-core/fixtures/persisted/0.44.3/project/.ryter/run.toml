@@ -1,0 +1,11 @@
+# How this project runs. Ryter starts it, waits for `ready` to answer,
+# runs `test`, and stops it with `stop`; `check` is the fast check it runs
+# itself after the build hat's edits; `build`, `lint` and `format` are the
+# model's verbs for those. Change it here or ask the build hat to propose
+# a new one; Ryter asks you to approve it again.
+schema = 1
+start = "python3 -m http.server 8000"
+ready = "http://localhost:8000/"
+build = "make"
+test  = ["make test"]
+check = "make check"

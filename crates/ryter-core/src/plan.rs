@@ -217,30 +217,64 @@ fn place(root: &Path, rel: &str, text: &str, replace: bool) -> Result<(PathBuf, 
     let written = file
         .write_all(text.as_bytes())
         .and_then(|()| file.sync_all());
-    let done = written.and_then(|()| {
-        if replace {
-            rustix::fs::renameat(&dir, tmp.as_str(), &dir, name.as_str())
-                .map(|()| true)
-                .map_err(std::io::Error::from)
-        } else {
-            // A second name for the file, which fails if the name is
-            // taken, where moving it there would replace what has it.
-            let linked =
-                rustix::fs::linkat(&dir, tmp.as_str(), &dir, name.as_str(), AtFlags::empty());
-            let _ = rustix::fs::unlinkat(&dir, tmp.as_str(), AtFlags::empty());
-            match linked {
-                Ok(()) => Ok(true),
-                Err(rustix::io::Errno::EXIST) => Ok(false),
-                Err(e) => Err(e.into()),
-            }
+    let done = match written {
+        Err(e) => Err(e),
+        Ok(()) if replace => rustix::fs::renameat(&dir, tmp.as_str(), &dir, name.as_str())
+            .map(|()| true)
+            .map_err(std::io::Error::from),
+        // The temporary file is gone whatever this answers: removing it
+        // again could remove another save's, made since under its name.
+        Ok(()) => {
+            let placed = name_new(&dir, &tmp, &name).map_err(io)?;
+            return Ok((path, placed));
         }
-    });
+    };
     match done {
         Ok(placed) => Ok((path, placed)),
         Err(e) => {
             let _ = rustix::fs::unlinkat(&dir, tmp.as_str(), AtFlags::empty());
             Err(io(e))
         }
+    }
+}
+
+/// Give the new file at `tmp` in `dir` the name `name`, if nothing has it
+/// (`false` when something does). `tmp` is gone afterwards, whatever comes
+/// back.
+///
+/// It is moved there with a rename that refuses a taken name, so it never
+/// has two names. Where the filesystem has no such rename, it gets a
+/// second name, which fails if the name is taken, and loses the first; a
+/// plain move would replace what has the name. That way the file has both
+/// names for a moment, and a first name that could not be removed stays in
+/// the folder as a file nobody saved.
+#[cfg(unix)]
+fn name_new(dir: &rustix::fd::OwnedFd, tmp: &str, name: &str) -> std::io::Result<bool> {
+    use rustix::fs::AtFlags;
+    use rustix::io::Errno;
+    let gone = || {
+        let _ = rustix::fs::unlinkat(dir, tmp, AtFlags::empty());
+    };
+    #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+    match rustix::fs::renameat_with(dir, tmp, dir, name, rustix::fs::RenameFlags::NOREPLACE) {
+        Ok(()) => return Ok(true),
+        Err(Errno::EXIST) => {
+            gone();
+            return Ok(false);
+        }
+        // The filesystem (or the kernel) has no such rename.
+        Err(Errno::INVAL | Errno::NOSYS | Errno::NOTSUP) => {}
+        Err(e) => {
+            gone();
+            return Err(e.into());
+        }
+    }
+    let linked = rustix::fs::linkat(dir, tmp, dir, name, AtFlags::empty());
+    gone();
+    match linked {
+        Ok(()) => Ok(true),
+        Err(Errno::EXIST) => Ok(false),
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -522,14 +556,58 @@ mod tests {
                 })
             })
             .collect();
-        let mut saved: Vec<PathBuf> = savers.into_iter().flat_map(|s| s.join().unwrap()).collect();
-        saved.sort();
-        saved.dedup();
-        assert_eq!(saved.len(), 200, "two saves were given one name");
-        let kept = std::fs::read_dir(root.path().join(DIR)).unwrap().count();
+        let saved: Vec<String> = savers
+            .into_iter()
+            .flat_map(|s| s.join().unwrap())
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        let named: std::collections::BTreeSet<String> = saved.iter().cloned().collect();
+        assert_eq!(named.len(), 200, "two saves were given one name");
+        // By name, so a failure says what is there that nothing saved.
+        let kept: std::collections::BTreeSet<String> = std::fs::read_dir(root.path().join(DIR))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(
-            kept, 200,
-            "a plan was written over, or a temporary file left"
+            kept.difference(&named).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "a temporary file left, or a plan nobody was given"
         );
+        assert_eq!(kept, named, "a plan was written over");
+    }
+
+    /// A new file takes a free name and refuses a taken one, a link there
+    /// included, and leaves no temporary file either way.
+    #[cfg(unix)]
+    #[test]
+    fn a_new_name_is_taken_only_when_free_and_the_temporary_file_goes() {
+        use rustix::fs::{CWD, Mode, OFlags};
+        let root = TempDir::new().unwrap();
+        let path = root.path();
+        let dir = rustix::fs::openat(
+            CWD,
+            path,
+            OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap();
+        std::fs::write(path.join(".a.new"), "first").unwrap();
+        assert!(name_new(&dir, ".a.new", "a.md").unwrap());
+        std::fs::write(path.join(".b.new"), "second").unwrap();
+        assert!(!name_new(&dir, ".b.new", "a.md").unwrap());
+        std::os::unix::fs::symlink(path.join("elsewhere"), path.join("c.md")).unwrap();
+        std::fs::write(path.join(".c.new"), "third").unwrap();
+        assert!(!name_new(&dir, ".c.new", "c.md").unwrap());
+        assert_eq!(std::fs::read_to_string(path.join("a.md")).unwrap(), "first");
+        assert!(
+            !path.join("elsewhere").exists(),
+            "the link was not followed"
+        );
+        let mut left: Vec<String> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["a.md", "c.md"]);
     }
 }
