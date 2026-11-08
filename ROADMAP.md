@@ -22,7 +22,7 @@ Dropped from the earlier candidates: "the model has the tools the job needs" (op
 
 ## Now
 
-The last release is 0.44.2. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
+The last release is 0.44.3. Notes for the next one collect in `docs/releases/` and an entry sits here until it ships, then moves to Done.
 
 **The path to 1.0, agreed 2026-10-29** after the second gap analysis (`docs/gap/2026-10-29.md`; its G-numbers are cited). One patch branch per step unless said; the order is the order. Each step names the gate item it serves.
 
@@ -36,8 +36,6 @@ The last release is 0.44.2. Notes for the next one collect in `docs/releases/` a
 8. **Docs reconciled (G20).** Three verified drifts fixed 2026-10-29 (the guide's dependency paragraph, the Opus bench page's task count, two stale Next items). The guide read against the release, screen by screen, comes with the hand passes.
 9. **Hand passes (G06, G18; items 3, 6, 7).** macOS by a person with a Mac, from a one-page script: install → key → change → audit → undo → resume at three widths, the sudo prompt, drag-and-paste, the light theme. WSL2 by the user in a Windows 11 VM on this machine (nested KVM), Windows Terminal, the sandbox's own diagnosis. Still untried by a person from earlier: mouse selection (0.24.0) on Linux too; `sudo` on a Mac (0.23.0); the light theme anywhere.
 10. **The last real run** by the user on the candidate, both OSes, every ask written down. Then 1.0 is the user's decision, never proposed.
-
-**In dev, unreleased.** A new plan file takes its name in one step, 2026-11-07 (0.44.3). It was given a second name and then lost its first, so for a moment it had two, and a first name that could not be removed was left in `.ryter/plans/` unsaid; a failed link removed the temporary name twice, the second time possibly another save's. It now moves into place with a rename that refuses a taken name (`renameat2` on Linux, `renameatx_np` on macOS), and the link remains only where a filesystem has no such rename. The macOS test that once found 201 files where 200 were saved now names what is extra.
 
 Closed before this list: item 1 (2026-10-14, fiscus and tunes); item 3's Linux half (2026-10-14); a real `sudo` on Linux (2026-10-07).
 
@@ -86,6 +84,15 @@ After 1.0, by the user's decision then:
 
 ## Done
 
+### 0.44.3 — A new plan file takes its name in one step (2026-11-08)
+
+Released 2026-11-08 (PR #112, one round: both approved `e1a4fd1` with no findings; the notes line after went in without review). Cut for the macOS failure of `plan::tests::two_savers_never_take_the_same_name` (201 files for 200 saves, once), which did not come back in 760 rounds on `macos-latest`.
+
+- **A new plan moves into place with a rename that refuses a taken name** (`renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS), so it never has two names; the link and removal remain only where a filesystem has no such rename.
+- **The temporary name is removed once**: a failed link no longer removes it a second time, which could hit another save's.
+- **The concurrent-save test names any extra file**, and a new test covers a free name, a taken one, a link at the name, and no temporary file left.
+- Open: where a filesystem has no exclusive rename, a failed removal can still leave a temporary file (not retried, by decision). The provider proof by hand was not run for this release; OpenAI and SpaceXSI still owed.
+
 ### 0.44.2 — Compaction holds its size (2026-11-07)
 
 Released 2026-11-07 (PR #111, two rounds. Round 1: both rejected `7d90dac`: a cut added its seven-byte marker past its limit, so a 601–606-byte note came back longer and the size kept underflowed, a panic in debug; the fold read any `assistant:` after a blank line as a new message, so a user's pasted conversation lost its tail to a note; the file list was held by count and long paths took the whole extract; 0.44.1's plan note was glued to the last message; "and N more" drifted. Round 2: both approved `f31f33c`; the notes line after went in without review on the user's ruling). Found by the state-of-the-harness review the user asked for the same day.
@@ -94,7 +101,7 @@ Released 2026-11-07 (PR #111, two rounds. Round 1: both rejected `7d90dac`: a cu
 - **Notes go before the user's words**, cut then dropped, oldest first, with a count of what was left out; each line of a message is indented so a quoted label is never read as one.
 - **Older call arguments are shortened** like older output (a `write` carried its whole file every round), in `tool_calls` and the Messages echo, keeping the path.
 - **Only the user's messages count as turns kept**; the hat's note is named, not copied; the files touched take at most a quarter, the rest "and others".
-- Open: a 0.44.1 extract whose user message quotes `assistant:` splits once on the upgrade fold. The macOS-only `plan::tests::two_savers_never_take_the_same_name` failed once on a push run (a leftover temporary file under `.ryter/plans/`), its own patch. The provider proof by hand was not run for this release (the user went straight to tag and publish); OpenAI and SpaceXSI still owed.
+- Open: a 0.44.1 extract whose user message quotes `assistant:` splits once on the upgrade fold. The macOS-only `plan::tests::two_savers_never_take_the_same_name` failed once on a push run; fixed in 0.44.3. The provider proof by hand was not run for this release (the user went straight to tag and publish); OpenAI and SpaceXSI still owed.
 
 ### 0.44.1 — Four distros: a missing git said, the card's stakes, the system's programs listed (2026-11-03)
 
